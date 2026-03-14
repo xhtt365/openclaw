@@ -1,23 +1,27 @@
-import { ArrowLeft, Expand, RefreshCw, Settings2, Shrink, SlidersHorizontal } from "lucide-react"
+import { ArrowLeft, Expand, RefreshCw, Settings2, Shrink, SlidersHorizontal } from "lucide-react";
 
 type TopBarProps = {
-  isFullscreen: boolean
-  isRestarting: boolean
-  restartDisabled?: boolean
-  onBack: () => void
-  onRestart: () => void
-  onToggleFullscreen: () => void
-}
+  isFullscreen: boolean;
+  isRestarting: boolean;
+  restartDisabled?: boolean;
+  configDisabled?: boolean;
+  onBack: () => void;
+  onRestart: () => void;
+  onOpenConfigEditor: () => void;
+  onToggleFullscreen: () => void;
+};
 
 const ACTION_BUTTON_CLASS_NAME =
-  "inline-flex h-11 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-[var(--color-text-primary)] shadow-[0_12px_30px_rgba(15,23,42,0.12)] transition-all duration-150"
+  "inline-flex h-11 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-[var(--color-text-primary)] shadow-[0_12px_30px_rgba(15,23,42,0.12)] transition-all duration-150";
 
 export function TopBar({
   isFullscreen,
   isRestarting,
   restartDisabled = false,
+  configDisabled = false,
   onBack,
   onRestart,
+  onOpenConfigEditor,
   onToggleFullscreen,
 }: TopBarProps) {
   return (
@@ -56,11 +60,20 @@ export function TopBar({
           <RefreshCw className={`h-4 w-4 ${isRestarting ? "animate-spin" : ""}`} />
           {isRestarting ? "重启中…" : "重启网关"}
         </button>
-        <button type="button" disabled className={`${ACTION_BUTTON_CLASS_NAME} cursor-not-allowed opacity-70`}>
+        <button
+          type="button"
+          onClick={onOpenConfigEditor}
+          disabled={configDisabled}
+          className={`${ACTION_BUTTON_CLASS_NAME} ${configDisabled ? "cursor-not-allowed opacity-70" : "hover:border-white/20 hover:bg-white/[0.08]"}`}
+        >
           <Settings2 className="h-4 w-4" />
           核心配置
         </button>
-        <button type="button" disabled className={`${ACTION_BUTTON_CLASS_NAME} cursor-not-allowed opacity-70`}>
+        <button
+          type="button"
+          disabled
+          className={`${ACTION_BUTTON_CLASS_NAME} cursor-not-allowed opacity-70`}
+        >
           <SlidersHorizontal className="h-4 w-4" />
           模型配置
         </button>
@@ -75,5 +88,5 @@ export function TopBar({
         </button>
       </div>
     </header>
-  )
+  );
 }

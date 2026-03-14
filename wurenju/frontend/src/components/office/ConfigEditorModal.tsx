@@ -1,364 +1,366 @@
-"use client"
+"use client";
 
-import type { KeyboardEvent as ReactKeyboardEvent } from "react"
-import { useCallback, useEffect, useRef, useState } from "react"
-import { AlertTriangle, FolderClock, Loader2, Save, WandSparkles } from "lucide-react"
-import { ConfirmModal } from "@/components/modals/ConfirmModal"
-import { ConfigHistoryPanel } from "@/components/office/ConfigHistoryPanel"
+import { AlertTriangle, FolderClock, Loader2, Save, WandSparkles } from "lucide-react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ConfirmModal } from "@/components/modals/ConfirmModal";
+import { ConfigHistoryPanel } from "@/components/office/ConfigHistoryPanel";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { toast } from "@/hooks/use-toast"
-import { cn } from "@/lib/utils"
-import { gateway } from "@/services/gateway"
-import type { ConfigVersion } from "@/types/config"
+} from "@/components/ui/dialog";
+import { toast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import { gateway } from "@/services/gateway";
+import type { ConfigVersion } from "@/types/config";
 import {
   buildJsonMergePatch,
   formatConfigTimestamp,
   isConfigObject,
   pushConfigHistoryVersion,
   readConfigHistory,
-} from "@/utils/configEditor"
-import { formatJSONWithComments, parseJSONWithComments } from "@/utils/json5Parse"
+} from "@/utils/configEditor";
+import { formatJSONWithComments, parseJSONWithComments } from "@/utils/json5Parse";
 
-const DEFAULT_CONFIG_PATH = "~/.openclaw/openclaw.json"
+const DEFAULT_CONFIG_PATH = "~/.openclaw/openclaw.json";
 
 function focusTextarea(textarea: HTMLTextAreaElement | null) {
   if (!textarea) {
-    return
+    return;
   }
 
   window.setTimeout(() => {
-    textarea.focus()
-  }, 0)
+    textarea.focus();
+  }, 0);
 }
 
 function resolveErrorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message.trim() ? error.message : fallback
+  return error instanceof Error && error.message.trim() ? error.message : fallback;
 }
 
 function findLineStart(value: string, index: number) {
-  let cursor = index
+  let cursor = index;
 
   while (cursor > 0 && value[cursor - 1] !== "\n") {
-    cursor -= 1
+    cursor -= 1;
   }
 
-  return cursor
+  return cursor;
 }
 
 function indentSelection(value: string, start: number, end: number) {
   if (start === end) {
-    const nextValue = `${value.slice(0, start)}  ${value.slice(end)}`
+    const nextValue = `${value.slice(0, start)}  ${value.slice(end)}`;
     return {
       value: nextValue,
       selectionStart: start + 2,
       selectionEnd: end + 2,
-    }
+    };
   }
 
-  const blockStart = findLineStart(value, start)
-  const block = value.slice(blockStart, end)
-  const lines = block.split("\n")
-  const indented = lines.map((line) => `  ${line}`).join("\n")
+  const blockStart = findLineStart(value, start);
+  const block = value.slice(blockStart, end);
+  const lines = block.split("\n");
+  const indented = lines.map((line) => `  ${line}`).join("\n");
 
   return {
     value: `${value.slice(0, blockStart)}${indented}${value.slice(end)}`,
     selectionStart: start + 2,
     selectionEnd: end + lines.length * 2,
-  }
+  };
 }
 
 function outdentSelection(value: string, start: number, end: number) {
-  const blockStart = findLineStart(value, start)
-  const block = value.slice(blockStart, end)
-  const lines = block.split("\n")
-  let removedBeforeSelection = 0
-  let removedWithinSelection = 0
+  const blockStart = findLineStart(value, start);
+  const block = value.slice(blockStart, end);
+  const lines = block.split("\n");
+  let removedBeforeSelection = 0;
+  let removedWithinSelection = 0;
 
   const nextLines = lines.map((line, index) => {
     if (line.startsWith("  ")) {
       if (index === 0) {
-        removedBeforeSelection += 2
+        removedBeforeSelection += 2;
       }
-      removedWithinSelection += 2
-      return line.slice(2)
+      removedWithinSelection += 2;
+      return line.slice(2);
     }
 
     if (line.startsWith("\t")) {
       if (index === 0) {
-        removedBeforeSelection += 1
+        removedBeforeSelection += 1;
       }
-      removedWithinSelection += 1
-      return line.slice(1)
+      removedWithinSelection += 1;
+      return line.slice(1);
     }
 
-    return line
-  })
+    return line;
+  });
 
   if (removedWithinSelection === 0) {
     return {
       value,
       selectionStart: start,
       selectionEnd: end,
-    }
+    };
   }
 
-  const nextValue = `${value.slice(0, blockStart)}${nextLines.join("\n")}${value.slice(end)}`
+  const nextValue = `${value.slice(0, blockStart)}${nextLines.join("\n")}${value.slice(end)}`;
   return {
     value: nextValue,
     selectionStart: Math.max(blockStart, start - removedBeforeSelection),
     selectionEnd: Math.max(blockStart, end - removedWithinSelection),
-  }
+  };
 }
 
 export function ConfigEditorModal({
   open,
   onOpenChange,
 }: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const [editorValue, setEditorValue] = useState("")
-  const [initialValue, setInitialValue] = useState("")
-  const [configPath, setConfigPath] = useState(DEFAULT_CONFIG_PATH)
-  const [baseHash, setBaseHash] = useState<string | undefined>()
-  const [loadedAtMs, setLoadedAtMs] = useState<number>(0)
-  const [historyVersions, setHistoryVersions] = useState<ConfigVersion[]>([])
-  const [loadedHistoryVersion, setLoadedHistoryVersion] = useState<ConfigVersion | null>(null)
-  const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [loadError, setLoadError] = useState("")
-  const [validationError, setValidationError] = useState("")
-  const [discardModalOpen, setDiscardModalOpen] = useState(false)
+  const [editorValue, setEditorValue] = useState("");
+  const [initialValue, setInitialValue] = useState("");
+  const [configPath, setConfigPath] = useState(DEFAULT_CONFIG_PATH);
+  const [baseHash, setBaseHash] = useState<string | undefined>();
+  const [loadedAtMs, setLoadedAtMs] = useState<number>(0);
+  const [historyVersions, setHistoryVersions] = useState<ConfigVersion[]>([]);
+  const [loadedHistoryVersion, setLoadedHistoryVersion] = useState<ConfigVersion | null>(null);
+  const [historyPanelOpen, setHistoryPanelOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [validationError, setValidationError] = useState("");
+  const [discardModalOpen, setDiscardModalOpen] = useState(false);
 
-  const hasUnsavedChanges = editorValue !== initialValue
+  const hasUnsavedChanges = editorValue !== initialValue;
 
   const resetState = useCallback(() => {
-    setEditorValue("")
-    setInitialValue("")
-    setConfigPath(DEFAULT_CONFIG_PATH)
-    setBaseHash(undefined)
-    setLoadedAtMs(0)
-    setHistoryVersions([])
-    setLoadedHistoryVersion(null)
-    setHistoryPanelOpen(false)
-    setLoading(false)
-    setSaving(false)
-    setLoadError("")
-    setValidationError("")
-    setDiscardModalOpen(false)
-  }, [])
+    setEditorValue("");
+    setInitialValue("");
+    setConfigPath(DEFAULT_CONFIG_PATH);
+    setBaseHash(undefined);
+    setLoadedAtMs(0);
+    setHistoryVersions([]);
+    setLoadedHistoryVersion(null);
+    setHistoryPanelOpen(false);
+    setLoading(false);
+    setSaving(false);
+    setLoadError("");
+    setValidationError("");
+    setDiscardModalOpen(false);
+  }, []);
 
   const loadConfig = useCallback(async () => {
-    setLoading(true)
-    setLoadError("")
-    setValidationError("")
+    setLoading(true);
+    setLoadError("");
+    setValidationError("");
 
     try {
-      console.log("[Config] 读取核心配置")
-      const snapshot = await gateway.getConfigEditorSnapshot()
-      const normalizedRaw = snapshot.raw.replace(/\r\n/g, "\n")
-      const now = Date.now()
+      console.log("[Config] 读取核心配置");
+      const snapshot = await gateway.getConfigEditorSnapshot();
+      const normalizedRaw = snapshot.raw.replace(/\r\n/g, "\n");
+      const now = Date.now();
 
-      setEditorValue(normalizedRaw)
-      setInitialValue(normalizedRaw)
-      setConfigPath(snapshot.path?.trim() || DEFAULT_CONFIG_PATH)
-      setBaseHash(snapshot.hash)
-      setLoadedAtMs(now)
-      setHistoryVersions(readConfigHistory())
-      setLoadedHistoryVersion(null)
-      focusTextarea(textareaRef.current)
+      setEditorValue(normalizedRaw);
+      setInitialValue(normalizedRaw);
+      setConfigPath(snapshot.path?.trim() || DEFAULT_CONFIG_PATH);
+      setBaseHash(snapshot.hash);
+      setLoadedAtMs(now);
+      setHistoryVersions(readConfigHistory());
+      setLoadedHistoryVersion(null);
+      focusTextarea(textareaRef.current);
     } catch (error) {
-      const message = resolveErrorMessage(error, "读取核心配置失败，请检查 Gateway 连接")
-      console.error("[Config] 读取核心配置失败:", error)
-      setLoadError(message)
+      const message = resolveErrorMessage(error, "读取核心配置失败，请检查 Gateway 连接");
+      console.error("[Config] 读取核心配置失败:", error);
+      setLoadError(message);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [])
+  }, []);
 
   useEffect(() => {
     if (!open) {
-      resetState()
-      return
+      resetState();
+      return;
     }
 
-    void loadConfig()
-  }, [loadConfig, open, resetState])
+    void loadConfig();
+  }, [loadConfig, open, resetState]);
 
   const closeModal = useCallback(() => {
-    setHistoryPanelOpen(false)
-    setDiscardModalOpen(false)
-    onOpenChange(false)
-  }, [onOpenChange])
+    setHistoryPanelOpen(false);
+    setDiscardModalOpen(false);
+    onOpenChange(false);
+  }, [onOpenChange]);
 
   const attemptClose = useCallback(() => {
     if (saving) {
-      return
+      return;
     }
 
     if (hasUnsavedChanges) {
-      setDiscardModalOpen(true)
-      return
+      setDiscardModalOpen(true);
+      return;
     }
 
-    closeModal()
-  }, [closeModal, hasUnsavedChanges, saving])
+    closeModal();
+  }, [closeModal, hasUnsavedChanges, saving]);
 
   const handleFormat = useCallback(() => {
     try {
-      const formatted = formatJSONWithComments(editorValue)
-      console.log("[Config] 格式优化完成")
-      setEditorValue(formatted)
-      setValidationError("")
-      setLoadedHistoryVersion(null)
+      const formatted = formatJSONWithComments(editorValue);
+      console.log("[Config] 格式优化完成");
+      setEditorValue(formatted);
+      setValidationError("");
+      setLoadedHistoryVersion(null);
     } catch (error) {
-      const message = resolveErrorMessage(error, "请先修复语法错误再格式化")
-      console.error("[Config] 格式优化失败:", error)
-      setValidationError(message)
+      const message = resolveErrorMessage(error, "请先修复语法错误再格式化");
+      console.error("[Config] 格式优化失败:", error);
+      setValidationError(message);
       toast({
         title: "请先修复语法错误再格式化",
         description: message,
         variant: "destructive",
-      })
+      });
     }
-  }, [editorValue])
+  }, [editorValue]);
 
   const handleSave = useCallback(async () => {
     if (loading || saving) {
-      return
+      return;
     }
 
     if (!hasUnsavedChanges) {
-      closeModal()
-      return
+      return;
     }
 
-    let currentConfig: Record<string, unknown>
-    let nextConfig: Record<string, unknown>
+    let currentConfig: Record<string, unknown>;
+    let nextConfig: Record<string, unknown>;
 
     try {
-      currentConfig = parseJSONWithComments<Record<string, unknown>>(initialValue)
-      nextConfig = parseJSONWithComments<Record<string, unknown>>(editorValue)
+      currentConfig = parseJSONWithComments<Record<string, unknown>>(initialValue);
+      nextConfig = parseJSONWithComments<Record<string, unknown>>(editorValue);
 
       if (!isConfigObject(currentConfig) || !isConfigObject(nextConfig)) {
-        throw new Error("核心配置根节点必须是对象")
+        throw new Error("核心配置根节点必须是对象");
       }
     } catch (error) {
-      const message = resolveErrorMessage(error, "JSON 语法错误，请检查后再保存")
-      console.error("[Config] 保存前校验失败:", error)
-      setValidationError(message)
-      return
+      const message = resolveErrorMessage(error, "JSON 语法错误，请检查后再保存");
+      console.error("[Config] 保存前校验失败:", error);
+      setValidationError(message);
+      return;
     }
 
-    setSaving(true)
-    setValidationError("")
+    setSaving(true);
+    setValidationError("");
 
     try {
       const nextHistory = pushConfigHistoryVersion({
         content: initialValue,
         label: "保存前自动备份",
-      })
-      setHistoryVersions(nextHistory)
+      });
+      setHistoryVersions(nextHistory);
 
-      const patch = buildJsonMergePatch(currentConfig, nextConfig)
+      // 这里按当前前端需求显式走 patch -> apply：
+      // - patch 使用 merge patch 语义，能正确表达删除字段；
+      // - apply 再把完整 JSON5 原文落盘，确保最终文件内容与编辑器一致。
+      const patch = buildJsonMergePatch(currentConfig, nextConfig);
 
-      console.log("[Config] 保存开始：config.patch")
+      console.log("[Config] 保存开始：config.patch");
       await gateway.patchConfig(JSON.stringify(patch, null, 2), {
         ...(baseHash ? { baseHash } : {}),
         note: "虾班核心配置编辑器保存补丁",
         restartDelayMs: 0,
-      })
+      });
 
-      console.log("[Config] 保存继续：config.apply")
+      console.log("[Config] 保存继续：config.apply");
       await gateway.applyConfig(editorValue, {
         note: "虾班核心配置编辑器应用完整配置",
         restartDelayMs: 0,
-      })
+      });
 
       toast({
         title: "✅ 配置已保存并热加载",
         description: "openclaw.json 已更新，Gateway 正在应用新配置。",
-      })
-      closeModal()
+      });
+      closeModal();
     } catch (error) {
-      const message = resolveErrorMessage(error, "保存失败，请稍后重试")
-      console.error("[Config] 保存失败:", error)
-      setValidationError(message)
+      const message = resolveErrorMessage(error, "保存失败，请稍后重试");
+      console.error("[Config] 保存失败:", error);
+      setValidationError(message);
       toast({
         title: "保存失败",
         description: message,
         variant: "destructive",
-      })
+      });
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
-  }, [baseHash, closeModal, editorValue, hasUnsavedChanges, initialValue, loading, saving])
+  }, [baseHash, closeModal, editorValue, hasUnsavedChanges, initialValue, loading, saving]);
 
   useEffect(() => {
     if (!open) {
-      return
+      return;
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-        event.preventDefault()
-        void handleSave()
+        event.preventDefault();
+        void handleSave();
       }
-    }
+    };
 
-    window.addEventListener("keydown", handleKeyDown)
+    window.addEventListener("keydown", handleKeyDown);
     return () => {
-      window.removeEventListener("keydown", handleKeyDown)
-    }
-  }, [handleSave, open])
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleSave, open]);
 
   function handleDialogOpenChange(nextOpen: boolean) {
     if (!nextOpen) {
-      attemptClose()
+      attemptClose();
     }
   }
 
   function handleEditorKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Tab") {
-      return
+      return;
     }
 
-    event.preventDefault()
+    event.preventDefault();
 
-    const { selectionStart, selectionEnd, value } = event.currentTarget
+    const { selectionStart, selectionEnd, value } = event.currentTarget;
     const nextSelection = event.shiftKey
       ? outdentSelection(value, selectionStart, selectionEnd)
-      : indentSelection(value, selectionStart, selectionEnd)
+      : indentSelection(value, selectionStart, selectionEnd);
 
-    setEditorValue(nextSelection.value)
-    setLoadedHistoryVersion(null)
+    setEditorValue(nextSelection.value);
+    setLoadedHistoryVersion(null);
 
     requestAnimationFrame(() => {
       if (!textareaRef.current) {
-        return
+        return;
       }
 
-      textareaRef.current.selectionStart = nextSelection.selectionStart
-      textareaRef.current.selectionEnd = nextSelection.selectionEnd
-    })
+      textareaRef.current.selectionStart = nextSelection.selectionStart;
+      textareaRef.current.selectionEnd = nextSelection.selectionEnd;
+    });
   }
 
   function handleSelectHistoryVersion(version: ConfigVersion) {
-    console.log("[Config] 加载历史版本:", version.id)
-    setEditorValue(version.content)
-    setLoadedHistoryVersion(version)
-    setHistoryPanelOpen(false)
-    setValidationError("")
-    focusTextarea(textareaRef.current)
+    console.log("[Config] 加载历史版本:", version.id);
+    setEditorValue(version.content);
+    setLoadedHistoryVersion(version);
+    setHistoryPanelOpen(false);
+    setValidationError("");
+    focusTextarea(textareaRef.current);
   }
 
   return (
@@ -381,7 +383,8 @@ export function ConfigEditorModal({
               <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                 {loadedHistoryVersion ? (
                   <div className="mx-6 mt-4 rounded-2xl border border-[rgba(255,107,53,0.25)] bg-[rgba(255,107,53,0.12)] px-4 py-3 text-sm text-[var(--color-text-primary)]">
-                    已加载历史版本（{formatConfigTimestamp(loadedHistoryVersion.timestamp)}），点击保存以应用
+                    已加载历史版本（{formatConfigTimestamp(loadedHistoryVersion.timestamp)}
+                    ），点击保存以应用
                   </div>
                 ) : null}
 
@@ -415,8 +418,8 @@ export function ConfigEditorModal({
                         ref={textareaRef}
                         value={editorValue}
                         onChange={(event) => {
-                          setEditorValue(event.target.value)
-                          setValidationError("")
+                          setEditorValue(event.target.value);
+                          setValidationError("");
                         }}
                         onKeyDown={handleEditorKeyDown}
                         spellCheck={false}
@@ -448,7 +451,7 @@ export function ConfigEditorModal({
                       </button>
 
                       <div className="text-sm text-[var(--color-text-secondary)]">
-                        当前版本时间：{loadedAtMs ? formatConfigTimestamp(loadedAtMs) : "--"}
+                        当前版本载入时间：{loadedAtMs ? formatConfigTimestamp(loadedAtMs) : "--"}
                       </div>
                     </div>
 
@@ -475,18 +478,22 @@ export function ConfigEditorModal({
                       <button
                         type="button"
                         onClick={() => {
-                          void handleSave()
+                          void handleSave();
                         }}
-                        disabled={loading || saving || Boolean(loadError)}
+                        disabled={loading || saving || Boolean(loadError) || !hasUnsavedChanges}
                         className={cn(
                           "inline-flex h-11 items-center gap-2 rounded-xl px-5 text-sm font-semibold text-white transition-all disabled:cursor-not-allowed disabled:opacity-60",
                           hasUnsavedChanges
                             ? "bg-[var(--color-brand)] shadow-[0_0_0_1px_rgba(255,107,53,0.35),0_12px_30px_rgba(255,107,53,0.22)] hover:bg-[var(--color-brand-light)]"
                             : "bg-white/10 hover:bg-white/15",
-                          hasUnsavedChanges ? "ring-2 ring-[rgba(255,107,53,0.35)]" : ""
+                          hasUnsavedChanges ? "ring-2 ring-[rgba(255,107,53,0.35)]" : "",
                         )}
                       >
-                        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        {saving ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Save className="h-4 w-4" />
+                        )}
                         保存
                       </button>
                     </div>
@@ -511,10 +518,19 @@ export function ConfigEditorModal({
         open={discardModalOpen}
         onClose={() => setDiscardModalOpen(false)}
         onConfirm={() => {
-          closeModal()
+          closeModal();
         }}
         icon="⚠️"
         iconBgColor="bg-amber-50 dark:bg-amber-500/10"
         iconTextColor="text-amber-500"
         title="未保存的修改"
         subtitle="关闭后当前编辑内容会丢失"
+        description="你有未保存的配置修改，关闭后将丢失。"
+        cancelText="继续编辑"
+        cancelClassName="border-[var(--color-brand)] bg-[var(--color-brand)] text-white hover:border-[var(--color-brand-light)] hover:bg-[var(--color-brand-light)] dark:border-[var(--color-brand)] dark:bg-[var(--color-brand)] dark:text-white dark:hover:border-[var(--color-brand-light)] dark:hover:bg-[var(--color-brand-light)]"
+        confirmText="放弃修改"
+        confirmColor="bg-zinc-700 hover:bg-zinc-600"
+      />
+    </>
+  );
+}

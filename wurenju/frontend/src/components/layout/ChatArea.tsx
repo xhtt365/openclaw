@@ -1,14 +1,14 @@
 "use client";
 
-import { memo, type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Archive, Minimize2, MoreVertical, RotateCcw, Send, Zap } from "lucide-react";
+import { memo, type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { GroupChatArea } from "@/components/chat/GroupChatArea";
-import { ConfirmModal } from "@/components/modals/ConfirmModal";
-import { ContextRing } from "@/components/ui/ContextRing";
-import { cn } from "@/lib/utils";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import type { Employee } from "@/components/layout/EmployeeList";
 import { useTheme } from "@/components/layout/useTheme";
+import { ConfirmModal } from "@/components/modals/ConfirmModal";
+import { ContextRing } from "@/components/ui/ContextRing";
+import { cn } from "@/lib/utils";
 import { useAgentStore } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
 import type { Group } from "@/stores/groupStore";
@@ -67,7 +67,7 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
   const { theme, toggleTheme } = useTheme();
   const currentAgentId = useAgentStore((state) => state.currentAgentId);
   const currentAgent = useAgentStore((state) =>
-    state.agents.find((agent) => agent.id === state.currentAgentId)
+    state.agents.find((agent) => agent.id === state.currentAgentId),
   );
   const activeAgentId = currentAgentId || employee.id;
   const messages = useChatStore((state) => state.getMessagesForAgent(activeAgentId));
@@ -76,8 +76,12 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
   const archiveCurrentSession = useChatStore((state) => state.archiveCurrentSession);
   const resetCurrentSession = useChatStore((state) => state.resetCurrentSession);
   const sessionUsage = useChatStore((state) => state.getUsageForAgent(activeAgentId));
-  const contextWindowSize = useChatStore((state) => state.getContextWindowSizeForAgent(activeAgentId));
-  const currentContextUsed = useChatStore((state) => state.getCurrentContextUsedForAgent(activeAgentId));
+  const contextWindowSize = useChatStore((state) =>
+    state.getContextWindowSizeForAgent(activeAgentId),
+  );
+  const currentContextUsed = useChatStore((state) =>
+    state.getCurrentContextUsedForAgent(activeAgentId),
+  );
   const isWaiting = useChatStore((state) => state.isSendingForAgent(activeAgentId));
   const isHistoryLoading = useChatStore((state) => state.isHistoryLoadingForAgent(activeAgentId));
   const isAnySending = useChatStore((state) => state.isAnySending());
@@ -96,7 +100,7 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
   const contextIndicatorLabel =
     contextWindowSize > 0
       ? `${formatCompactTokens(currentContextUsed)}/${formatCompactTokens(contextWindowSize)}`
-      : `${formatCompactTokens(currentContextUsed)}`;
+      : formatCompactTokens(currentContextUsed);
 
   const [input, setInput] = useState("");
   const [typingMessageId, setTypingMessageId] = useState<string | null>(null);
@@ -105,19 +109,6 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
   const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
   const [isCompactModalOpen, setIsCompactModalOpen] = useState(false);
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
-  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
-  const [isArchiveUnavailable, setIsArchiveUnavailable] = useState(false);
-  const [isCompactLoading, setIsCompactLoading] = useState(false);
-  const [isArchiveLoading, setIsArchiveLoading] = useState(false);
-  const [isResetLoading, setIsResetLoading] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const avatarInputRef = useRef<HTMLInputElement>(null);
-  const seenAssistantMessageIdsRef = useRef<Set<string>>(new Set());
-  const didInitHistoryRef = useRef(false);
-  const copyTimerRef = useRef<number | null>(null);
-  const feedbackTimerRef = useRef<number | null>(null);
-
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const [isArchiveUnavailable, setIsArchiveUnavailable] = useState(false);
   const [isCompactLoading, setIsCompactLoading] = useState(false);
@@ -171,7 +162,9 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
   }, [currentAgentId]);
 
   useEffect(() => {
-    const assistantMessages = messages.filter((message) => message.role === "assistant" && !message.isLoading);
+    const assistantMessages = messages.filter(
+      (message) => message.role === "assistant" && !message.isLoading,
+    );
     if (!didInitHistoryRef.current) {
       assistantMessages.forEach((message) => {
         seenAssistantMessageIdsRef.current.add(message.id);
@@ -181,7 +174,7 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
     }
 
     const newAssistantMessages = assistantMessages.filter(
-      (message) => message.isNew && !seenAssistantMessageIdsRef.current.has(message.id)
+      (message) => message.isNew && !seenAssistantMessageIdsRef.current.has(message.id),
     );
     if (newAssistantMessages.length === 0) {
       return;
@@ -218,6 +211,22 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
+
+    await sendMessage(text);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void handleSendMessage();
+    }
+  }
+
+  function handleThemeToggle() {
+    toggleTheme();
+    console.log("[UI] 主题切换");
+  }
+
   function handleMoreClick() {
     console.log("[UI] 更多菜单");
   }
@@ -245,7 +254,7 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
         "success",
         releasedTokens > 0
           ? `已释放 ${new Intl.NumberFormat("en-US").format(releasedTokens)} tokens`
-          : "压缩已执行，但当前上下文变化很小或无需继续压缩。"
+          : "压缩已执行，但当前上下文变化很小或无需继续压缩。",
       );
       return;
     }
@@ -329,7 +338,7 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
     }
 
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.addEventListener("load", () => {
       if (typeof reader.result !== "string" || !reader.result.trim()) {
         console.error("[UI] 用户头像读取失败: empty result");
         return;
@@ -338,10 +347,10 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
       window.localStorage.setItem("userAvatar", reader.result);
       setUserAvatar(reader.result);
       console.log("[UI] 用户头像已更新");
-    };
-    reader.onerror = () => {
+    });
+    reader.addEventListener("error", () => {
       console.error("[UI] 用户头像读取失败:", reader.error);
-    };
+    });
     reader.readAsDataURL(file);
     event.target.value = "";
   }
@@ -428,7 +437,7 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
             onClick={handleThemeToggle}
             className={cn(
               "group/toggle relative flex h-8 w-14 items-center rounded-full px-1 transition-all duration-150 hover:opacity-100",
-              theme === "dark" ? "bg-[var(--color-brand)]" : "bg-[var(--color-bg-hover)]"
+              theme === "dark" ? "bg-[var(--color-brand)]" : "bg-[var(--color-bg-hover)]",
             )}
             style={{ opacity: 0.75 }}
             aria-label="主题切换"
@@ -459,7 +468,9 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
         <div className="flex w-full flex-col gap-6">
           {visibleMessages.map((message, index) => (
             <div key={message.id} className="space-y-4">
-              {shouldShowHistoryDivider && index === firstNewMessageIndex ? <HistoryDivider /> : null}
+              {shouldShowHistoryDivider && index === firstNewMessageIndex ? (
+                <HistoryDivider />
+              ) : null}
               <MessageBubble
                 agentAvatarColor={employee.avatarColor}
                 agentAvatarText={agentAvatarText}
@@ -514,7 +525,7 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
                   "inline-flex rounded-full border px-3 py-1 text-[11px] font-medium shadow-[0_12px_32px_rgba(0,0,0,0.26)] backdrop-blur-sm",
                   actionFeedback.tone === "success"
                     ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/20 dark:bg-emerald-500/15 dark:text-emerald-100"
-                    : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/20 dark:bg-rose-500/15 dark:text-rose-100"
+                    : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/20 dark:bg-rose-500/15 dark:text-rose-100",
                 )}
               >
                 {actionFeedback.message}
@@ -537,7 +548,7 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
                       "inline-flex h-11 items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(15,23,42,0.18)] transition-all duration-150",
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-900",
                       "hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:brightness-100",
-                      action.buttonClassName
+                      action.buttonClassName,
                     )}
                   >
                     <Icon className="h-4 w-4 text-white" />
@@ -595,10 +606,12 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
                   : "hover:scale-110 hover:shadow-[0_0_20px_var(--color-brand-glow)] active:scale-90",
                 input.trim().length === 0 || isAnySending || isHistoryLoading || !currentAgentId
                   ? "cursor-not-allowed opacity-50"
-                  : ""
+                  : "",
               )}
               aria-label="发送消息"
-              disabled={input.trim().length === 0 || isAnySending || isHistoryLoading || !currentAgentId}
+              disabled={
+                input.trim().length === 0 || isAnySending || isHistoryLoading || !currentAgentId
+              }
             >
               {isWaiting ? <Zap className="h-4 w-4" /> : <Send className="h-4 w-4" />}
             </button>
@@ -658,3 +671,22 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
         subtitle="清空消息，释放上下文"
         description="将清空当前对话的所有消息，并重置 AI 的上下文记忆。这会释放 Token 空间，但 AI 将无法回忆之前的对话内容。"
         confirmText="确认重置"
+        confirmColor="bg-purple-600 hover:bg-purple-500"
+      />
+    </section>
+  );
+}
+
+const MemoAgentChatArea = memo(AgentChatArea);
+MemoAgentChatArea.displayName = "AgentChatArea";
+
+function ChatAreaInner({ employee, group }: ChatAreaProps) {
+  if (group) {
+    return <GroupChatArea key={group.id} group={group} />;
+  }
+
+  return <MemoAgentChatArea employee={employee} />;
+}
+
+export const ChatArea = memo(ChatAreaInner);
+ChatArea.displayName = "ChatArea";

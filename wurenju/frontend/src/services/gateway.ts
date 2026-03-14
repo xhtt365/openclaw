@@ -17,300 +17,325 @@ import type {
   AgentFilesListResult,
   AgentFileSetResult,
   AgentWorkspaceFileEntry,
-} from "@/types/agent"
+} from "@/types/agent";
 import type {
   GatewayConfigEditorSnapshot,
   GatewayConfigSnapshot,
   GatewayConfigWriteResult,
-} from "@/types/gateway"
+} from "@/types/gateway";
 import type {
   GatewayModelChoice,
   GatewayModelsListResult,
   ModelProviderGroup,
   ModelApiProtocol,
-} from "@/types/model"
+} from "@/types/model";
 import {
   resolveSessionRuntimeState,
   type SessionRuntimeListPayload,
   type SessionRuntimeState,
-} from "@/utils/sessionRuntime"
-import { normalizeUsage as normalizeGatewayUsage } from "@/utils/usage"
+} from "@/utils/sessionRuntime";
+import { normalizeUsage as normalizeGatewayUsage } from "@/utils/usage";
 
 const GATEWAY_URL =
   (
     import.meta as ImportMeta & {
       env?: {
-        VITE_GATEWAY_URL?: string
-      }
+        VITE_GATEWAY_URL?: string;
+      };
     }
-  ).env?.VITE_GATEWAY_URL?.trim() || "ws://localhost:18789"
-const GATEWAY_TOKEN_STORAGE_KEY = "wurenju.gateway.token"
-const GATEWAY_DEVICE_IDENTITY_STORAGE_KEY = "wurenju.gateway.deviceIdentity"
-const GATEWAY_OPERATOR_SCOPES = ["operator.read", "operator.write", "operator.admin"] as const
-const GATEWAY_CLIENT_ID = "openclaw-control-ui"
-const GATEWAY_CLIENT_MODE = "ui"
-const GATEWAY_CLIENT_DISPLAY_NAME = "虾班"
-const GATEWAY_CLIENT_CAPABILITIES = ["tool-events"] as const
+  ).env?.VITE_GATEWAY_URL?.trim() || "ws://localhost:18789";
+const GATEWAY_TOKEN_STORAGE_KEY = "wurenju.gateway.token";
+const GATEWAY_DEVICE_IDENTITY_STORAGE_KEY = "wurenju.gateway.deviceIdentity";
+const GATEWAY_OPERATOR_SCOPES = ["operator.read", "operator.write", "operator.admin"] as const;
+const GATEWAY_CLIENT_ID = "openclaw-control-ui";
+const GATEWAY_CLIENT_MODE = "ui";
+const GATEWAY_CLIENT_DISPLAY_NAME = "虾班";
+const GATEWAY_CLIENT_CAPABILITIES = ["tool-events"] as const;
 const GATEWAY_RESTART_UNSUPPORTED_MESSAGE =
-  "当前 Gateway 版本还不支持页面内重启。请先手动重启一次 Gateway，加载最新版本后再试。"
+  "当前 Gateway 版本还不支持页面内重启。请先手动重启一次 Gateway，加载最新版本后再试。";
 
 type StoredGatewayDeviceIdentity = {
-  version: 1
-  deviceId: string
-  publicKey: string
-  privateKeyPkcs8: string
-  createdAtMs: number
-}
+  version: 1;
+  deviceId: string;
+  publicKey: string;
+  privateKeyPkcs8: string;
+  createdAtMs: number;
+};
 
 type GatewayDeviceIdentity = {
-  deviceId: string
-  publicKey: string
-  privateKey: CryptoKey
-}
+  deviceId: string;
+  publicKey: string;
+  privateKey: CryptoKey;
+};
 
-type MessageHandler = (messages: GatewayMessage[]) => void
-type StatusHandler = (status: "connecting" | "connected" | "disconnected") => void
-type GatewayEventHandler = (eventName: string, payload: Record<string, unknown>) => void
+type MessageHandler = (messages: GatewayMessage[]) => void;
+type StatusHandler = (status: "connecting" | "connected" | "disconnected") => void;
+type GatewayEventHandler = (eventName: string, payload: Record<string, unknown>) => void;
 type GatewayResponseFrame = {
-  type: "res"
-  id: string
-  ok: boolean
-  payload?: Record<string, unknown>
-  error?: { message?: string }
-}
+  type: "res";
+  id: string;
+  ok: boolean;
+  payload?: Record<string, unknown>;
+  error?: { message?: string };
+};
 
 type GatewayHelloOkPayload = {
-  type?: "hello-ok"
+  type?: "hello-ok";
   auth?: {
-    scopes?: string[]
-  }
+    scopes?: string[];
+  };
   snapshot?: {
-    stateDir?: string
-  }
-}
+    stateDir?: string;
+  };
+};
 
 type GatewayIncomingFrame = {
-  type?: string
-  event?: string
-  id?: string
-  ok?: boolean
-  payload?: Record<string, unknown>
+  type?: string;
+  event?: string;
+  id?: string;
+  ok?: boolean;
+  payload?: Record<string, unknown>;
   error?: {
-    message?: string
-  }
-}
+    message?: string;
+  };
+};
 
 export type GatewayAgentIdentity = {
-  agentId: string
-  name?: string
-  avatar?: string
-  emoji?: string
-}
+  agentId: string;
+  name?: string;
+  avatar?: string;
+  emoji?: string;
+};
 
 type GatewayAgentListIdentity = {
-  name?: string
-  theme?: string
-  emoji?: string
-  avatar?: string
-  avatarUrl?: string
-}
+  name?: string;
+  theme?: string;
+  emoji?: string;
+  avatar?: string;
+  avatarUrl?: string;
+};
 
 type GatewayAgentListItem = {
-  id: string
-  name?: string
-  identity?: GatewayAgentListIdentity
-}
+  id: string;
+  name?: string;
+  identity?: GatewayAgentListIdentity;
+};
 
 export type GatewayAgentsListResponse = {
-  defaultId: string
-  mainKey: string
-  scope: "per-sender" | "global"
-  agents: GatewayAgentListItem[]
-}
+  defaultId: string;
+  mainKey: string;
+  scope: "per-sender" | "global";
+  agents: GatewayAgentListItem[];
+};
 
 export type GatewayCreateAgentParams = {
-  name: string
-  workspace: string
-  emoji?: string
-  avatar?: string
-}
+  name: string;
+  workspace: string;
+  emoji?: string;
+  avatar?: string;
+};
 
 export type GatewayCreateAgentResult = {
-  ok: true
-  agentId: string
-  name: string
-  workspace: string
-}
+  ok: true;
+  agentId: string;
+  name: string;
+  workspace: string;
+};
 
 export type GatewayAgentUpdateParams = {
-  name?: string
-  workspace?: string
-  model?: string
-  avatar?: string
-}
+  name?: string;
+  workspace?: string;
+  model?: string;
+  avatar?: string;
+};
 
 export type GatewayAgentUpdateResult = {
-  ok: true
-  agentId: string
-}
+  ok: true;
+  agentId: string;
+};
 
 type PendingRequest = {
-  method: string
-  resolve: (data: GatewayResponseFrame) => void
-  reject: (error: Error) => void
-}
+  method: string;
+  resolve: (data: GatewayResponseFrame) => void;
+  reject: (error: Error) => void;
+};
 
 export interface GatewayMessage {
-  role: "user" | "assistant"
-  content: string
-  thinking?: string
-  model?: string
-  provider?: string
+  role: "user" | "assistant";
+  content: string;
+  thinking?: string;
+  model?: string;
+  provider?: string;
   usage?: {
-    input: number
-    output: number
-    cacheRead: number
-    cacheWrite: number
-    totalTokens: number
-    cost?: { total: number }
-  }
-  timestamp: number
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    totalTokens: number;
+    cost?: { total: number };
+  };
+  timestamp: number;
 }
 
 export interface GatewayHistoryPayload {
-  sessionKey?: string
-  messages?: unknown[]
-  sessionId?: string
-  thinkingLevel?: string
-  verboseLevel?: string
+  sessionKey?: string;
+  messages?: unknown[];
+  sessionId?: string;
+  thinkingLevel?: string;
+  verboseLevel?: string;
 }
 
 export interface GatewayAgentEventPayload {
-  runId?: string
-  seq?: number
-  stream?: string
-  ts?: number
-  sessionKey?: string
-  data?: Record<string, unknown>
+  runId?: string;
+  seq?: number;
+  stream?: string;
+  ts?: number;
+  sessionKey?: string;
+  data?: Record<string, unknown>;
 }
 
 export interface GatewayChatEventContentBlock {
-  type?: string
-  text?: string
-  thinking?: string
+  type?: string;
+  text?: string;
+  thinking?: string;
 }
 
 export interface GatewayChatEventPayload {
-  runId?: string
-  sessionKey?: string
-  seq?: number
-  state?: "delta" | "final" | "error" | "aborted"
+  runId?: string;
+  sessionKey?: string;
+  seq?: number;
+  state?: "delta" | "final" | "error" | "aborted";
   message?: {
-    role?: "user" | "assistant"
-    content?: GatewayChatEventContentBlock[]
-    timestamp?: number
-    usage?: Record<string, unknown>
-  }
-  errorMessage?: string
+    role?: "user" | "assistant";
+    content?: GatewayChatEventContentBlock[];
+    timestamp?: number;
+    usage?: Record<string, unknown>;
+  };
+  errorMessage?: string;
 }
 
 export interface GatewayCronJob {
-  id: string
-  name: string
-  enabled?: boolean
-  agentId?: string | null
-  description?: string
+  id: string;
+  name: string;
+  enabled?: boolean;
+  agentId?: string | null;
+  description?: string;
   state?: {
-    nextRunAtMs?: number
-    runningAtMs?: number
-    lastRunAtMs?: number
-    lastRunStatus?: string
-    lastStatus?: string
-  }
+    nextRunAtMs?: number;
+    runningAtMs?: number;
+    lastRunAtMs?: number;
+    lastRunStatus?: string;
+    lastStatus?: string;
+  };
 }
 
 export interface GatewayCronListResponse {
-  jobs?: GatewayCronJob[]
-  total?: number
-  offset?: number
-  limit?: number
-  hasMore?: boolean
-  nextOffset?: number | null
+  jobs?: GatewayCronJob[];
+  total?: number;
+  offset?: number;
+  limit?: number;
+  hasMore?: boolean;
+  nextOffset?: number | null;
 }
 
 export interface GatewayCronStatusResponse {
-  enabled?: boolean
-  storePath?: string
-  jobs?: number
-  nextWakeAtMs?: number | null
+  enabled?: boolean;
+  storePath?: string;
+  jobs?: number;
+  nextWakeAtMs?: number | null;
 }
 
 export interface GatewayCronEventPayload {
-  jobId?: string
-  action?: "added" | "updated" | "removed" | "started" | "finished"
-  runAtMs?: number
-  durationMs?: number
-  status?: "ok" | "error" | "skipped"
-  error?: string
-  summary?: string
-  delivered?: boolean
-  deliveryStatus?: string
-  deliveryError?: string
-  sessionId?: string
-  sessionKey?: string
-type GatewaySessionDefaultsPayload = {
-  defaults?: {
-    contextTokens?: number | null
-  }
-  sessions?: Array<{
-    contextTokens?: number | null
-  }>
+  jobId?: string;
+  action?: "added" | "updated" | "removed" | "started" | "finished";
+  runAtMs?: number;
+  durationMs?: number;
+  status?: "ok" | "error" | "skipped";
+  error?: string;
+  summary?: string;
+  delivered?: boolean;
+  deliveryStatus?: string;
+  deliveryError?: string;
+  sessionId?: string;
+  sessionKey?: string;
+  nextRunAtMs?: number;
+  model?: string;
+  provider?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+    cache_read_tokens?: number;
+    cache_write_tokens?: number;
+  };
 }
 
+type GatewaySessionMutationResult = Record<string, unknown>;
+type GatewaySessionDefaultsPayload = {
+  defaults?: {
+    contextTokens?: number | null;
+  };
+  sessions?: Array<{
+    contextTokens?: number | null;
+  }>;
+};
+
 function toFiniteNumber(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function toPositiveInteger(value: unknown) {
-  const parsed = toFiniteNumber(value)
+  const parsed = toFiniteNumber(value);
   if (parsed === undefined || parsed <= 0) {
-    return undefined
+    return undefined;
   }
-  return Math.max(1, Math.floor(parsed))
+  return Math.max(1, Math.floor(parsed));
 }
 
 function sanitizeRequestParamsForLog(method: string, params: Record<string, unknown>) {
   if (method === "config.patch" || method === "config.apply" || method === "config.set") {
-    const next = { ...params }
+    const next = { ...params };
     if (typeof next.raw === "string") {
-      next.raw = `[json5 ${next.raw.length} chars]`
+      next.raw = `[json5 ${next.raw.length} chars]`;
     }
-    return next
+    return next;
   }
 
-  return params
+  return params;
+}
+
+export function normalizeRestartGatewayError(error: unknown) {
+  if (error instanceof Error && /unknown method:\s*gateway\.restart/i.test(error.message)) {
+    return new Error(GATEWAY_RESTART_UNSUPPORTED_MESSAGE);
+  }
+
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error("网关重启失败，请稍后重试");
 }
 
 function isPresentAgentWorkspaceFile(file: AgentWorkspaceFileEntry) {
-  return file.missing !== true
+  return !file.missing;
 }
 
 function groupModelsByProvider(models: GatewayModelChoice[]): ModelProviderGroup[] {
-  const grouped = new Map<string, ModelProviderGroup["models"]>()
+  const grouped = new Map<string, ModelProviderGroup["models"]>();
 
   for (const model of models) {
-    const provider = typeof model.provider === "string" ? model.provider.trim() : ""
-    const id = typeof model.id === "string" ? model.id.trim() : ""
-    const name = typeof model.name === "string" && model.name.trim() ? model.name.trim() : id
+    const provider = typeof model.provider === "string" ? model.provider.trim() : "";
+    const id = typeof model.id === "string" ? model.id.trim() : "";
+    const name = typeof model.name === "string" && model.name.trim() ? model.name.trim() : id;
     if (!provider || !id) {
-      continue
+      continue;
     }
 
-    const items = grouped.get(provider) ?? []
+    const items = grouped.get(provider) ?? [];
     items.push({
       id,
       name,
@@ -320,90 +345,65 @@ function groupModelsByProvider(models: GatewayModelChoice[]): ModelProviderGroup
         typeof model.api === "string" && model.api.trim()
           ? (model.api.trim() as ModelApiProtocol)
           : undefined,
-    })
-    grouped.set(provider, items)
+    });
+    grouped.set(provider, items);
   }
 
   return Array.from(grouped.entries())
-    .sort(([leftProvider], [rightProvider]) => leftProvider.localeCompare(rightProvider))
+    .toSorted(([leftProvider], [rightProvider]) => leftProvider.localeCompare(rightProvider))
     .map(([provider, models]) => ({
       provider,
-      models: [...models].sort((left, right) => left.name.localeCompare(right.name)),
-    }))
+      models: [...models].toSorted((left, right) => left.name.localeCompare(right.name)),
+    }));
 }
 
 function toUint8Array(input: ArrayBuffer | Uint8Array) {
-  return input instanceof Uint8Array ? input : new Uint8Array(input)
+  return input instanceof Uint8Array ? input : new Uint8Array(input);
 }
 
 function bytesToBase64Url(input: ArrayBuffer | Uint8Array) {
-  const bytes = toUint8Array(input)
-  let binary = ""
+  const bytes = toUint8Array(input);
+  let binary = "";
   for (const byte of bytes) {
-    binary += String.fromCharCode(byte)
+    binary += String.fromCharCode(byte);
   }
-  return btoa(binary).split("+").join("-").split("/").join("_").replace(/=+$/g, "")
+  return btoa(binary).split("+").join("-").split("/").join("_").replace(/=+$/g, "");
 }
 
 function base64UrlToBytes(input: string) {
-  const normalized = input.split("-").join("+").split("_").join("/")
-  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4)
-  const binary = atob(padded)
-  const bytes = new Uint8Array(binary.length)
+  const normalized = input.split("-").join("+").split("_").join("/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i)
+    bytes[i] = binary.charCodeAt(i);
   }
-  return bytes
+  return bytes;
 }
 
 async function sha256Hex(input: ArrayBuffer | Uint8Array) {
-function toUint8Array(input: ArrayBuffer | Uint8Array) {
-  return input instanceof Uint8Array ? input : new Uint8Array(input)
-}
-
-function bytesToBase64Url(input: ArrayBuffer | Uint8Array) {
-  const bytes = toUint8Array(input)
-  let binary = ""
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte)
-  }
-  return btoa(binary).split("+").join("-").split("/").join("_").replace(/=+$/g, "")
-}
-
-function base64UrlToBytes(input: string) {
-  const normalized = input.split("-").join("+").split("_").join("/")
-  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4)
-  const binary = atob(padded)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
-}
-
-async function sha256Hex(input: ArrayBuffer | Uint8Array) {
-  const digest = await crypto.subtle.digest("SHA-256", toUint8Array(input) as BufferSource)
+  const digest = await crypto.subtle.digest("SHA-256", toUint8Array(input) as BufferSource);
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
+    .join("");
 }
 
 function buildDeviceAuthPayloadV3(params: {
-  deviceId: string
-  clientId: string
-  clientMode: string
-  role: string
-  scopes: string[]
-  signedAtMs: number
-  token?: string | null
-  nonce: string
-  platform?: string | null
-  deviceFamily?: string | null
+  deviceId: string;
+  clientId: string;
+  clientMode: string;
+  role: string;
+  scopes: string[];
+  signedAtMs: number;
+  token?: string | null;
+  nonce: string;
+  platform?: string | null;
+  deviceFamily?: string | null;
 }) {
-  const scopes = params.scopes.join(",")
-  const token = params.token ?? ""
-  const platform = params.platform?.trim() || ""
-  const deviceFamily = params.deviceFamily?.trim() || ""
+  const scopes = params.scopes.join(",");
+  const token = params.token ?? "";
+  const platform = params.platform?.trim() || "";
+  const deviceFamily = params.deviceFamily?.trim() || "";
   return [
     "v3",
     params.deviceId,
@@ -416,84 +416,98 @@ function buildDeviceAuthPayloadV3(params: {
     params.nonce,
     platform,
     deviceFamily,
-  ].join("|")
+  ].join("|");
 }
 
 class GatewayService {
-  private ws: WebSocket | null = null
-  private onMessage: MessageHandler | null = null
-  private onStatus: StatusHandler | null = null
-  private eventHandlers = new Set<GatewayEventHandler>()
-  private pendingRequests = new Map<string, PendingRequest>()
-  private pendingChatRuns = new Map<string, string>()
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  private connectRequestId: string | null = null
-  private connectNonce: string | null = null
-  private isHandshakeComplete = false
-  private connectPromise: Promise<void> | null = null
-  private resolveConnectPromise: (() => void) | null = null
-  private rejectConnectPromise: ((error: Error) => void) | null = null
-  private deviceIdentityPromise: Promise<GatewayDeviceIdentity> | null = null
-  private grantedScopes: string[] = []
-  private gatewayStateDir: string | null = null
+  private ws: WebSocket | null = null;
+  private onMessage: MessageHandler | null = null;
+  private onStatus: StatusHandler | null = null;
+  private eventHandlers = new Set<GatewayEventHandler>();
+  private pendingRequests = new Map<string, PendingRequest>();
+  private pendingChatRuns = new Map<string, string>();
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectRequestId: string | null = null;
+  private connectNonce: string | null = null;
+  private isHandshakeComplete = false;
+  private connectPromise: Promise<void> | null = null;
+  private resolveConnectPromise: (() => void) | null = null;
+  private rejectConnectPromise: ((error: Error) => void) | null = null;
+  private deviceIdentityPromise: Promise<GatewayDeviceIdentity> | null = null;
+  private grantedScopes: string[] = [];
+  private gatewayStateDir: string | null = null;
 
   // 注册回调
   setHandlers(onMessage: MessageHandler, onStatus: StatusHandler) {
-    this.onMessage = onMessage
-    this.onStatus = onStatus
+    this.onMessage = onMessage;
+    this.onStatus = onStatus;
   }
 
   addEventHandler(handler: GatewayEventHandler) {
-    this.eventHandlers.add(handler)
+    this.eventHandlers.add(handler);
     return () => {
-      this.eventHandlers.delete(handler)
-    }
+      this.eventHandlers.delete(handler);
+    };
   }
 
   // 连接 Gateway
   connect() {
-    if (this.ws?.readyState === WebSocket.OPEN && this.isHandshakeComplete) return
-    if (this.ws?.readyState === WebSocket.CONNECTING) return
-    if (this.ws?.readyState === WebSocket.OPEN && !this.isHandshakeComplete) return
-    this.onStatus?.("connecting")
-    this.createConnectPromise()
-
-    const ws = new WebSocket(GATEWAY_URL)
-    this.ws = ws
-    this.isHandshakeComplete = false
-
-    ws.onopen = () => {
-      if (this.ws !== ws) return
-      console.log("[GW] connected")
+    if (this.ws?.readyState === WebSocket.OPEN && this.isHandshakeComplete) {
+      return;
     }
+    if (this.ws?.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+    if (this.ws?.readyState === WebSocket.OPEN && !this.isHandshakeComplete) {
+      return;
+    }
+    this.onStatus?.("connecting");
+    this.createConnectPromise();
 
-    ws.onmessage = (event) => {
-      if (this.ws !== ws) return
-      try {
-        const data = JSON.parse(event.data)
-        console.log("[GW] recv:", data.type, data.event || data.method || "")
-        this.handleMessage(data)
-      } catch (e) {
-        console.error("[GW] error:", e)
+    const ws = new WebSocket(GATEWAY_URL);
+    this.ws = ws;
+    this.isHandshakeComplete = false;
+
+    ws.addEventListener("open", () => {
+      if (this.ws !== ws) {
+        return;
       }
-    }
+      console.log("[GW] connected");
+    });
 
-    ws.onclose = () => {
-      if (this.ws !== ws) return
-      this.ws = null
-      this.isHandshakeComplete = false
-      this.connectRequestId = null
-      this.connectNonce = null
-      this.rejectActiveConnect(new Error("gateway connection closed"))
-      this.failPendingRequests(new Error("gateway connection closed"))
-      this.onStatus?.("disconnected")
-      this.scheduleReconnect()
-    }
+    ws.addEventListener("message", (event) => {
+      if (this.ws !== ws) {
+        return;
+      }
+      try {
+        const data = JSON.parse(event.data);
+        console.log("[GW] recv:", data.type, data.event || data.method || "");
+        this.handleMessage(data);
+      } catch (e) {
+        console.error("[GW] error:", e);
+      }
+    });
 
-    ws.onerror = (err) => {
-      if (this.ws !== ws) return
-      console.error("[GW] error:", err)
-    }
+    ws.addEventListener("close", () => {
+      if (this.ws !== ws) {
+        return;
+      }
+      this.ws = null;
+      this.isHandshakeComplete = false;
+      this.connectRequestId = null;
+      this.connectNonce = null;
+      this.rejectActiveConnect(new Error("gateway connection closed"));
+      this.failPendingRequests(new Error("gateway connection closed"));
+      this.onStatus?.("disconnected");
+      this.scheduleReconnect();
+    });
+
+    ws.addEventListener("error", (err) => {
+      if (this.ws !== ws) {
+        return;
+      }
+      console.error("[GW] error:", err);
+    });
   }
 
   // 处理收到的消息
@@ -501,32 +515,32 @@ class GatewayService {
     // 握手 challenge
     if (data.type === "event" && data.event === "connect.challenge") {
       this.connectNonce =
-        typeof data.payload?.nonce === "string" ? data.payload.nonce.trim() || null : null
+        typeof data.payload?.nonce === "string" ? data.payload.nonce.trim() || null : null;
       void this.sendConnect().catch((error) => {
-        this.connectRequestId = null
-        this.rejectActiveConnect(error instanceof Error ? error : new Error(String(error)))
-        console.error("[GW] error:", error)
-      })
-      return
+        this.connectRequestId = null;
+        this.rejectActiveConnect(error instanceof Error ? error : new Error(String(error)));
+        console.error("[GW] error:", error);
+      });
+      return;
     }
 
     // 心跳 & 健康检查 — 静默处理
     if (data.type === "event" && (data.event === "tick" || data.event === "health")) {
-      this.dispatchEvent(data.event, data.payload)
-      return
+      this.dispatchEvent(data.event, data.payload);
+      return;
     }
 
     if (data.type === "event") {
-      console.log("[GW] event payload:", data.event || "unknown", data.payload ?? {})
-      this.dispatchEvent(data.event, data.payload)
+      console.log("[GW] event payload:", data.event || "unknown", data.payload ?? {});
+      this.dispatchEvent(data.event, data.payload);
     }
 
     // chat.send 的最终态通过 chat 事件下发
     if (data.type === "event" && data.event === "chat") {
-      const runId = typeof data.payload?.runId === "string" ? data.payload.runId : null
-      const state = typeof data.payload?.state === "string" ? data.payload.state : null
+      const runId = typeof data.payload?.runId === "string" ? data.payload.runId : null;
+      const state = typeof data.payload?.state === "string" ? data.payload.state : null;
       const sessionKey =
-        typeof data.payload?.sessionKey === "string" ? data.payload.sessionKey : "agent:main:main"
+        typeof data.payload?.sessionKey === "string" ? data.payload.sessionKey : "agent:main:main";
 
       console.log(
         "[GW] chat event:",
@@ -534,25 +548,25 @@ class GatewayService {
         "run:",
         runId || "none",
         "hasMessage:",
-        Boolean(data.payload?.message)
-      )
+        Boolean(data.payload?.message),
+      );
 
       if (state === "final") {
         void this.handleFinalChatEvent({
           runId,
           sessionKey,
           payload: data.payload,
-        })
-        return
+        });
+        return;
       }
 
       if (state === "error" || state === "aborted") {
         const errorMessage =
           typeof data.payload?.errorMessage === "string" && data.payload.errorMessage.trim()
             ? data.payload.errorMessage
-            : `chat ${state}`
-        const error = new Error(errorMessage)
-        console.error("[GW] error:", error)
+            : `chat ${state}`;
+        const error = new Error(errorMessage);
+        console.error("[GW] error:", error);
         if (runId) {
           this.finishChatRun(runId, {
             type: "res",
@@ -560,115 +574,117 @@ class GatewayService {
             ok: false,
             error: { message: error.message },
             payload: data.payload,
-          })
+          });
         }
-        return
+        return;
       }
 
-      return
+      return;
     }
 
     // 响应（包括 hello-ok 和 chat.send 回复）
     if (data.type === "res") {
-      const responseId = typeof data.id === "string" ? data.id : ""
+      const responseId = typeof data.id === "string" ? data.id : "";
       if (!responseId) {
-        return
+        return;
       }
 
-      const resolver = this.pendingRequests.get(responseId)
+      const resolver = this.pendingRequests.get(responseId);
       console.log(
-        `[GW] received res: id=${responseId}, method=${resolver?.method || "unknown"}, ok=${Boolean(data.ok)}`
-      )
+        `[GW] received res: id=${responseId}, method=${resolver?.method || "unknown"}, ok=${Boolean(data.ok)}`,
+      );
 
       // hello-ok 握手完成
       if (responseId === this.connectRequestId && data.ok && data.payload?.type === "hello-ok") {
-        const helloPayload = data.payload as GatewayHelloOkPayload
+        const helloPayload = data.payload as GatewayHelloOkPayload;
         const grantedScopes = Array.isArray(helloPayload.auth?.scopes)
           ? helloPayload.auth.scopes.filter(
-              (scope): scope is string => typeof scope === "string" && scope.trim().length > 0
+              (scope): scope is string => typeof scope === "string" && scope.trim().length > 0,
             )
-          : []
+          : [];
         const stateDir =
           typeof helloPayload.snapshot?.stateDir === "string" &&
           helloPayload.snapshot.stateDir.trim().length > 0
             ? helloPayload.snapshot.stateDir.trim()
-            : null
+            : null;
 
-        this.isHandshakeComplete = true
-        this.connectRequestId = null
-        this.connectNonce = null
-        this.grantedScopes = grantedScopes
-        this.gatewayStateDir = stateDir
-        this.resolveActiveConnect()
+        this.isHandshakeComplete = true;
+        this.connectRequestId = null;
+        this.connectNonce = null;
+        this.grantedScopes = grantedScopes;
+        this.gatewayStateDir = stateDir;
+        this.resolveActiveConnect();
         console.log(
-          `[GW] handshake ok: requestedScopes=${GATEWAY_OPERATOR_SCOPES.join(",")} grantedScopes=${grantedScopes.join(",") || "none"} stateDir=${stateDir || "unknown"}`
-        )
+          `[GW] handshake ok: requestedScopes=${GATEWAY_OPERATOR_SCOPES.join(",")} grantedScopes=${grantedScopes.join(",") || "none"} stateDir=${stateDir || "unknown"}`,
+        );
         if (!grantedScopes.includes("operator.admin")) {
           console.error(
-            `[GW] handshake missing admin scope: requested=${GATEWAY_OPERATOR_SCOPES.join(",")} granted=${grantedScopes.join(",") || "none"}`
-          )
+            `[GW] handshake missing admin scope: requested=${GATEWAY_OPERATOR_SCOPES.join(",")} granted=${grantedScopes.join(",") || "none"}`,
+          );
         }
-        this.onStatus?.("connected")
-        return
+        this.onStatus?.("connected");
+        return;
       }
 
       if (responseId === this.connectRequestId && !data.ok) {
-        const error = new Error(data.error?.message || "gateway connect failed")
-        this.connectRequestId = null
-        this.connectNonce = null
-        this.rejectActiveConnect(error)
-        console.error("[GW] error:", error)
-        return
+        const error = new Error(data.error?.message || "gateway connect failed");
+        this.connectRequestId = null;
+        this.connectNonce = null;
+        this.rejectActiveConnect(error);
+        console.error("[GW] error:", error);
+        return;
       }
 
       // 兼容旧协议：只有 chat.send 直接把最终消息放在 res.payload.messages 时才直写到 UI。
       if (Array.isArray(data.payload?.messages) && resolver?.method === "chat.send") {
-        console.log("[GW] chat reply:", data.payload.messages.length, "msgs")
+        console.log("[GW] chat reply:", data.payload.messages.length, "msgs");
         const msgs: GatewayMessage[] = data.payload.messages
           .map((message: unknown) => this.toGatewayMessage(message))
-          .filter((message: GatewayMessage | null): message is GatewayMessage => message !== null)
-        this.onMessage?.(msgs)
+          .filter((message: GatewayMessage | null): message is GatewayMessage => message !== null);
+        this.onMessage?.(msgs);
       }
 
       // 通用 pending request 回调
       if (resolver) {
-        const payloadStatus = data.payload?.status
-        const runId = typeof data.payload?.runId === "string" ? data.payload.runId : null
+        const payloadStatus = data.payload?.status;
+        const runId = typeof data.payload?.runId === "string" ? data.payload.runId : null;
         if (
           resolver.method === "chat.send" &&
           runId &&
           !Array.isArray(data.payload?.messages) &&
-          (payloadStatus === "accepted" || payloadStatus === "started" || payloadStatus === "in_flight")
+          (payloadStatus === "accepted" ||
+            payloadStatus === "started" ||
+            payloadStatus === "in_flight")
         ) {
-          this.pendingChatRuns.set(runId, responseId)
-          return
+          this.pendingChatRuns.set(runId, responseId);
+          return;
         }
-        resolver.resolve(data as GatewayResponseFrame)
-        this.pendingRequests.delete(responseId)
+        resolver.resolve(data as GatewayResponseFrame);
+        this.pendingRequests.delete(responseId);
       }
-      return
+      return;
     }
   }
 
   // 发送连接请求
   private async sendConnect() {
     if (!this.connectNonce) {
-      throw new Error("gateway connect challenge missing nonce")
+      throw new Error("gateway connect challenge missing nonce");
     }
 
-    const id = crypto.randomUUID()
-    this.connectRequestId = id
-    const token = this.resolveGatewayToken()
+    const id = crypto.randomUUID();
+    this.connectRequestId = id;
+    const token = this.resolveGatewayToken();
     const device = await this.resolveDeviceIdentity({
       clientId: GATEWAY_CLIENT_ID,
       clientMode: GATEWAY_CLIENT_MODE,
       role: "operator",
       scopes: [...GATEWAY_OPERATOR_SCOPES],
       token,
-    })
+    });
     console.log(
-      `[GW] connect: clientId=${GATEWAY_CLIENT_ID}, clientMode=${GATEWAY_CLIENT_MODE}, requestingScopes=${GATEWAY_OPERATOR_SCOPES.join(",")}`
-    )
+      `[GW] connect: clientId=${GATEWAY_CLIENT_ID}, clientMode=${GATEWAY_CLIENT_MODE}, requestingScopes=${GATEWAY_OPERATOR_SCOPES.join(",")}`,
+    );
     const sent = this.send({
       type: "req",
       id,
@@ -689,20 +705,20 @@ class GatewayService {
         auth: token ? { token } : undefined,
         device,
       },
-    })
+    });
     if (!sent) {
-      const error = new Error("gateway connect send failed")
-      this.connectRequestId = null
-      this.rejectActiveConnect(error)
-      console.error("[GW] error:", error)
+      const error = new Error("gateway connect send failed");
+      this.connectRequestId = null;
+      this.rejectActiveConnect(error);
+      console.error("[GW] error:", error);
     }
   }
 
   // 发送聊天消息
   async sendChat(text: string, sessionKey = "agent:main:main"): Promise<GatewayResponseFrame> {
-    await this.ensureConnected()
+    await this.ensureConnected();
 
-    const id = crypto.randomUUID()
+    const id = crypto.randomUUID();
     return new Promise((resolve) => {
       this.pendingRequests.set(id, {
         method: "chat.send",
@@ -714,9 +730,9 @@ class GatewayService {
             ok: false,
             error: { message: error.message },
           }),
-      })
+      });
 
-      console.log(`[GW] chat.send: sessionKey=${sessionKey}, id=${id}`)
+      console.log(`[GW] chat.send: sessionKey=${sessionKey}, id=${id}`);
       const sent = this.send({
         type: "req",
         id,
@@ -727,157 +743,161 @@ class GatewayService {
           idempotencyKey: id,
           deliver: false,
         },
-      })
+      });
       if (!sent) {
-        this.pendingRequests.delete(id)
-        const error = new Error("gateway chat.send send failed")
-        console.error("[GW] error:", error)
+        this.pendingRequests.delete(id);
+        const error = new Error("gateway chat.send send failed");
+        console.error("[GW] error:", error);
         resolve({
           type: "res",
           id,
           ok: false,
           error: { message: error.message },
-        })
-        return
+        });
+        return;
       }
 
       // AI 推理可能较久，超时放宽到 120 秒，避免正常回复被过早判失败。
       setTimeout(() => {
         if (this.pendingRequests.has(id)) {
-          this.pendingRequests.delete(id)
-          this.dropPendingChatRunByRequestId(id)
+          this.pendingRequests.delete(id);
+          this.dropPendingChatRunByRequestId(id);
           resolve({
             type: "res",
             id,
             ok: false,
             error: { message: "timeout" },
-          })
+          });
         }
-      }, 120000)
-    })
+      }, 120000);
+    });
   }
 
   async sendCompactCommand(sessionKey: string): Promise<GatewayResponseFrame> {
-    console.log(`[GW] sendCompactCommand: key=${sessionKey}`)
-    return this.sendChat("/compact", sessionKey)
+    console.log(`[GW] sendCompactCommand: key=${sessionKey}`);
+    return this.sendChat("/compact", sessionKey);
   }
 
   // 通用请求入口，复用现有 req/res 匹配机制。
   async sendRequest<T = Record<string, unknown>>(
     method: string,
-    params: Record<string, unknown> = {}
+    params: Record<string, unknown> = {},
   ): Promise<T> {
-    console.log(`[GW] sendRequest ${method}:`, sanitizeRequestParamsForLog(method, params))
+    console.log(`[GW] sendRequest ${method}:`, sanitizeRequestParamsForLog(method, params));
 
-    const frame = await this.requestFrame(method, params, 10000)
+    const frame = await this.requestFrame(method, params, 10000);
     if (!frame.ok) {
-      const error = new Error(frame.error?.message || `${method} failed`)
+      const error = new Error(frame.error?.message || `${method} failed`);
       if (error.message.includes("missing scope:")) {
         console.error(
-          `[GW] scope error: method=${method} requested=${GATEWAY_OPERATOR_SCOPES.join(",")} granted=${this.grantedScopes.join(",") || "none"} message=${error.message}`
-        )
+          `[GW] scope error: method=${method} requested=${GATEWAY_OPERATOR_SCOPES.join(",")} granted=${this.grantedScopes.join(",") || "none"} message=${error.message}`,
+        );
       }
-      console.error("[GW] error:", error)
+      console.error("[GW] error:", error);
+      throw error;
+    }
+
+    console.log(`[GW] sendRequest ${method} -> response`, frame.payload);
+    return (frame.payload ?? {}) as T;
+  }
+
+  async compactSession(
+    sessionKey: string,
+    maxLines?: number,
+  ): Promise<GatewaySessionMutationResult> {
+    const params: Record<string, unknown> = { key: sessionKey };
+    if (typeof maxLines === "number") {
+      params.maxLines = maxLines;
+    }
+
+    console.log(
+      `[GW] compactSession: key=${sessionKey}${typeof maxLines === "number" ? `, maxLines=${maxLines}` : ""}`,
+    );
+    return this.sendRequest("sessions.compact", params);
+  }
+
+  async resetSession(sessionKey: string): Promise<GatewaySessionMutationResult> {
+    console.log(`[GW] resetSession: key=${sessionKey}`);
+    return this.sendRequest("sessions.reset", {
       key: sessionKey,
       reason: "reset",
-    })
+    });
   }
 
   async deleteSession(sessionKey: string): Promise<GatewaySessionMutationResult> {
-    console.log(`[GW] deleteSession: key=${sessionKey}`)
-    return this.sendRequest<GatewaySessionMutationResult>("sessions.delete", {
+    console.log(`[GW] deleteSession: key=${sessionKey}`);
+    return this.sendRequest("sessions.delete", {
       key: sessionKey,
-    })
+    });
   }
 
   async getSessionDefaults(agentId: string): Promise<number> {
-    console.log(`[GW] getSessionDefaults: agent=${agentId}`)
+    console.log(`[GW] getSessionDefaults: agent=${agentId}`);
     const payload = await this.sendRequest<GatewaySessionDefaultsPayload>("sessions.list", {
       agentId,
       limit: 1,
-    })
-    const defaultsContextTokens = toPositiveInteger(payload.defaults?.contextTokens)
+    });
+    const defaultsContextTokens = toPositiveInteger(payload.defaults?.contextTokens);
     const sessionContextTokens = Array.isArray(payload.sessions)
       ? payload.sessions
           .map((session) => toPositiveInteger(session.contextTokens))
           .find((value): value is number => value !== undefined)
-      : undefined
-    const contextTokens = defaultsContextTokens ?? sessionContextTokens ?? 0
+      : undefined;
+    const contextTokens = defaultsContextTokens ?? sessionContextTokens ?? 0;
     const source =
       defaultsContextTokens !== undefined
         ? "defaults"
         : sessionContextTokens !== undefined
           ? "session"
-          : "missing"
+          : "missing";
     console.log(
-      `[GW] getSessionDefaults: agent=${agentId}, source=${source}, contextTokens=${contextTokens}`
-    )
-    return contextTokens
+      `[GW] getSessionDefaults: agent=${agentId}, source=${source}, contextTokens=${contextTokens}`,
+    );
+    return contextTokens;
   }
 
   async getSessionRuntimeState(sessionKey: string, agentId?: string): Promise<SessionRuntimeState> {
     const resolvedAgentId =
       agentId?.trim() ||
-      (sessionKey.startsWith("agent:") ? sessionKey.split(":")[1]?.trim() || "" : "")
+      (sessionKey.startsWith("agent:") ? sessionKey.split(":")[1]?.trim() || "" : "");
 
     console.log(
-      `[GW] getSessionRuntimeState: key=${sessionKey}, agent=${resolvedAgentId || "unknown"}`
-    )
+      `[GW] getSessionRuntimeState: key=${sessionKey}, agent=${resolvedAgentId || "unknown"}`,
+    );
     const payload = await this.sendRequest<SessionRuntimeListPayload>("sessions.list", {
       ...(resolvedAgentId ? { agentId: resolvedAgentId } : {}),
       limit: 200,
-    })
-    const runtimeState = resolveSessionRuntimeState(sessionKey, payload)
+    });
+    const runtimeState = resolveSessionRuntimeState(sessionKey, payload);
 
     console.log(
-      `[GW] getSessionRuntimeState: key=${sessionKey}, found=${runtimeState.sessionFound}, fresh=${runtimeState.currentContextUsedFresh}, contextWindowSize=${runtimeState.contextWindowSize}, currentContextUsed=${runtimeState.currentContextUsed ?? 0}`
-    )
-    return runtimeState
+      `[GW] getSessionRuntimeState: key=${sessionKey}, found=${runtimeState.sessionFound}, fresh=${runtimeState.currentContextUsedFresh}, contextWindowSize=${runtimeState.contextWindowSize}, currentContextUsed=${runtimeState.currentContextUsed ?? 0}`,
+    );
+    return runtimeState;
   }
 
   async getSessionCurrentContextUsed(sessionKey: string, agentId?: string): Promise<number | null> {
-    const runtimeState = await this.getSessionRuntimeState(sessionKey, agentId)
-    const resolvedAgentId =
-      agentId?.trim() ||
-      (sessionKey.startsWith("agent:") ? sessionKey.split(":")[1]?.trim() || "" : "")
-
-    console.log(
-      `[GW] getSessionRuntimeState: key=${sessionKey}, agent=${resolvedAgentId || "unknown"}`
-    )
-    const payload = await this.sendRequest<SessionRuntimeListPayload>("sessions.list", {
-      ...(resolvedAgentId ? { agentId: resolvedAgentId } : {}),
-      limit: 200,
-    })
-    const runtimeState = resolveSessionRuntimeState(sessionKey, payload)
-
-    console.log(
-      `[GW] getSessionRuntimeState: key=${sessionKey}, found=${runtimeState.sessionFound}, fresh=${runtimeState.currentContextUsedFresh}, contextWindowSize=${runtimeState.contextWindowSize}, currentContextUsed=${runtimeState.currentContextUsed ?? 0}`
-    )
-    return runtimeState
-  }
-
-  async getSessionCurrentContextUsed(sessionKey: string, agentId?: string): Promise<number | null> {
-    const runtimeState = await this.getSessionRuntimeState(sessionKey, agentId)
-    return runtimeState.currentContextUsed
+    const runtimeState = await this.getSessionRuntimeState(sessionKey, agentId);
+    return runtimeState.currentContextUsed;
   }
 
   getGrantedScopes() {
-    return [...this.grantedScopes]
+    return [...this.grantedScopes];
   }
 
   getStateDir() {
-    return this.gatewayStateDir
+    return this.gatewayStateDir;
   }
 
   getDefaultModelLabel(snapshot: GatewayConfigSnapshot) {
-    const model = snapshot.config?.agents?.defaults?.model
+    const model = snapshot.config?.agents?.defaults?.model;
     if (typeof model === "string" && model.trim()) {
-      return model.trim()
+      return model.trim();
     }
     if (typeof model === "object" && typeof model?.primary === "string" && model.primary.trim()) {
-      return model.primary.trim()
+      return model.primary.trim();
     }
-    return undefined
+    return undefined;
   }
 
   // 源码确认：
@@ -886,25 +906,21 @@ class GatewayService {
   // req: {}
   // res: ConfigFileSnapshot（含 config/hash/path/exists/valid）
   async getConfig() {
-    console.log("[GW] config.get")
-    return await this.sendRequest<GatewayConfigSnapshot>("config.get", {})
+    console.log("[GW] config.get");
+    return await this.sendRequest<GatewayConfigSnapshot>("config.get", {});
   }
 
-  async getConfigSnapshot() {
-    return await this.getConfig()
-  }
-
-  async restartGateway(options: { note?: string; restartDelayMs?: number } = {}) {
+  async getConfigEditorSnapshot(): Promise<GatewayConfigEditorSnapshot> {
     // 源码确认：
-    // - 新增 `gateway.restart` 控制面 RPC
-    // - 有 SIGUSR1 listener 时走进程内重启
-    // - 没有 listener 时回退到 supervisor/launchctl/systemd 重启
-    // 相关源码：
-    // - src/gateway/server-methods/update.ts
-    const snapshot = await this.getConfig()
+    // - method 注册：src/gateway/server-methods-list.ts
+    // - handler：src/gateway/server-methods/config.ts 的 "config.get"
+    // - 返回值来自 readConfigFileSnapshot()，包含脱敏后的 raw/hash/path/valid
+    // 所以核心配置编辑器读取完整配置时，直接走 config.get，不需要伪造空 patch。
+    console.log("[Config] getConfigEditorSnapshot");
+    const snapshot = await this.getConfig();
 
     if (snapshot.valid === false) {
-      throw new Error("当前 openclaw.json 无法安全读取原文，请先修复配置文件错误")
+      throw new Error("当前 openclaw.json 无法安全读取原文，请先修复配置文件错误");
     }
 
     return {
@@ -914,18 +930,47 @@ class GatewayService {
           : JSON.stringify(snapshot.parsed ?? {}, null, 2),
       hash: snapshot.hash,
       path: snapshot.path,
-      valid: snapshot.valid !== false,
+      valid: snapshot.valid ?? true,
       config: snapshot.config,
-    }
+    };
   }
 
   async getConfigSnapshot() {
-    return await this.getConfig()
+    return await this.getConfig();
   }
 
   async restartGateway(options: { note?: string; restartDelayMs?: number } = {}) {
     // 源码确认：
     // - 新增 `gateway.restart` 控制面 RPC
+    // - 有 SIGUSR1 listener 时走进程内重启
+    // - 没有 listener 时回退到 supervisor/launchctl/systemd 重启
+    // 相关源码：
+    // - src/gateway/server-methods/update.ts
+    // - src/infra/restart.ts
+    console.log("[GW] restartGateway");
+    try {
+      return await this.sendRequest("gateway.restart", {
+        note: options.note ?? "从龙虾办公室手动重启网关",
+        restartDelayMs: typeof options.restartDelayMs === "number" ? options.restartDelayMs : 0,
+      });
+    } catch (error) {
+      const normalizedError = normalizeRestartGatewayError(error);
+      console.error("[GW] restartGateway failed:", normalizedError);
+      throw normalizedError;
+    }
+  }
+
+  async patchConfig(
+    patch: string,
+    options: {
+      baseHash?: string;
+      sessionKey?: string;
+      note?: string;
+      restartDelayMs?: number;
+    } = {},
+  ) {
+    const snapshot = options.baseHash ? null : await this.getConfig();
+    const baseHash = options.baseHash ?? snapshot?.hash;
 
     // 源码确认：
     // - schema: src/gateway/protocol/schema/config.ts
@@ -933,7 +978,7 @@ class GatewayService {
     // req: { raw: string, baseHash?: string, sessionKey?: string, note?: string, restartDelayMs?: number }
     // 说明：raw 必须是 JSON5 字符串，且根节点必须是对象；
     // handler 会写盘后 scheduleGatewaySigusr1Restart，不适合“新增模型后不断开 WS”的流程。
-    console.log("[GW] config.patch")
+    console.log("[GW] config.patch");
     return await this.sendRequest<GatewayConfigWriteResult>("config.patch", {
       raw: patch,
       ...(baseHash ? { baseHash } : {}),
@@ -942,20 +987,20 @@ class GatewayService {
       ...(typeof options.restartDelayMs === "number"
         ? { restartDelayMs: options.restartDelayMs }
         : {}),
-    })
+    });
   }
 
   async applyConfig(
     rawConfig: string,
     options: {
-      baseHash?: string
-      sessionKey?: string
-      note?: string
-      restartDelayMs?: number
-    } = {}
+      baseHash?: string;
+      sessionKey?: string;
+      note?: string;
+      restartDelayMs?: number;
+    } = {},
   ) {
-    const snapshot = options.baseHash ? null : await this.getConfig()
-    const baseHash = options.baseHash ?? snapshot?.hash
+    const snapshot = options.baseHash ? null : await this.getConfig();
+    const baseHash = options.baseHash ?? snapshot?.hash;
 
     // 源码确认：
     // - schema: src/gateway/protocol/schema/config.ts
@@ -963,7 +1008,7 @@ class GatewayService {
     // req: { raw: string, baseHash?: string, sessionKey?: string, note?: string, restartDelayMs?: number }
     // 说明：config.apply 会用完整配置替换现有文件，但同样会 scheduleGatewaySigusr1Restart；
     // 新增模型流程应优先走不会主动重启的 config.set。
-    console.log("[GW] config.apply")
+    console.log("[GW] config.apply");
     return await this.sendRequest<GatewayConfigWriteResult>("config.apply", {
       raw: rawConfig,
       ...(baseHash ? { baseHash } : {}),
@@ -972,53 +1017,53 @@ class GatewayService {
       ...(typeof options.restartDelayMs === "number"
         ? { restartDelayMs: options.restartDelayMs }
         : {}),
-    })
+    });
   }
 
   async setConfig(
     config: Record<string, unknown>,
     options: {
-      baseHash?: string
-    } = {}
+      baseHash?: string;
+    } = {},
   ) {
-    const snapshot = options.baseHash ? null : await this.getConfig()
-    const baseHash = options.baseHash ?? snapshot?.hash
+    const snapshot = options.baseHash ? null : await this.getConfig();
+    const baseHash = options.baseHash ?? snapshot?.hash;
 
     // 源码确认：
     // - schema: src/gateway/protocol/schema/config.ts
     // - handler: src/gateway/server-methods/config.ts
     // req: { raw: string, baseHash?: string }
     // 说明：config.set 只写完整配置，不主动调度 restart；新增模型流程用它避免 WS 断开。
-    console.log("[GW] config.set")
+    console.log("[GW] config.set");
     return await this.sendRequest<GatewayConfigWriteResult>("config.set", {
       raw: JSON.stringify(config, null, 2),
       ...(baseHash ? { baseHash } : {}),
-    })
+    });
   }
 
   async listModels() {
-    console.log("[GW] listModels")
-    const payload = await this.sendRequest<GatewayModelsListResult>("models.list", {})
-    return groupModelsByProvider(Array.isArray(payload.models) ? payload.models : [])
+    console.log("[GW] listModels");
+    const payload = await this.sendRequest<GatewayModelsListResult>("models.list", {});
+    return groupModelsByProvider(Array.isArray(payload.models) ? payload.models : []);
   }
 
   async listCronJobs() {
-    console.log("[GW] cron.list")
+    console.log("[GW] cron.list");
     return await this.sendRequest<GatewayCronListResponse>("cron.list", {
       includeDisabled: true,
       limit: 200,
       offset: 0,
-    })
+    });
   }
 
   async getCronStatus() {
-    console.log("[GW] cron.status")
-    return await this.sendRequest<GatewayCronStatusResponse>("cron.status", {})
+    console.log("[GW] cron.status");
+    return await this.sendRequest<GatewayCronStatusResponse>("cron.status", {});
   }
 
   async getAgentIdentity(agentId: string) {
-    console.log(`[GW] getAgentIdentity: ${agentId}`)
-    return await this.sendRequest<GatewayAgentIdentity>("agent.identity.get", { agentId })
+    console.log(`[GW] getAgentIdentity: ${agentId}`);
+    return await this.sendRequest<GatewayAgentIdentity>("agent.identity.get", { agentId });
   }
 
   // 源码确认：
@@ -1027,8 +1072,8 @@ class GatewayService {
   // req: { "name": string, "workspace": string, "emoji"?: string, "avatar"?: string }
   // res: { "ok": true, "agentId": string, "name": string, "workspace": string }
   async createAgent(params: GatewayCreateAgentParams) {
-    console.log(`[GW] createAgent: ${params.name}`)
-    return await this.sendRequest<GatewayCreateAgentResult>("agents.create", params)
+    console.log(`[GW] createAgent: ${params.name}`);
+    return await this.sendRequest<GatewayCreateAgentResult>("agents.create", params);
   }
 
   // 源码确认：
@@ -1037,8 +1082,35 @@ class GatewayService {
   // req: { "agentId": string, "model"?: string, "name"?: string, "workspace"?: string, "avatar"?: string }
   // res: { "ok": true, "agentId": string }
   async updateAgent(agentId: string, params: GatewayAgentUpdateParams) {
-    console.log(`[GW] updateAgent: ${agentId}`)
-    }
+    console.log(`[GW] updateAgent: ${agentId}`);
+    return await this.sendRequest<GatewayAgentUpdateResult>("agents.update", {
+      agentId,
+      ...params,
+    });
+  }
+
+  // 源码确认：
+  // - schema: src/gateway/protocol/schema/agents-models-skills.ts
+  // - handler: src/gateway/server-methods/agents.ts
+  // req: {}
+  // res: { "defaultId": string, "mainKey": string, "scope": "per-sender" | "global", "agents": [{ "id": string, "name"?: string, "identity"?: { "name"?: string, "emoji"?: string, "avatar"?: string, "avatarUrl"?: string, "theme"?: string } }] }
+  async listAgents() {
+    console.log("[GW] listAgents");
+    return await this.sendRequest<GatewayAgentsListResponse>("agents.list", {});
+  }
+
+  // 源码确认：
+  // - schema: src/gateway/protocol/schema/agents-models-skills.ts
+  // - handler: src/gateway/server-methods/agents.ts
+  // req: { "agentId": string }
+  // res: { "agentId": string, "workspace": string, "files": [{ "name": string, "path": string, "missing": boolean, "size"?: number, "updatedAtMs"?: number, "content"?: string }] }
+  async listAgentFiles(agentId: string) {
+    console.log(`[GW] listAgentFiles: ${agentId}`);
+    const payload = await this.sendRequest<AgentFilesListResult>("agents.files.list", { agentId });
+    return {
+      ...payload,
+      files: Array.isArray(payload.files) ? payload.files.filter(isPresentAgentWorkspaceFile) : [],
+    };
   }
 
   // 源码确认：
@@ -1047,9 +1119,12 @@ class GatewayService {
   // req: { "agentId": string, "name": string }
   // res: { "agentId": string, "workspace": string, "file": { "name": string, "path": string, "missing": boolean, "size"?: number, "updatedAtMs"?: number, "content"?: string } }
   async getAgentFile(agentId: string, name: string) {
-    console.log(`[GW] getAgentFile: ${agentId}/${name}`)
-    const payload = await this.sendRequest<AgentFileGetResult>("agents.files.get", { agentId, name })
-    return typeof payload.file.content === "string" ? payload.file.content : ""
+    console.log(`[GW] getAgentFile: ${agentId}/${name}`);
+    const payload = await this.sendRequest<AgentFileGetResult>("agents.files.get", {
+      agentId,
+      name,
+    });
+    return typeof payload.file.content === "string" ? payload.file.content : "";
   }
 
   // 源码确认：
@@ -1058,13 +1133,13 @@ class GatewayService {
   // req: { "agentId": string, "name": string, "content": string }
   // res: { "ok": true, "agentId": string, "workspace": string, "file": { "name": string, "path": string, "missing": false, "size"?: number, "updatedAtMs"?: number, "content"?: string } }
   async saveAgentFile(agentId: string, name: string, content: string) {
-    console.log(`[GW] saveAgentFile: ${agentId}/${name}`)
+    console.log(`[GW] saveAgentFile: ${agentId}/${name}`);
     const payload = await this.sendRequest<AgentFileSetResult>("agents.files.set", {
       agentId,
       name,
       content,
-    })
-    return payload.ok === true
+    });
+    return payload.ok;
   }
 
   // 源码确认：
@@ -1073,12 +1148,12 @@ class GatewayService {
   // req: { "agentId": string, "name": string, "content": string }
   // res: { "ok": true, "agentId": string, "workspace": string, "file": { "name": string, "path": string, "missing": false, "size"?: number, "updatedAtMs"?: number, "content"?: string } }
   async setAgentFile(agentId: string, filename: string, content: string) {
-    console.log(`[GW] setAgentFile: ${agentId}/${filename}`)
+    console.log(`[GW] setAgentFile: ${agentId}/${filename}`);
     return await this.sendRequest<AgentFileSetResult>("agents.files.set", {
       agentId,
       name: filename,
       content,
-    })
+    });
   }
 
   // 实测 2026-03-13 本地 Gateway 的历史接口是 chat.history，不是 session.history。
@@ -1112,172 +1187,151 @@ class GatewayService {
   // }
   // 前端适配时主要读取 role / content / usage / timestamp，其它字段按需保留。
   async loadHistory(sessionKey: string, limit = 200): Promise<GatewayHistoryPayload | null> {
-    console.log(`[GW] loadHistory: ${sessionKey}`)
-
-    try {
-      const payload = await this.sendRequest<GatewayHistoryPayload>("chat.history", {
-        sessionKey,
-  //         { "type": "thinking", "thinking": "..." },
-  //         { "type": "text", "text": "..." }
-  //       ],
-  //       "provider": "minimax",
-  //       "model": "MiniMax-M2.5",
-  //       "usage": {
-  //         "input": 36,
-  //         "output": 42,
-  //         "totalTokens": 15042,
-  //         "cacheRead": 0,
-  //         "cacheWrite": 14964,
-  //         "cost": { "total": 0.0018568799999999998 }
-  //       },
-  //       "timestamp": 1773400398878,
-  //       "senderLabel": "cli",
-  //       "stopReason": "stop"
-  //     }
-  //   ],
-  //   "thinkingLevel": "low"
-  // }
-  // 前端适配时主要读取 role / content / usage / timestamp，其它字段按需保留。
-  async loadHistory(sessionKey: string, limit = 200): Promise<GatewayHistoryPayload | null> {
-    console.log(`[GW] loadHistory: ${sessionKey}`)
+    console.log(`[GW] loadHistory: ${sessionKey}`);
 
     try {
       const payload = await this.sendRequest<GatewayHistoryPayload>("chat.history", {
         sessionKey,
         limit,
-      })
-      console.log("[GW] loadHistory raw:", JSON.stringify(payload, null, 2))
-      return payload
+      });
+      console.log("[GW] loadHistory raw:", JSON.stringify(payload, null, 2));
+      return payload;
     } catch (error) {
-      console.error("[GW] error:", error)
-      return null
+      console.error("[GW] error:", error);
+      return null;
     }
   }
 
   // 底层发送
   private send(data: Record<string, unknown>) {
-    if (this.ws?.readyState !== WebSocket.OPEN) return false
-  //         "cost": { "total": 0.0018568799999999998 }
-  //       },
-  //       "timestamp": 1773400398878,
-  //       "senderLabel": "cli",
-  //       "stopReason": "stop"
-  //     }
-  //   ],
-  //   "thinkingLevel": "low"
-  // }
-  // 前端适配时主要读取 role / content / usage / timestamp，其它字段按需保留。
-  async loadHistory(sessionKey: string, limit = 200): Promise<GatewayHistoryPayload | null> {
-    console.log(`[GW] loadHistory: ${sessionKey}`)
-
-    try {
-      const payload = await this.sendRequest<GatewayHistoryPayload>("chat.history", {
-        sessionKey,
-        limit,
-      })
-      console.log("[GW] loadHistory raw:", JSON.stringify(payload, null, 2))
-      return payload
-    } catch (error) {
-      console.error("[GW] error:", error)
-      return null
+    if (this.ws?.readyState !== WebSocket.OPEN) {
+      return false;
     }
-  }
-
-  // 底层发送
-  private send(data: Record<string, unknown>) {
-    if (this.ws?.readyState !== WebSocket.OPEN) return false
-    this.ws.send(JSON.stringify(data))
-    return true
+    this.ws.send(JSON.stringify(data));
+    return true;
   }
 
   // 断线重连
   private scheduleReconnect() {
-    if (this.reconnectTimer) return
+    if (this.reconnectTimer) {
+      return;
+    }
     this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null
-      console.log("[GW] reconnecting")
-      this.connect()
-    }, 3000)
+      this.reconnectTimer = null;
+      console.log("[GW] reconnecting");
+      this.connect();
+    }, 3000);
   }
 
   // 断开
   disconnect() {
     if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer)
-      this.reconnectTimer = null
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
-    this.rejectActiveConnect(new Error("gateway disconnected"))
-    this.failPendingRequests(new Error("gateway disconnected"))
-    this.isHandshakeComplete = false
-    this.connectRequestId = null
-    this.connectNonce = null
-    this.grantedScopes = []
-    this.gatewayStateDir = null
+    this.rejectActiveConnect(new Error("gateway disconnected"));
+    this.failPendingRequests(new Error("gateway disconnected"));
+    this.isHandshakeComplete = false;
+    this.connectRequestId = null;
+    this.connectNonce = null;
+    this.grantedScopes = [];
+    this.gatewayStateDir = null;
+    this.ws?.close();
+    this.ws = null;
+  }
+
+  private createConnectPromise() {
+    if (this.connectPromise) {
+      return;
     }
-    this.pendingRequests.clear()
-    this.pendingChatRuns.clear()
+    this.connectPromise = new Promise<void>((resolve, reject) => {
+      this.resolveConnectPromise = resolve;
+      this.rejectConnectPromise = reject;
+    });
+  }
+
+  private resolveActiveConnect() {
+    this.resolveConnectPromise?.();
+    this.connectPromise = Promise.resolve();
+    this.resolveConnectPromise = null;
+    this.rejectConnectPromise = null;
+  }
+
+  private rejectActiveConnect(error: Error) {
+    this.rejectConnectPromise?.(error);
+    this.connectPromise = null;
+    this.resolveConnectPromise = null;
+    this.rejectConnectPromise = null;
+  }
+
+  private failPendingRequests(error: Error) {
+    for (const [, pending] of this.pendingRequests) {
+      pending.reject(error);
+    }
+    this.pendingRequests.clear();
+    this.pendingChatRuns.clear();
   }
 
   private async ensureConnected() {
     if (this.ws?.readyState === WebSocket.OPEN && this.isHandshakeComplete) {
-      return
+      return;
     }
-    this.connect()
+    this.connect();
     if (!this.connectPromise) {
-      throw new Error("gateway connect not initialized")
+      throw new Error("gateway connect not initialized");
     }
-    await this.connectPromise
+    await this.connectPromise;
   }
 
   private resolveGatewayToken() {
-    const envToken = import.meta.env.VITE_GATEWAY_TOKEN?.trim()
+    const envToken = import.meta.env.VITE_GATEWAY_TOKEN?.trim();
     if (envToken) {
-      return envToken
+      return envToken;
     }
     if (typeof window === "undefined") {
-      return undefined
+      return undefined;
     }
 
     try {
-      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""))
-      const queryParams = new URLSearchParams(window.location.search)
-      const runtimeToken = hashParams.get("token")?.trim() || queryParams.get("token")?.trim()
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      const queryParams = new URLSearchParams(window.location.search);
+      const runtimeToken = hashParams.get("token")?.trim() || queryParams.get("token")?.trim();
       if (runtimeToken) {
-        window.localStorage.setItem(GATEWAY_TOKEN_STORAGE_KEY, runtimeToken)
-        return runtimeToken
+        window.localStorage.setItem(GATEWAY_TOKEN_STORAGE_KEY, runtimeToken);
+        return runtimeToken;
       }
-      return window.localStorage.getItem(GATEWAY_TOKEN_STORAGE_KEY)?.trim() || undefined
+      return window.localStorage.getItem(GATEWAY_TOKEN_STORAGE_KEY)?.trim() || undefined;
     } catch (error) {
-      console.error("[GW] error:", error)
-      return undefined
+      console.error("[GW] error:", error);
+      return undefined;
     }
   }
 
   // 浏览器本地保存设备身份，避免每次刷新都触发新的配对记录。
   private async getStoredDeviceIdentity() {
     if (typeof window === "undefined") {
-      return null
+      return null;
     }
-    const raw = window.localStorage.getItem(GATEWAY_DEVICE_IDENTITY_STORAGE_KEY)
+    const raw = window.localStorage.getItem(GATEWAY_DEVICE_IDENTITY_STORAGE_KEY);
     if (!raw) {
-      return null
+      return null;
     }
 
     try {
-      const parsed = JSON.parse(raw) as StoredGatewayDeviceIdentity
+      const parsed = JSON.parse(raw) as StoredGatewayDeviceIdentity;
       if (
         parsed?.version !== 1 ||
         typeof parsed.deviceId !== "string" ||
         typeof parsed.publicKey !== "string" ||
         typeof parsed.privateKeyPkcs8 !== "string"
       ) {
-        return null
+        return null;
       }
 
-      const publicKeyBytes = base64UrlToBytes(parsed.publicKey)
-      const deviceId = await sha256Hex(publicKeyBytes)
+      const publicKeyBytes = base64UrlToBytes(parsed.publicKey);
+      const deviceId = await sha256Hex(publicKeyBytes);
       if (deviceId !== parsed.deviceId) {
-        return null
+        return null;
       }
 
       const privateKey = await crypto.subtle.importKey(
@@ -1285,54 +1339,78 @@ class GatewayService {
         base64UrlToBytes(parsed.privateKeyPkcs8),
         "Ed25519",
         false,
-        ["sign"]
-      )
+        ["sign"],
+      );
 
       return {
         deviceId,
         publicKey: bytesToBase64Url(publicKeyBytes),
         privateKey,
-      } satisfies GatewayDeviceIdentity
+      } satisfies GatewayDeviceIdentity;
+    } catch (error) {
+      console.error("[GW] error:", error);
+      return null;
+    }
+  }
+
+  private async createDeviceIdentity() {
+    const keyPair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+    const publicKeyBytes = await crypto.subtle.exportKey("raw", keyPair.publicKey);
+    const privateKeyPkcs8 = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
+    const deviceId = await sha256Hex(publicKeyBytes);
+    const storedIdentity: StoredGatewayDeviceIdentity = {
+      version: 1,
+      deviceId,
+      publicKey: bytesToBase64Url(publicKeyBytes),
+      privateKeyPkcs8: bytesToBase64Url(privateKeyPkcs8),
+      createdAtMs: Date.now(),
+    };
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        GATEWAY_DEVICE_IDENTITY_STORAGE_KEY,
+        JSON.stringify(storedIdentity),
+      );
     }
 
     return {
       deviceId,
       publicKey: storedIdentity.publicKey,
       privateKey: keyPair.privateKey,
-    } satisfies GatewayDeviceIdentity
+    } satisfies GatewayDeviceIdentity;
   }
 
   private async loadOrCreateDeviceIdentity() {
     if (typeof window === "undefined" || !window.isSecureContext || !crypto?.subtle) {
-      throw new Error("browser device identity unavailable in current context")
+      throw new Error("browser device identity unavailable in current context");
     }
 
-    const stored = await this.getStoredDeviceIdentity()
+    const stored = await this.getStoredDeviceIdentity();
     if (stored) {
-      return stored
+      return stored;
     }
-    return await this.createDeviceIdentity()
+    return await this.createDeviceIdentity();
   }
 
   private async resolveDeviceIdentity(params: {
-    clientId: string
-    clientMode: string
-    role: string
-    scopes: string[]
-    token?: string
+    clientId: string;
+    clientMode: string;
+    role: string;
+    scopes: string[];
+    token?: string;
   }) {
     if (!this.deviceIdentityPromise) {
       this.deviceIdentityPromise = this.loadOrCreateDeviceIdentity().catch((error) => {
-        this.deviceIdentityPromise = null
-        throw error
-      })
+        this.deviceIdentityPromise = null;
+        throw error;
+      });
     }
 
-    const identity = await this.deviceIdentityPromise
-    const signedAt = Date.now()
-    const nonce = this.connectNonce
+    const identity = await this.deviceIdentityPromise;
+    const signedAt = Date.now();
+    const nonce = this.connectNonce;
     if (!nonce) {
-      throw new Error("gateway connect challenge missing nonce")
+      throw new Error("gateway connect challenge missing nonce");
     }
     const payload = buildDeviceAuthPayloadV3({
       deviceId: identity.deviceId,
@@ -1343,70 +1421,14 @@ class GatewayService {
       signedAtMs: signedAt,
       token: params.token ?? null,
       nonce,
-    }
-  }
-
-  // chat final 里如果没有可直接展示的消息，就回拉一次历史，避免 UI 永远卡在思考中。
-  private async handleFinalChatEvent(params: {
-    runId: string | null
-    sessionKey: string
-    payload?: Record<string, unknown>
-  }) {
-    try {
-      let message = this.toGatewayMessage(params.payload?.message)
-      if (!this.hasRenderableMessage(message)) {
-        console.log("[GW] chat final fallback: history")
-        message = await this.fetchLatestAssistantMessage(params.sessionKey)
-      }
-
-      if (this.hasRenderableMessage(message)) {
-        console.log("[GW] chat reply:", 1, "msgs")
-        this.onMessage?.([message])
-      } else {
-        const error = new Error("chat final missing assistant message")
-        console.error("[GW] error:", error)
-        if (params.runId) {
-          this.finishChatRun(params.runId, {
-            type: "res",
-            id: params.runId,
-            ok: false,
-            error: { message: error.message },
-            payload: params.payload,
-          })
-        }
-        return
-      }
-
-      if (params.runId) {
-        this.finishChatRun(params.runId, {
-          type: "res",
-          id: params.runId,
-          ok: true,
-          payload: params.payload,
-        })
-      }
-    } catch (error) {
-      console.error("[GW] error:", error)
-      if (params.runId) {
-        this.finishChatRun(params.runId, {
-          type: "res",
-          id: params.runId,
-          ok: false,
-          error: { message: error instanceof Error ? error.message : String(error) },
-          payload: params.payload,
-        })
-      }
-    }
-      token: params.token ?? null,
-      nonce,
       platform: "web",
       deviceFamily: null,
-    })
+    });
     const signature = await crypto.subtle.sign(
       "Ed25519",
       identity.privateKey,
-      new TextEncoder().encode(payload)
-    )
+      new TextEncoder().encode(payload),
+    );
 
     return {
       id: identity.deviceId,
@@ -1414,28 +1436,28 @@ class GatewayService {
       signature: bytesToBase64Url(signature),
       signedAt,
       nonce,
-    }
+    };
   }
 
   // chat final 里如果没有可直接展示的消息，就回拉一次历史，避免 UI 永远卡在思考中。
   private async handleFinalChatEvent(params: {
-    runId: string | null
-    sessionKey: string
-    payload?: Record<string, unknown>
+    runId: string | null;
+    sessionKey: string;
+    payload?: Record<string, unknown>;
   }) {
     try {
-      let message = this.toGatewayMessage(params.payload?.message)
+      let message = this.toGatewayMessage(params.payload?.message);
       if (!this.hasRenderableMessage(message)) {
-        console.log("[GW] chat final fallback: history")
-        message = await this.fetchLatestAssistantMessage(params.sessionKey)
+        console.log("[GW] chat final fallback: history");
+        message = await this.fetchLatestAssistantMessage(params.sessionKey);
       }
 
       if (this.hasRenderableMessage(message)) {
-        console.log("[GW] chat reply:", 1, "msgs")
-        this.onMessage?.([message])
+        console.log("[GW] chat reply:", 1, "msgs");
+        this.onMessage?.([message]);
       } else {
-        const error = new Error("chat final missing assistant message")
-        console.error("[GW] error:", error)
+        const error = new Error("chat final missing assistant message");
+        console.error("[GW] error:", error);
         if (params.runId) {
           this.finishChatRun(params.runId, {
             type: "res",
@@ -1443,9 +1465,9 @@ class GatewayService {
             ok: false,
             error: { message: error.message },
             payload: params.payload,
-          })
+          });
         }
-        return
+        return;
       }
 
       if (params.runId) {
@@ -1454,10 +1476,10 @@ class GatewayService {
           id: params.runId,
           ok: true,
           payload: params.payload,
-        })
+        });
       }
     } catch (error) {
-      console.error("[GW] error:", error)
+      console.error("[GW] error:", error);
       if (params.runId) {
         this.finishChatRun(params.runId, {
           type: "res",
@@ -1465,105 +1487,106 @@ class GatewayService {
           ok: false,
           error: { message: error instanceof Error ? error.message : String(error) },
           payload: params.payload,
-        })
+        });
       }
     }
   }
 
   private hasRenderableMessage(message: GatewayMessage | null): message is GatewayMessage {
     if (!message) {
-      return false
+      return false;
     }
 
-    return Boolean(message.content.trim() || message.thinking?.trim())
+    return Boolean(message.content.trim() || message.thinking?.trim());
   }
 
   private async requestFrame(
     method: string,
     params: Record<string, unknown>,
-    timeoutMs: number
+    timeoutMs: number,
   ): Promise<GatewayResponseFrame> {
-    await this.ensureConnected()
+    await this.ensureConnected();
 
-    const id = crypto.randomUUID()
+    const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, {
         method,
         resolve,
         reject,
-      })
+      });
 
       const sent = this.send({
         type: "req",
         id,
         method,
         params,
-      })
+      });
 
       if (!sent) {
-        this.pendingRequests.delete(id)
-        const error = new Error(`gateway ${method} send failed`)
-        console.error("[GW] error:", error)
-        reject(error)
-        return
+        this.pendingRequests.delete(id);
+        const error = new Error(`gateway ${method} send failed`);
+        console.error("[GW] error:", error);
+        reject(error);
+        return;
       }
 
       setTimeout(() => {
         if (this.pendingRequests.has(id)) {
-          this.pendingRequests.delete(id)
-          reject(new Error(`${method} timeout`))
+          this.pendingRequests.delete(id);
+          reject(new Error(`${method} timeout`));
         }
-      }, timeoutMs)
-    })
+      }, timeoutMs);
+    });
   }
 
   private async fetchLatestAssistantMessage(sessionKey: string) {
     try {
-      const payload = await this.loadHistory(sessionKey, 20)
-      const historyMessages = Array.isArray(payload?.messages) ? payload.messages : []
+      const payload = await this.loadHistory(sessionKey, 20);
+      const historyMessages = Array.isArray(payload?.messages) ? payload.messages : [];
 
-      console.log("[GW] chat history fallback:", historyMessages.length, "msgs")
+      console.log("[GW] chat history fallback:", historyMessages.length, "msgs");
 
       if (historyMessages.length === 0) {
-        return null
+        return null;
       }
 
       const assistantMessage = historyMessages
         .map((message: unknown) => this.toGatewayMessage(message))
         .filter((message: GatewayMessage | null): message is GatewayMessage =>
-          this.hasRenderableMessage(message)
+          this.hasRenderableMessage(message),
         )
-        .reverse()
-        .find((message) => message.role === "assistant")
+        .toReversed()
+        .find((message) => message.role === "assistant");
 
-      return assistantMessage ?? null
+      return assistantMessage ?? null;
     } catch (error) {
-      console.error("[GW] error:", error)
-      return null
+      console.error("[GW] error:", error);
+      return null;
     }
   }
 
   private toGatewayMessage(message: unknown): GatewayMessage | null {
     if (!isRecord(message)) {
-      return null
+      return null;
     }
 
-    const role = message.role === "user" || message.role === "assistant" ? message.role : null
+    const role = message.role === "user" || message.role === "assistant" ? message.role : null;
     if (!role) {
-      return null
+      return null;
     }
 
-    const contentBlocks = Array.isArray(message.content) ? message.content : []
+    const contentBlocks = Array.isArray(message.content) ? message.content : [];
     const text = contentBlocks
       .filter((block) => isRecord(block) && block.type === "text" && typeof block.text === "string")
       .map((block) => String((block as Record<string, unknown>).text))
-      .join("\n")
+      .join("\n");
     const thinking = contentBlocks
       .filter(
-        (block) => isRecord(block) && block.type === "thinking" && typeof block.thinking === "string"
+        (block) =>
+          isRecord(block) && block.type === "thinking" && typeof block.thinking === "string",
       )
       .map((block) => String((block as Record<string, unknown>).thinking))
-      .join("\n")
+      .join("\n");
 
     return {
       role,
@@ -1573,36 +1596,54 @@ class GatewayService {
       provider: typeof message.provider === "string" ? message.provider : undefined,
       usage: normalizeGatewayUsage(isRecord(message.usage) ? message.usage : undefined),
       timestamp: typeof message.timestamp === "number" ? message.timestamp : Date.now(),
-    }
+    };
   }
 
   private finishChatRun(runId: string, frame: GatewayResponseFrame) {
-    const requestId = this.pendingChatRuns.get(runId)
+    const requestId = this.pendingChatRuns.get(runId);
     if (!requestId) {
-      return
+      return;
     }
 
-    const pending = this.pendingRequests.get(requestId)
+    const pending = this.pendingRequests.get(requestId);
     if (!pending) {
-      this.pendingChatRuns.delete(runId)
-      return
+      this.pendingChatRuns.delete(runId);
+      return;
     }
 
-    pending.resolve(frame)
-    this.pendingRequests.delete(requestId)
-    this.pendingChatRuns.delete(runId)
+    pending.resolve(frame);
+    this.pendingRequests.delete(requestId);
+    this.pendingChatRuns.delete(runId);
   }
 
   private dropPendingChatRunByRequestId(requestId: string) {
     for (const [runId, pendingRequestId] of this.pendingChatRuns.entries()) {
       if (pendingRequestId === requestId) {
-        this.pendingChatRuns.delete(runId)
+        this.pendingChatRuns.delete(runId);
       }
     }
   }
 
   private dispatchEvent(eventName: unknown, payload: unknown) {
-    const resolvedEventName = typeof eventName === "string" ? eventName : ""
+    const resolvedEventName = typeof eventName === "string" ? eventName : "";
     if (!resolvedEventName) {
-      return
+      return;
     }
+
+    const resolvedPayload =
+      payload && typeof payload === "object" && !Array.isArray(payload)
+        ? (payload as Record<string, unknown>)
+        : {};
+
+    for (const handler of this.eventHandlers) {
+      try {
+        handler(resolvedEventName, resolvedPayload);
+      } catch (error) {
+        console.error("[GW] error:", error);
+      }
+    }
+  }
+}
+
+// 单例
+export const gateway = new GatewayService();

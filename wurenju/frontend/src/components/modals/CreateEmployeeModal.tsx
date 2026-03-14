@@ -1,10 +1,8 @@
-"use client"
+"use client";
 
-import { useEffect, useState } from "react"
-import { Check, ChevronLeft, ChevronRight, Loader2, Search, ShieldAlert } from "lucide-react"
-
-import { buildDefaultAgentFiles } from "@/constants/agentTemplates"
-import { Button } from "@/components/ui/button"
+import { Check, ChevronLeft, ChevronRight, Loader2, Search, ShieldAlert } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -12,18 +10,16 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { toast } from "@/hooks/use-toast"
-import {
-  gateway,
-  type GatewayAgentUpdateParams,
-} from "@/services/gateway"
-import { useAgentStore } from "@/stores/agentStore"
-import type { ModelProviderGroup } from "@/types/model"
-import { buildAvailableAgentId } from "@/utils/agentId"
-import { cn } from "@/lib/utils"
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { buildDefaultAgentFiles } from "@/constants/agentTemplates";
+import { toast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import { gateway, type GatewayAgentUpdateParams } from "@/services/gateway";
+import { useAgentStore } from "@/stores/agentStore";
+import type { ModelProviderGroup } from "@/types/model";
+import { buildAvailableAgentId } from "@/utils/agentId";
 
 const EMPLOYEE_EMOJIS = [
   "🧑‍💻",
@@ -38,69 +34,69 @@ const EMPLOYEE_EMOJIS = [
   "🦄",
   "🤖",
   "👾",
-] as const
+] as const;
 
 const STEP_ITEMS = [
   { id: 1, label: "1. 基本信息" },
   { id: 2, label: "2. 选择模型" },
   { id: 3, label: "3. 确认创建" },
-] as const
+] as const;
 
-type Step = 1 | 2 | 3
-type CreatingStep = "idle" | "creating" | "writing-files" | "done" | "error"
+type Step = 1 | 2 | 3;
+type CreatingStep = "idle" | "creating" | "writing-files" | "done" | "error";
 
 type EmployeeFormState = {
-  displayName: string
-  role: string
-  bio: string
-  emoji: (typeof EMPLOYEE_EMOJIS)[number]
-}
+  displayName: string;
+  role: string;
+  bio: string;
+  emoji: (typeof EMPLOYEE_EMOJIS)[number];
+};
 
 const INITIAL_FORM_STATE: EmployeeFormState = {
   displayName: "",
   role: "",
   bio: "",
   emoji: EMPLOYEE_EMOJIS[0],
-}
+};
 
 function joinGatewayPath(baseDir: string, leaf: string) {
-  const trimmed = baseDir.replace(/[\\/]+$/g, "")
-  const separator = trimmed.includes("\\") ? "\\" : "/"
-  return `${trimmed}${separator}${leaf}`
+  const trimmed = baseDir.replace(/[\\/]+$/g, "");
+  const separator = trimmed.includes("\\") ? "\\" : "/";
+  return `${trimmed}${separator}${leaf}`;
 }
 
 function resolveAgentWorkspace(agentId: string, stateDir: string | null) {
-  const baseDir = stateDir?.trim() ? stateDir.trim() : "~/.openclaw"
-  return joinGatewayPath(baseDir, `workspace-${agentId}`)
+  const baseDir = stateDir?.trim() ? stateDir.trim() : "~/.openclaw";
+  return joinGatewayPath(baseDir, `workspace-${agentId}`);
 }
 
 function getCreatingStepLabel(step: CreatingStep) {
   switch (step) {
     case "creating":
-      return "正在创建员工..."
+      return "正在创建员工...";
     case "writing-files":
-      return "正在初始化配置文件..."
+      return "正在初始化配置文件...";
     case "done":
-      return "创建完成 ✅"
+      return "创建完成 ✅";
     case "error":
-      return "创建失败"
+      return "创建失败";
     default:
-      return ""
+      return "";
   }
 }
 
 function wait(ms: number) {
   return new Promise((resolve) => {
-    window.setTimeout(resolve, ms)
-  })
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function StepIndicator({ step }: { step: Step }) {
   return (
     <div className="flex items-center gap-3">
       {STEP_ITEMS.map((item, index) => {
-        const isCompleted = step > item.id
-        const isActive = step === item.id
+        const isCompleted = step > item.id;
+        const isActive = step === item.id;
 
         return (
           <div key={item.id} className="flex min-w-0 flex-1 items-center gap-3">
@@ -109,8 +105,11 @@ function StepIndicator({ step }: { step: Step }) {
                 className={cn(
                   "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-xs font-semibold transition-colors",
                   isCompleted && "border-primary bg-primary text-primary-foreground",
-                  isActive && "border-primary bg-primary/12 text-primary shadow-[0_0_0_1px_var(--color-brand-glow)]",
-                  !isCompleted && !isActive && "border-border bg-[var(--color-bg-card)] text-muted-foreground"
+                  isActive &&
+                    "border-primary bg-primary/12 text-primary shadow-[0_0_0_1px_var(--color-brand-glow)]",
+                  !isCompleted &&
+                    !isActive &&
+                    "border-border bg-[var(--color-bg-card)] text-muted-foreground",
                 )}
               >
                 {isCompleted ? <Check className="h-4 w-4" /> : item.id}
@@ -120,7 +119,7 @@ function StepIndicator({ step }: { step: Step }) {
                   "truncate text-sm transition-colors",
                   isActive && "font-semibold text-primary",
                   isCompleted && "font-medium text-foreground",
-                  !isCompleted && !isActive && "text-muted-foreground"
+                  !isCompleted && !isActive && "text-muted-foreground",
                 )}
               >
                 {item.label}
@@ -131,15 +130,15 @@ function StepIndicator({ step }: { step: Step }) {
               <div
                 className={cn(
                   "h-px flex-1 transition-colors",
-                  step > item.id ? "bg-primary" : "bg-border"
+                  step > item.id ? "bg-primary" : "bg-border",
                 )}
               />
             ) : null}
           </div>
-        )
+        );
       })}
     </div>
-  )
+  );
 }
 
 function ModelCard({
@@ -148,10 +147,10 @@ function ModelCard({
   description,
   onClick,
 }: {
-  active: boolean
-  title: string
-  description: string
-  onClick: () => void
+  active: boolean;
+  title: string;
+  description: string;
+  onClick: () => void;
 }) {
   return (
     <button
@@ -161,7 +160,7 @@ function ModelCard({
         "w-full rounded-[14px] border p-4 text-left transition-all",
         active
           ? "border-primary bg-primary/10 shadow-[0_0_0_1px_var(--color-brand-glow)]"
-          : "border-border bg-[var(--color-bg-card)] hover:border-primary/40 hover:bg-[var(--color-bg-hover)]"
+          : "border-border bg-[var(--color-bg-card)] hover:border-primary/40 hover:bg-[var(--color-bg-hover)]",
       )}
       aria-pressed={active}
     >
@@ -173,159 +172,159 @@ function ModelCard({
         <span
           className={cn(
             "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border",
-            active ? "border-primary bg-primary text-primary-foreground" : "border-border"
+            active ? "border-primary bg-primary text-primary-foreground" : "border-border",
           )}
         >
           {active ? <Check className="h-3.5 w-3.5" /> : null}
         </span>
       </div>
     </button>
-  )
+  );
 }
 
 export function CreateEmployeeModal({
   open,
   onOpenChange,
 }: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
-  const fetchAgents = useAgentStore((state) => state.fetchAgents)
-  const agents = useAgentStore((state) => state.agents)
+  const fetchAgents = useAgentStore((state) => state.fetchAgents);
+  const agents = useAgentStore((state) => state.agents);
 
-  const [step, setStep] = useState<Step>(1)
-  const [form, setForm] = useState<EmployeeFormState>(INITIAL_FORM_STATE)
-  const [models, setModels] = useState<ModelProviderGroup[]>([])
-  const [modelQuery, setModelQuery] = useState("")
-  const [selectedModelRef, setSelectedModelRef] = useState("")
-  const [defaultModelLabel, setDefaultModelLabel] = useState("全局默认模型")
-  const [isLoadingModels, setIsLoadingModels] = useState(false)
-  const [modelsError, setModelsError] = useState("")
-  const [submitError, setSubmitError] = useState("")
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [creatingStep, setCreatingStep] = useState<CreatingStep>("idle")
-  const [draftAgentId, setDraftAgentId] = useState("")
-  const [hasCreatedAgent, setHasCreatedAgent] = useState(false)
+  const [step, setStep] = useState<Step>(1);
+  const [form, setForm] = useState<EmployeeFormState>(INITIAL_FORM_STATE);
+  const [models, setModels] = useState<ModelProviderGroup[]>([]);
+  const [modelQuery, setModelQuery] = useState("");
+  const [selectedModelRef, setSelectedModelRef] = useState("");
+  const [defaultModelLabel, setDefaultModelLabel] = useState("全局默认模型");
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [modelsError, setModelsError] = useState("");
+  const [submitError, setSubmitError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [creatingStep, setCreatingStep] = useState<CreatingStep>("idle");
+  const [draftAgentId, setDraftAgentId] = useState("");
+  const [hasCreatedAgent, setHasCreatedAgent] = useState(false);
 
-  const trimmedDisplayName = form.displayName.trim()
-  const trimmedRole = form.role.trim()
-  const finalBio = form.bio.trim() || "协助用户完成相关工作"
-  const canContinueStep1 = Boolean(trimmedDisplayName) && Boolean(trimmedRole)
+  const trimmedDisplayName = form.displayName.trim();
+  const trimmedRole = form.role.trim();
+  const finalBio = form.bio.trim() || "协助用户完成相关工作";
+  const canContinueStep1 = Boolean(trimmedDisplayName) && Boolean(trimmedRole);
 
   useEffect(() => {
     if (!open) {
-      setStep(1)
-      setForm(INITIAL_FORM_STATE)
-      setModels([])
-      setModelQuery("")
-      setSelectedModelRef("")
-      setDefaultModelLabel("全局默认模型")
-      setIsLoadingModels(false)
-      setModelsError("")
-      setSubmitError("")
-      setIsSubmitting(false)
-      setCreatingStep("idle")
-      setDraftAgentId("")
-      setHasCreatedAgent(false)
-      return
+      setStep(1);
+      setForm(INITIAL_FORM_STATE);
+      setModels([]);
+      setModelQuery("");
+      setSelectedModelRef("");
+      setDefaultModelLabel("全局默认模型");
+      setIsLoadingModels(false);
+      setModelsError("");
+      setSubmitError("");
+      setIsSubmitting(false);
+      setCreatingStep("idle");
+      setDraftAgentId("");
+      setHasCreatedAgent(false);
+      return;
     }
 
-    let active = true
+    let active = true;
 
     const loadModelOptions = async () => {
-      setIsLoadingModels(true)
-      setModelsError("")
+      setIsLoadingModels(true);
+      setModelsError("");
 
       const [modelsResult, configResult] = await Promise.allSettled([
         gateway.listModels(),
         gateway.getConfigSnapshot(),
-      ])
+      ]);
 
       if (!active) {
-        return
+        return;
       }
 
       if (configResult.status === "fulfilled") {
-        const nextDefaultModelLabel = gateway.getDefaultModelLabel(configResult.value)
+        const nextDefaultModelLabel = gateway.getDefaultModelLabel(configResult.value);
         if (nextDefaultModelLabel) {
-          setDefaultModelLabel(nextDefaultModelLabel)
+          setDefaultModelLabel(nextDefaultModelLabel);
         }
       }
 
       if (modelsResult.status === "fulfilled") {
-        setModels(modelsResult.value)
+        setModels(modelsResult.value);
       } else {
-        console.error("[GW] models.list failed:", modelsResult.reason)
-        setModels([])
-        setModelsError("模型列表暂时不可用，当前会使用全局默认模型。")
+        console.error("[GW] models.list failed:", modelsResult.reason);
+        setModels([]);
+        setModelsError("模型列表暂时不可用，当前会使用全局默认模型。");
       }
 
-      setIsLoadingModels(false)
-    }
+      setIsLoadingModels(false);
+    };
 
-    void loadModelOptions()
+    void loadModelOptions();
 
     return () => {
-      active = false
-    }
-  }, [open])
+      active = false;
+    };
+  }, [open]);
 
   const filteredModels = models
     .map((group) => {
-      const keyword = modelQuery.trim().toLowerCase()
+      const keyword = modelQuery.trim().toLowerCase();
       if (!keyword) {
-        return group
+        return group;
       }
 
       const matchedModels = group.models.filter(
         (model) =>
           model.name.toLowerCase().includes(keyword) ||
           model.id.toLowerCase().includes(keyword) ||
-          group.provider.toLowerCase().includes(keyword)
-      )
+          group.provider.toLowerCase().includes(keyword),
+      );
 
       return {
         ...group,
         models: matchedModels,
-      }
+      };
     })
-    .filter((group) => group.models.length > 0)
+    .filter((group) => group.models.length > 0);
 
   const selectedModel = models
     .flatMap((group) =>
       group.models.map((model) => ({
         ...model,
         provider: group.provider,
-      }))
+      })),
     )
-    .find((model) => `${model.provider}/${model.id}` === selectedModelRef)
+    .find((model) => `${model.provider}/${model.id}` === selectedModelRef);
   const selectedModelLabel = selectedModel
     ? `${selectedModel.provider} / ${selectedModel.name}`
-    : `使用全局默认模型${defaultModelLabel ? ` (${defaultModelLabel})` : ""}`
+    : `使用全局默认模型${defaultModelLabel ? ` (${defaultModelLabel})` : ""}`;
 
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen && isSubmitting) {
-      return
+      return;
     }
-    onOpenChange(nextOpen)
+    onOpenChange(nextOpen);
   }
 
   async function handleCreate() {
     if (!canContinueStep1 || isSubmitting) {
-      return
+      return;
     }
 
-    setIsSubmitting(true)
-    setSubmitError("")
-    setCreatingStep("creating")
+    setIsSubmitting(true);
+    setSubmitError("");
+    setCreatingStep("creating");
 
     let agentId =
       draftAgentId ||
       buildAvailableAgentId(
         trimmedDisplayName,
-        agents.map((agent) => agent.id)
-      )
-    const workspace = resolveAgentWorkspace(agentId, gateway.getStateDir())
+        agents.map((agent) => agent.id),
+      );
+    const workspace = resolveAgentWorkspace(agentId, gateway.getStateDir());
 
     try {
       // 中文显示名不能直接作为 agents.create 的 name，否则服务端会规范化成 main。
@@ -334,71 +333,65 @@ export function CreateEmployeeModal({
           name: agentId,
           workspace,
           emoji: form.emoji,
-        })
-        agentId = created.agentId
-        setDraftAgentId(agentId)
-        setHasCreatedAgent(true)
+        });
+        agentId = created.agentId;
+        setDraftAgentId(agentId);
+        setHasCreatedAgent(true);
       }
 
       const updateParams: GatewayAgentUpdateParams = {
         name: trimmedDisplayName,
-      }
+      };
       if (selectedModelRef) {
-        updateParams.model = selectedModelRef
+        updateParams.model = selectedModelRef;
       }
 
-      await gateway.updateAgent(agentId, updateParams)
-      setCreatingStep("writing-files")
+      await gateway.updateAgent(agentId, updateParams);
+      setCreatingStep("writing-files");
 
       const defaultAgentFiles = buildDefaultAgentFiles({
         agentName: trimmedDisplayName,
         emoji: form.emoji,
         role: trimmedRole,
         description: finalBio,
-      })
-
-      await Promise.all(
-        description: finalBio,
-      })
+      });
 
       await Promise.all(
         defaultAgentFiles.map(async (file) => {
           try {
-            const ok = await gateway.saveAgentFile(agentId, file.name, file.content)
+            const ok = await gateway.saveAgentFile(agentId, file.name, file.content);
             if (!ok) {
-              console.warn(`[Store] 文件写入失败: ${file.name}`)
+              console.warn(`[Store] 文件写入失败: ${file.name}`);
             }
           } catch (error) {
-            console.warn(`[Store] 文件写入失败: ${file.name}`, error)
+            console.warn(`[Store] 文件写入失败: ${file.name}`, error);
           }
-        })
-      )
+        }),
+      );
 
       try {
-        await fetchAgents()
+        await fetchAgents();
       } catch (error) {
-        console.warn("[Store] 员工列表刷新失败:", error)
+        console.warn("[Store] 员工列表刷新失败:", error);
       }
 
-      setCreatingStep("done")
+      setCreatingStep("done");
 
-      setIsSubmitting(false)
-      await wait(500)
-      onOpenChange(false)
+      setIsSubmitting(false);
+      await wait(500);
+      onOpenChange(false);
     } catch (error) {
       const message =
-        error instanceof Error && error.message.trim()
-          ? error.message
-          : "创建失败，请稍后重试"
-      setSubmitError(message)
-      setCreatingStep("error")
-      console.error("[GW] create employee failed:", error)
+        error instanceof Error && error.message.trim() ? error.message : "创建失败，请稍后重试";
+      setSubmitError(message);
+      setCreatingStep("error");
+      console.error("[GW] create employee failed:", error);
       toast({
         variant: "destructive",
         title: "创建员工失败",
         description: message,
-      })
-      setIsSubmitting(false)
+      });
+      setIsSubmitting(false);
     }
   }
 
@@ -421,7 +414,10 @@ export function CreateEmployeeModal({
           {step === 1 ? (
             <div className="space-y-5">
               <div className="space-y-2">
-                <label htmlFor="employee-display-name" className="text-sm font-medium text-foreground">
+                <label
+                  htmlFor="employee-display-name"
+                  className="text-sm font-medium text-foreground"
+                >
                   显示名
                 </label>
                 <Input
@@ -479,7 +475,7 @@ export function CreateEmployeeModal({
                 <div className="text-sm font-medium text-foreground">头像选择</div>
                 <div className="grid grid-cols-6 gap-2">
                   {EMPLOYEE_EMOJIS.map((emoji) => {
-                    const isSelected = form.emoji === emoji
+                    const isSelected = form.emoji === emoji;
 
                     return (
                       <button
@@ -495,14 +491,14 @@ export function CreateEmployeeModal({
                           "flex h-12 items-center justify-center rounded-xl border text-2xl transition-all",
                           isSelected
                             ? "border-primary bg-primary/12 shadow-[0_0_0_1px_var(--color-brand-glow)]"
-                            : "border-border bg-[var(--color-bg-card)] hover:border-primary/40 hover:bg-[var(--color-bg-hover)]"
+                            : "border-border bg-[var(--color-bg-card)] hover:border-primary/40 hover:bg-[var(--color-bg-hover)]",
                         )}
                         aria-label={`选择头像 ${emoji}`}
                         aria-pressed={isSelected}
                       >
                         {emoji}
                       </button>
-                    )
+                    );
                   })}
                 </div>
               </div>
@@ -519,14 +515,14 @@ export function CreateEmployeeModal({
               </div>
 
               <ModelCard
-                active={selectedModelId === ""}
+                active={selectedModelRef === ""}
                 title="使用全局默认模型"
                 description={
                   defaultModelLabel
                     ? `当前默认：${defaultModelLabel}`
                     : "由 Gateway 当前全局配置决定"
                 }
-                onClick={() => setSelectedModelId("")}
+                onClick={() => setSelectedModelRef("")}
               />
 
               {isLoadingModels ? (
@@ -549,28 +545,20 @@ export function CreateEmployeeModal({
                   </div>
 
                   <div className="space-y-4">
-                    {providerEntries.length > 0 ? (
-                      providerEntries.map(([provider, providerModels]) => (
-                        <section key={provider} className="space-y-3">
+                    {filteredModels.length > 0 ? (
+                      filteredModels.map((group) => (
+                        <section key={group.provider} className="space-y-3">
                           <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                            {provider}
+                            {group.provider}
                           </div>
                           <div className="grid gap-3 md:grid-cols-2">
-                            {providerModels.map((model) => (
+                            {group.models.map((model) => (
                               <ModelCard
-                                key={model.id}
-                                active={selectedModelId === model.id}
+                                key={`${group.provider}/${model.id}`}
+                                active={selectedModelRef === `${group.provider}/${model.id}`}
                                 title={model.name}
-                                description={[
-                                  `Model ID: ${model.id}`,
-                                  model.contextWindow
-                                    ? `上下文 ${model.contextWindow.toLocaleString()}`
-                                    : null,
-                                  model.reasoning ? "支持 reasoning" : null,
-                                ]
-                                  .filter(Boolean)
-                                  .join(" · ")}
-                                onClick={() => setSelectedModelId(model.id)}
+                                description={`Model ID: ${group.provider}/${model.id}`}
+                                onClick={() => setSelectedModelRef(`${group.provider}/${model.id}`)}
                               />
                             ))}
                           </div>
@@ -609,7 +597,9 @@ export function CreateEmployeeModal({
                   </div>
                   <div className="min-w-0 space-y-4">
                     <div>
-                      <div className="text-xl font-semibold text-foreground">{trimmedDisplayName}</div>
+                      <div className="text-xl font-semibold text-foreground">
+                        {trimmedDisplayName}
+                      </div>
                       <div className="mt-1 text-sm text-muted-foreground">{trimmedRole}</div>
                     </div>
 
@@ -640,7 +630,7 @@ export function CreateEmployeeModal({
                       ? "border-destructive/30 bg-destructive/5 text-destructive"
                       : creatingStep === "done"
                         ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
-                        : "border-primary/20 bg-primary/8 text-primary"
+                        : "border-primary/20 bg-primary/8 text-primary",
                   )}
                 >
                   {creatingStep === "creating" || creatingStep === "writing-files" ? (
@@ -652,9 +642,7 @@ export function CreateEmployeeModal({
                   )}
                   <div className="space-y-1">
                     <div className="font-medium">{getCreatingStepLabel(creatingStep)}</div>
-                    {creatingStep === "creating" ? (
-                      <div>正在向 Gateway 注册员工信息。</div>
-                    ) : null}
+                    {creatingStep === "creating" ? <div>正在向 Gateway 注册员工信息。</div> : null}
                     {creatingStep === "writing-files" ? (
                       <div>正在写入 IDENTITY.md、SOUL.md 等默认模板。</div>
                     ) : null}
@@ -711,11 +699,21 @@ export function CreateEmployeeModal({
 
           {step === 3 ? (
             <>
-              <Button type="button" variant="ghost" onClick={() => setStep(2)} disabled={isSubmitting}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setStep(2)}
+                disabled={isSubmitting}
+              >
                 <ChevronLeft className="h-4 w-4" />
                 上一步
               </Button>
-              <Button type="button" variant="ghost" onClick={() => handleOpenChange(false)} disabled={isSubmitting}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => handleOpenChange(false)}
+                disabled={isSubmitting}
+              >
                 取消
               </Button>
               <Button type="button" onClick={() => void handleCreate()} disabled={isSubmitting}>
@@ -733,5 +731,5 @@ export function CreateEmployeeModal({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

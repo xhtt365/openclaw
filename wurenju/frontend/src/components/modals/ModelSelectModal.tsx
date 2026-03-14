@@ -1,9 +1,8 @@
-"use client"
+"use client";
 
-import { useEffect, useState } from "react"
-import { ChevronDown, ChevronRight, Loader2 } from "lucide-react"
-
-import { Button } from "@/components/ui/button"
+import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -11,13 +10,13 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { toast } from "@/hooks/use-toast"
-import { cn } from "@/lib/utils"
-import { useAgentStore } from "@/stores/agentStore"
-import type { ModelGroupItem, ModelProviderGroup } from "@/types/model"
+} from "@/components/ui/dialog";
+import { toast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import { useAgentStore } from "@/stores/agentStore";
+import type { ModelGroupItem, ModelProviderGroup } from "@/types/model";
 
-type ModalTab = "switch" | "add"
+type ModalTab = "switch" | "add";
 
 const ADD_MODEL_TEMPLATE = `{
   // provider 名称。
@@ -41,40 +40,40 @@ const ADD_MODEL_TEMPLATE = `{
     "contextWindow": 128000,
     "maxTokens": 8192
   }
-}`
+}`;
 
 function splitModelRef(modelRef: string) {
-  const trimmed = modelRef.trim()
-  const separatorIndex = trimmed.indexOf("/")
+  const trimmed = modelRef.trim();
+  const separatorIndex = trimmed.indexOf("/");
   if (separatorIndex === -1) {
     return {
       provider: "",
       modelId: trimmed,
-    }
+    };
   }
 
   return {
     provider: trimmed.slice(0, separatorIndex),
     modelId: trimmed.slice(separatorIndex + 1),
-  }
+  };
 }
 
 function formatCompactNumber(value: number) {
   if (value >= 1_000_000) {
-    return `${Number((value / 1_000_000).toFixed(1)).toString()}M`
+    return `${Number((value / 1_000_000).toFixed(1)).toString()}M`;
   }
   if (value >= 1_000) {
-    return `${Number((value / 1_000).toFixed(1)).toString()}K`
+    return `${Number((value / 1_000).toFixed(1)).toString()}K`;
   }
-  return String(value)
+  return String(value);
 }
 
 function formatContextWindow(value?: number) {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return null
+    return null;
   }
 
-  return `${formatCompactNumber(value)} context`
+  return `${formatCompactNumber(value)} context`;
 }
 
 function flattenModelGroups(groups: ModelProviderGroup[]) {
@@ -84,26 +83,26 @@ function flattenModelGroups(groups: ModelProviderGroup[]) {
       model,
       modelRef: `${group.provider}/${model.id}`,
     })),
-  )
+  );
 }
 
 function findModelEntry(groups: ModelProviderGroup[], modelRef: string | null) {
   if (!modelRef?.trim()) {
-    return null
+    return null;
   }
 
-  const { provider, modelId } = splitModelRef(modelRef)
-  const matchedGroup = groups.find((group) => group.provider === provider)
-  const matchedModel = matchedGroup?.models.find((model) => model.id === modelId)
+  const { provider, modelId } = splitModelRef(modelRef);
+  const matchedGroup = groups.find((group) => group.provider === provider);
+  const matchedModel = matchedGroup?.models.find((model) => model.id === modelId);
 
   if (!matchedGroup || !matchedModel) {
-    return null
+    return null;
   }
 
   return {
     provider,
     model: matchedModel,
-  }
+  };
 }
 
 function resolveCurrentModelInfo(modelRef: string | null, groups: ModelProviderGroup[]) {
@@ -111,23 +110,23 @@ function resolveCurrentModelInfo(modelRef: string | null, groups: ModelProviderG
     return {
       title: "未配置",
       metadata: "未配置",
-    }
+    };
   }
 
-  const matched = findModelEntry(groups, modelRef)
+  const matched = findModelEntry(groups, modelRef);
   if (matched) {
-    const contextWindow = formatContextWindow(matched.model.contextWindow)
+    const contextWindow = formatContextWindow(matched.model.contextWindow);
     return {
       title: matched.model.name,
       metadata: contextWindow ? `${matched.provider} · ${contextWindow}` : matched.provider,
-    }
+    };
   }
 
-  const { provider, modelId } = splitModelRef(modelRef)
+  const { provider, modelId } = splitModelRef(modelRef);
   return {
     title: modelId || modelRef,
     metadata: provider || modelRef,
-  }
+  };
 }
 
 function ModelOptionCard({
@@ -137,11 +136,11 @@ function ModelOptionCard({
   current,
   onClick,
 }: {
-  provider: string
-  model: ModelGroupItem
-  selected: boolean
-  current: boolean
-  onClick: () => void
+  provider: string;
+  model: ModelGroupItem;
+  selected: boolean;
+  current: boolean;
+  onClick: () => void;
 }) {
   return (
     <button
@@ -168,7 +167,7 @@ function ModelOptionCard({
         </span>
       ) : null}
     </button>
-  )
+  );
 }
 
 export function ModelSelectModal({
@@ -177,139 +176,137 @@ export function ModelSelectModal({
   agentId,
   agentName,
 }: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  agentId: string
-  agentName: string
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  agentId: string;
+  agentName: string;
 }) {
-  const availableModels = useAgentStore((state) => state.availableModels)
-  const currentAgentModel = useAgentStore((state) => state.currentAgentModel)
-  const modelLoading = useAgentStore((state) => state.modelLoading)
-  const modelSaving = useAgentStore((state) => state.modelSaving)
-  const configLoading = useAgentStore((state) => state.configLoading)
-  const modelAdding = useAgentStore((state) => state.modelAdding)
-  const fetchModels = useAgentStore((state) => state.fetchModels)
-  const setAgentModel = useAgentStore((state) => state.setAgentModel)
-  const addModelFromJSON = useAgentStore((state) => state.addModelFromJSON)
+  const availableModels = useAgentStore((state) => state.availableModels);
+  const currentAgentModel = useAgentStore((state) => state.currentAgentModel);
+  const modelLoading = useAgentStore((state) => state.modelLoading);
+  const modelSaving = useAgentStore((state) => state.modelSaving);
+  const configLoading = useAgentStore((state) => state.configLoading);
+  const modelAdding = useAgentStore((state) => state.modelAdding);
+  const fetchModels = useAgentStore((state) => state.fetchModels);
+  const setAgentModel = useAgentStore((state) => state.setAgentModel);
+  const addModelFromJSON = useAgentStore((state) => state.addModelFromJSON);
 
-  const [activeTab, setActiveTab] = useState<ModalTab>("switch")
-  const [selectedModel, setSelectedModel] = useState("")
-  const [loadError, setLoadError] = useState("")
-  const [saveError, setSaveError] = useState("")
-  const [addError, setAddError] = useState("")
-  const [collapsedProviders, setCollapsedProviders] = useState<Record<string, boolean>>({})
-  const [jsonInput, setJsonInput] = useState(ADD_MODEL_TEMPLATE)
+  const [activeTab, setActiveTab] = useState<ModalTab>("switch");
+  const [selectedModel, setSelectedModel] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [addError, setAddError] = useState("");
+  const [collapsedProviders, setCollapsedProviders] = useState<Record<string, boolean>>({});
+  const [jsonInput, setJsonInput] = useState(ADD_MODEL_TEMPLATE);
 
-  const currentModelInfo = resolveCurrentModelInfo(currentAgentModel, availableModels)
-  const allModels = flattenModelGroups(availableModels)
-  const useFlatLayout = allModels.length <= 3
-  const isAddSubmitting = modelAdding || configLoading
+  const currentModelInfo = resolveCurrentModelInfo(currentAgentModel, availableModels);
+  const allModels = flattenModelGroups(availableModels);
+  const useFlatLayout = allModels.length <= 3;
+  const isAddSubmitting = modelAdding || configLoading;
 
   function resetModalState() {
-    setActiveTab("switch")
-    setSelectedModel(currentAgentModel ?? "")
-    setLoadError("")
-    setSaveError("")
-    setAddError("")
-    setCollapsedProviders({})
-    setJsonInput(ADD_MODEL_TEMPLATE)
+    setActiveTab("switch");
+    setSelectedModel(currentAgentModel ?? "");
+    setLoadError("");
+    setSaveError("");
+    setAddError("");
+    setCollapsedProviders({});
+    setJsonInput(ADD_MODEL_TEMPLATE);
   }
 
   function handleDialogOpenChange(nextOpen: boolean) {
     if (!nextOpen) {
-      resetModalState()
+      resetModalState();
     }
-    onOpenChange(nextOpen)
+    onOpenChange(nextOpen);
   }
 
   function switchTab(tab: ModalTab) {
-    setActiveTab(tab)
-    setSaveError("")
-    setAddError("")
+    setActiveTab(tab);
+    setSaveError("");
+    setAddError("");
   }
 
   function toggleProvider(provider: string) {
     setCollapsedProviders((current) => ({
       ...current,
       [provider]: !current[provider],
-    }))
+    }));
   }
 
   useEffect(() => {
     if (!open || availableModels.length > 0) {
-      return
+      return;
     }
 
-    let isActive = true
+    let isActive = true;
 
     const loadModels = async () => {
-      setLoadError("")
+      setLoadError("");
       try {
-        await fetchModels()
+        await fetchModels();
       } catch {
         if (!isActive) {
-          return
+          return;
         }
-        setLoadError("加载模型列表失败，请检查 Gateway 连接")
+        setLoadError("加载模型列表失败，请检查 Gateway 连接");
       }
-    }
+    };
 
-    void loadModels()
+    void loadModels();
 
     return () => {
-      isActive = false
-    }
-  }, [availableModels.length, fetchModels, open])
+      isActive = false;
+    };
+  }, [availableModels.length, fetchModels, open]);
 
   useEffect(() => {
     if (!open) {
-      return
+      return;
     }
 
-    setSelectedModel(currentAgentModel ?? "")
-  }, [currentAgentModel, open])
+    setSelectedModel(currentAgentModel ?? "");
+  }, [currentAgentModel, open]);
 
   async function handleSave() {
     if (!selectedModel || selectedModel === currentAgentModel) {
-      handleDialogOpenChange(false)
-      return
+      handleDialogOpenChange(false);
+      return;
     }
 
-    setSaveError("")
+    setSaveError("");
 
     try {
-      await setAgentModel(agentId, selectedModel)
+      await setAgentModel(agentId, selectedModel);
       toast({
         title: "✅ 模型已切换",
         description: `${agentName} 已切换到 ${resolveCurrentModelInfo(selectedModel, availableModels).title}`,
-      })
-      handleDialogOpenChange(false)
+      });
+      handleDialogOpenChange(false);
     } catch (error) {
       const message =
-        error instanceof Error && error.message.trim()
-          ? error.message
-          : "模型切换失败，请稍后重试"
-      setSaveError(message)
+        error instanceof Error && error.message.trim() ? error.message : "模型切换失败，请稍后重试";
+      setSaveError(message);
     }
   }
 
   async function handleAddModel() {
-    setAddError("")
+    setAddError("");
 
     try {
-      await addModelFromJSON(jsonInput)
-      setJsonInput(ADD_MODEL_TEMPLATE)
-      setActiveTab("switch")
+      await addModelFromJSON(jsonInput);
+      setJsonInput(ADD_MODEL_TEMPLATE);
+      setActiveTab("switch");
       toast({
         title: "✅ 模型已添加",
         description: "新模型已经写入 Gateway 配置，并刷新到可选列表。",
-      })
+      });
     } catch (error) {
       const message =
         error instanceof Error && error.message.trim()
           ? error.message
-          : "新增模型失败，请检查配置后重试"
-      setAddError(message)
+          : "新增模型失败，请检查配置后重试";
+      setAddError(message);
     }
   }
 
@@ -413,11 +410,13 @@ export function ModelSelectModal({
                   ) : (
                     <div className="space-y-4">
                       {availableModels.map((group) => {
-                        const isCollapsed =  collapsedProviders[group.provider]
+                        const isCollapsed = collapsedProviders[group.provider];
 
                         return (
                           <section
                             key={group.provider}
+                            className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)]"
+                          >
                             <button
                               type="button"
                               onClick={() => toggleProvider(group.provider)}
@@ -442,7 +441,7 @@ export function ModelSelectModal({
                               <div className="border-t border-[var(--color-border)] px-3 py-3">
                                 <div className="space-y-3">
                                   {group.models.map((model) => {
-                                    const modelRef = `${group.provider}/${model.id}`
+                                    const modelRef = `${group.provider}/${model.id}`;
 
                                     return (
                                       <ModelOptionCard
@@ -453,13 +452,13 @@ export function ModelSelectModal({
                                         current={currentAgentModel === modelRef}
                                         onClick={() => setSelectedModel(modelRef)}
                                       />
-                                    )
+                                    );
                                   })}
                                 </div>
                               </div>
                             ) : null}
                           </section>
-                        )
+                        );
                       })}
                     </div>
                   )
@@ -480,7 +479,10 @@ export function ModelSelectModal({
                     className="mt-3 min-h-[320px] w-full resize-y rounded-2xl border border-[var(--color-border)] bg-gray-950 px-4 py-4 font-mono text-sm leading-7 text-gray-100 outline-none transition-[border-color,box-shadow] focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
                   />
                   <div className="mt-3 text-xs text-[var(--color-text-secondary)]">
-                    如果该 provider 已存在，将只追加模型，不会覆盖现有的 baseUrl、协议和 API Key。
+                    如果该 provider 已存在，将只追加模型，不会覆盖现有的 baseUrl、协议和 API
+                    Key。第三方 OpenAI 兼容 responses 中转站如果误写成{" "}
+                    <code className="mx-1 rounded bg-black/30 px-1 py-0.5">openai</code>
+                    ，前端会自动改成自定义 provider 名，避免命中 OpenClaw 的固定 OpenAI 路径。
                   </div>
                   {addError ? (
                     <div className="mt-4 rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
@@ -518,3 +520,18 @@ export function ModelSelectModal({
               {modelSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               保存
             </Button>
+          ) : (
+            <Button
+              type="button"
+              onClick={() => void handleAddModel()}
+              disabled={isAddSubmitting || !jsonInput.trim()}
+            >
+              {isAddSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              添加模型
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

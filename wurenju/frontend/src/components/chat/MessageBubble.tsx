@@ -1,11 +1,11 @@
 "use client";
 
+import { Check, Copy, Download, RefreshCw, UserRound } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, Copy, Download, RefreshCw, UserRound } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { ThinkingBlock } from "@/components/chat/ThinkingBlock";
 import { TypewriterText } from "@/components/chat/TypewriterText";
+import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/utils/messageAdapter";
 
 function formatTimestamp(timestamp: number) {
@@ -68,7 +68,7 @@ function StaticMarkdownText(props: { content: string; className?: string }) {
             <code
               className={cn(
                 "rounded bg-[var(--color-bg-code)] px-1.5 py-0.5 text-[0.92em]",
-                codeClassName ? "bg-transparent px-0 py-0" : ""
+                codeClassName ? "bg-transparent px-0 py-0" : "",
               )}
               {...nodeProps}
             />
@@ -114,10 +114,7 @@ function AgentAvatar(props: {
   );
 }
 
-function UserAvatarButton(props: {
-  avatarUrl?: string | null;
-  onClick: () => void;
-}) {
+function UserAvatarButton(props: { avatarUrl?: string | null; onClick: () => void }) {
   if (props.avatarUrl) {
     return (
       <button
@@ -127,11 +124,7 @@ function UserAvatarButton(props: {
         aria-label="上传用户头像"
         title="上传用户头像"
       >
-        <img
-          alt="用户头像"
-          className="h-full w-full object-cover"
-          src={props.avatarUrl}
-        />
+        <img alt="用户头像" className="h-full w-full object-cover" src={props.avatarUrl} />
       </button>
     );
   }
@@ -187,7 +180,7 @@ function AssistantActions(props: {
           onClick={action.onClick}
           className={cn(
             "flex h-8 w-8 items-center justify-center rounded-full text-[var(--color-text-secondary)] transition-all duration-150 hover:scale-110 hover:text-[var(--color-text-primary)]",
-            action.key === "copy" && props.copied ? "text-[var(--color-online)]" : ""
+            action.key === "copy" && props.copied ? "text-[var(--color-online)]" : "",
           )}
           style={action.key === "copy" && props.copied ? undefined : { opacity: 0.6 }}
         >
@@ -230,10 +223,7 @@ export function MessageBubble(props: {
               <div className="whitespace-pre-wrap break-words">{props.message.content}</div>
             </div>
           </div>
-          <UserAvatarButton
-            avatarUrl={props.userAvatar}
-            onClick={props.onUserAvatarClick}
-          />
+          <UserAvatarButton avatarUrl={props.userAvatar} onClick={props.onUserAvatarClick} />
         </div>
       </div>
     );
@@ -253,41 +243,35 @@ export function MessageBubble(props: {
             <span className="text-base font-semibold text-[var(--color-text-primary)]">
               {props.agentName}
             </span>
-            <span className="text-[12px] text-[var(--color-text-secondary)]">
-              {timestampText}
-            </span>
+            <span className="text-[12px] text-[var(--color-text-secondary)]">{timestampText}</span>
           </div>
           <div
-                key={props.isTyping ? `${props.message.id}-typing` : `${props.message.id}-static`}
-                animate={props.isTyping}
-                className="break-words text-sm leading-7"
-                content={props.message.content}
-                onComplete={props.onTypingComplete}
-                speed={20}
-              />
+            className={cn(
+              "rounded-[12px] px-4 py-4 text-sm leading-7 text-[var(--color-text-primary)] shadow-[0_10px_24px_var(--color-shadow-card)]",
+              isConnectionError
+                ? "border border-amber-500/30 bg-amber-500/10"
+                : "bg-[var(--color-bg-bubble-ai)]",
             )}
-          </div>
-          <AssistantActions
-            copied={props.isCopied}
-            onCopy={() => props.onCopy(props.message)}
-            onDownload={() => props.onDownload(props.message)}
-            onRefresh={() => props.onRefresh(props.message)}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-                key={props.isTyping ? `${props.message.id}-typing` : `${props.message.id}-static`}
-                animate={props.isTyping}
-                className="break-words text-sm leading-7"
-                content={props.message.content}
-                onComplete={props.onTypingComplete}
-                speed={20}
-              />
-            )}
+          >
+            {props.message.thinking?.trim() ? (
+              <ThinkingBlock thinking={props.message.thinking} />
+            ) : null}
 
-            <MessageUsage usage={props.message.usage} />
+            {props.message.isHistorical ? (
+              <StaticMarkdownText
+                content={props.message.content}
+                className="break-words text-sm leading-7"
+              />
+            ) : (
+              <TypewriterText
+                key={props.isTyping ? `${props.message.id}-typing` : `${props.message.id}-static`}
+                animate={props.isTyping}
+                className="break-words text-sm leading-7"
+                content={props.message.content}
+                onComplete={props.onTypingComplete}
+                speed={20}
+              />
+            )}
           </div>
           <AssistantActions
             copied={props.isCopied}
