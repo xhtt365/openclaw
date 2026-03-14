@@ -1,72 +1,72 @@
-import { create } from "zustand"
-import { gateway } from "@/services/gateway"
-import { useAgentStore, type Agent } from "@/stores/agentStore"
-import { buildGroupContext, type GroupMember } from "@/utils/groupContext"
-import { adaptHistoryMessages, type ChatMessage, type ChatUsage } from "@/utils/messageAdapter"
+import { create } from "zustand";
+import { gateway } from "@/services/gateway";
+import { useAgentStore, type Agent } from "@/stores/agentStore";
+import { buildGroupContext, type GroupMember } from "@/utils/groupContext";
+import { adaptHistoryMessages, type ChatMessage, type ChatUsage } from "@/utils/messageAdapter";
 
-const GROUP_STORAGE_KEY = "wurenju.groups.v1"
-const DEFAULT_GROUP_CONTEXT_WINDOW = 8192
-const GROUP_HISTORY_PULL_LIMIT = 24
+const GROUP_STORAGE_KEY = "wurenju.groups.v1";
+const DEFAULT_GROUP_CONTEXT_WINDOW = 8192;
+const GROUP_HISTORY_PULL_LIMIT = 24;
 
-const pendingGroupSendCounts = new Map<string, number>()
-const groupMessageEpochs = new Map<string, number>()
+const pendingGroupSendCounts = new Map<string, number>();
+const groupMessageEpochs = new Map<string, number>();
 
 export type AgentInfo = {
-  id: string
-  name: string
-  emoji?: string
-  avatarUrl?: string
-  role?: string
-}
+  id: string;
+  name: string;
+  emoji?: string;
+  avatarUrl?: string;
+  role?: string;
+};
 
 export type Group = {
-  id: string
-  name: string
-  description?: string
-  members: AgentInfo[]
-  leaderId: string
-  createdAt: string
-}
+  id: string;
+  name: string;
+  description?: string;
+  members: AgentInfo[];
+  leaderId: string;
+  createdAt: string;
+};
 
 export type GroupChatMessage = ChatMessage & {
-  senderId?: string
-  senderName?: string
-  senderEmoji?: string
-  senderAvatarUrl?: string
-}
+  senderId?: string;
+  senderName?: string;
+  senderEmoji?: string;
+  senderAvatarUrl?: string;
+};
 
 export type GroupArchive = {
-  id: string
-  groupId: string
-  groupName: string
-  createdAt: string
-  messages: GroupChatMessage[]
-}
+  id: string;
+  groupId: string;
+  groupName: string;
+  createdAt: string;
+  messages: GroupChatMessage[];
+};
 
 type CreateGroupInput = {
-  name: string
-  description?: string
-  members: AgentInfo[]
-  leaderId: string
-}
+  name: string;
+  description?: string;
+  members: AgentInfo[];
+  leaderId: string;
+};
 
 type GroupPersistence = {
-  groups: Group[]
-  selectedGroupId: string | null
-  messagesByGroupId: Record<string, GroupChatMessage[]>
-  archives: GroupArchive[]
-}
+  groups: Group[];
+  selectedGroupId: string | null;
+  messagesByGroupId: Record<string, GroupChatMessage[]>;
+  archives: GroupArchive[];
+};
 
 type GroupState = GroupPersistence & {
-  isSendingByGroupId: Record<string, boolean>
-  fetchGroups: () => void
-  createGroup: (data: CreateGroupInput) => Group
-  selectGroup: (groupId: string) => void
-  clearSelectedGroup: () => void
-  sendGroupMessage: (groupId: string, text: string) => Promise<void>
-  archiveGroupMessages: (groupId: string) => boolean
-  resetGroupMessages: (groupId: string) => void
-}
+  isSendingByGroupId: Record<string, boolean>;
+  fetchGroups: () => void;
+  createGroup: (data: CreateGroupInput) => Group;
+  selectGroup: (groupId: string) => void;
+  clearSelectedGroup: () => void;
+  sendGroupMessage: (groupId: string, text: string) => Promise<void>;
+  archiveGroupMessages: (groupId: string) => boolean;
+  resetGroupMessages: (groupId: string) => void;
+};
 
 function emptyPersistence(): GroupPersistence {
   return {
@@ -74,24 +74,24 @@ function emptyPersistence(): GroupPersistence {
     selectedGroupId: null,
     messagesByGroupId: {},
     archives: [],
-  }
+  };
 }
 
 function estimateTokens(content: string) {
-  const compact = content.replace(/\s+/g, "")
+  const compact = content.replace(/\s+/g, "");
   if (!compact) {
-    return 0
+    return 0;
   }
 
-  return Math.max(1, Math.ceil(compact.length * 1.1))
+  return Math.max(1, Math.ceil(compact.length * 1.1));
 }
 
 function normalizeMembers(members: AgentInfo[]) {
-  const uniqueMembers = new Map<string, AgentInfo>()
+  const uniqueMembers = new Map<string, AgentInfo>();
 
   members.forEach((member) => {
     if (!member.id.trim()) {
-      return
+      return;
     }
 
     uniqueMembers.set(member.id, {
@@ -100,18 +100,18 @@ function normalizeMembers(members: AgentInfo[]) {
       emoji: member.emoji?.trim() || undefined,
       avatarUrl: member.avatarUrl?.trim() || undefined,
       role: member.role?.trim() || undefined,
-    })
-  })
+    });
+  });
 
-  return Array.from(uniqueMembers.values())
+  return Array.from(uniqueMembers.values());
 }
 
 function normalizeGroup(item: unknown): Group | null {
   if (!item || typeof item !== "object") {
-    return null
+    return null;
   }
 
-  const maybeGroup = item as Partial<Group>
+  const maybeGroup = item as Partial<Group>;
   if (
     typeof maybeGroup.id !== "string" ||
     typeof maybeGroup.name !== "string" ||
@@ -119,33 +119,36 @@ function normalizeGroup(item: unknown): Group | null {
     !Array.isArray(maybeGroup.members) ||
     typeof maybeGroup.createdAt !== "string"
   ) {
-    return null
+    return null;
   }
 
   return {
     id: maybeGroup.id,
     name: maybeGroup.name.trim(),
-    description: typeof maybeGroup.description === "string" ? maybeGroup.description.trim() || undefined : undefined,
+    description:
+      typeof maybeGroup.description === "string"
+        ? maybeGroup.description.trim() || undefined
+        : undefined,
     members: normalizeMembers(maybeGroup.members),
     leaderId: maybeGroup.leaderId,
     createdAt: maybeGroup.createdAt,
-  }
+  };
 }
 
 function normalizeUsage(usage: unknown): ChatUsage | undefined {
   if (!usage || typeof usage !== "object") {
-    return undefined
+    return undefined;
   }
 
-  const maybeUsage = usage as Partial<ChatUsage>
-  const input = typeof maybeUsage.input === "number" ? maybeUsage.input : 0
-  const output = typeof maybeUsage.output === "number" ? maybeUsage.output : 0
-  const cacheRead = typeof maybeUsage.cacheRead === "number" ? maybeUsage.cacheRead : 0
-  const cacheWrite = typeof maybeUsage.cacheWrite === "number" ? maybeUsage.cacheWrite : 0
+  const maybeUsage = usage as Partial<ChatUsage>;
+  const input = typeof maybeUsage.input === "number" ? maybeUsage.input : 0;
+  const output = typeof maybeUsage.output === "number" ? maybeUsage.output : 0;
+  const cacheRead = typeof maybeUsage.cacheRead === "number" ? maybeUsage.cacheRead : 0;
+  const cacheWrite = typeof maybeUsage.cacheWrite === "number" ? maybeUsage.cacheWrite : 0;
   const totalTokens =
     typeof maybeUsage.totalTokens === "number"
       ? maybeUsage.totalTokens
-      : input + output + cacheRead + cacheWrite
+      : input + output + cacheRead + cacheWrite;
 
   return {
     input,
@@ -153,21 +156,21 @@ function normalizeUsage(usage: unknown): ChatUsage | undefined {
     cacheRead,
     cacheWrite,
     totalTokens,
-  }
+  };
 }
 
 function normalizeMessage(item: unknown): GroupChatMessage | null {
   if (!item || typeof item !== "object") {
-    return null
+    return null;
   }
 
-  const maybeMessage = item as Partial<GroupChatMessage>
+  const maybeMessage = item as Partial<GroupChatMessage>;
   if (maybeMessage.role !== "user" && maybeMessage.role !== "assistant") {
-    return null
+    return null;
   }
 
   if (typeof maybeMessage.content !== "string") {
-    return null
+    return null;
   }
 
   return {
@@ -191,18 +194,19 @@ function normalizeMessage(item: unknown): GroupChatMessage | null {
     isHistorical: true,
     senderId: typeof maybeMessage.senderId === "string" ? maybeMessage.senderId : undefined,
     senderName: typeof maybeMessage.senderName === "string" ? maybeMessage.senderName : undefined,
-    senderEmoji: typeof maybeMessage.senderEmoji === "string" ? maybeMessage.senderEmoji : undefined,
+    senderEmoji:
+      typeof maybeMessage.senderEmoji === "string" ? maybeMessage.senderEmoji : undefined,
     senderAvatarUrl:
       typeof maybeMessage.senderAvatarUrl === "string" ? maybeMessage.senderAvatarUrl : undefined,
-  }
+  };
 }
 
 function normalizeArchive(item: unknown): GroupArchive | null {
   if (!item || typeof item !== "object") {
-    return null
+    return null;
   }
 
-  const maybeArchive = item as Partial<GroupArchive>
+  const maybeArchive = item as Partial<GroupArchive>;
   if (
     typeof maybeArchive.id !== "string" ||
     typeof maybeArchive.groupId !== "string" ||
@@ -210,7 +214,7 @@ function normalizeArchive(item: unknown): GroupArchive | null {
     typeof maybeArchive.createdAt !== "string" ||
     !Array.isArray(maybeArchive.messages)
   ) {
-    return null
+    return null;
   }
 
   return {
@@ -218,148 +222,156 @@ function normalizeArchive(item: unknown): GroupArchive | null {
     groupId: maybeArchive.groupId,
     groupName: maybeArchive.groupName,
     createdAt: maybeArchive.createdAt,
-    messages: maybeArchive.messages.map(normalizeMessage).filter((message): message is GroupChatMessage => message !== null),
-  }
+    messages: maybeArchive.messages
+      .map(normalizeMessage)
+      .filter((message): message is GroupChatMessage => message !== null),
+  };
 }
 
 function ensureMessageBuckets(
   groups: Group[],
-  messagesByGroupId: Record<string, GroupChatMessage[]>
+  messagesByGroupId: Record<string, GroupChatMessage[]>,
 ) {
-  const nextBuckets: Record<string, GroupChatMessage[]> = {}
+  const nextBuckets: Record<string, GroupChatMessage[]> = {};
 
   groups.forEach((group) => {
-    nextBuckets[group.id] = messagesByGroupId[group.id] ?? []
-  })
+    nextBuckets[group.id] = messagesByGroupId[group.id] ?? [];
+  });
 
-  return nextBuckets
+  return nextBuckets;
 }
 
 function readStoredState(): GroupPersistence {
   if (typeof window === "undefined") {
-    return emptyPersistence()
+    return emptyPersistence();
   }
 
   try {
-    const raw = window.localStorage.getItem(GROUP_STORAGE_KEY)
+    const raw = window.localStorage.getItem(GROUP_STORAGE_KEY);
     if (!raw) {
-      return emptyPersistence()
+      return emptyPersistence();
     }
 
-    const parsed = JSON.parse(raw)
+    const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      const groups = parsed.map(normalizeGroup).filter((group): group is Group => group !== null)
+      const groups = parsed.map(normalizeGroup).filter((group): group is Group => group !== null);
       return {
         groups,
         selectedGroupId: null,
         messagesByGroupId: ensureMessageBuckets(groups, {}),
         archives: [],
-      }
+      };
     }
 
     if (!parsed || typeof parsed !== "object") {
-      return emptyPersistence()
+      return emptyPersistence();
     }
 
-    const maybeState = parsed as Partial<GroupPersistence>
+    const maybeState = parsed as Partial<GroupPersistence>;
     const groups = Array.isArray(maybeState.groups)
       ? maybeState.groups.map(normalizeGroup).filter((group): group is Group => group !== null)
-      : []
+      : [];
     const rawMessages =
       maybeState.messagesByGroupId && typeof maybeState.messagesByGroupId === "object"
         ? maybeState.messagesByGroupId
-        : {}
+        : {};
     const messagesByGroupId = ensureMessageBuckets(
       groups,
       Object.fromEntries(
         Object.entries(rawMessages).map(([groupId, messages]) => [
           groupId,
           Array.isArray(messages)
-            ? messages.map(normalizeMessage).filter((message): message is GroupChatMessage => message !== null)
+            ? messages
+                .map(normalizeMessage)
+                .filter((message): message is GroupChatMessage => message !== null)
             : [],
-        ])
-      )
-    )
+        ]),
+      ),
+    );
     const archives = Array.isArray(maybeState.archives)
-      ? maybeState.archives.map(normalizeArchive).filter((archive): archive is GroupArchive => archive !== null)
-      : []
+      ? maybeState.archives
+          .map(normalizeArchive)
+          .filter((archive): archive is GroupArchive => archive !== null)
+      : [];
     const selectedGroupId =
       typeof maybeState.selectedGroupId === "string" &&
       groups.some((group) => group.id === maybeState.selectedGroupId)
         ? maybeState.selectedGroupId
-        : null
+        : null;
 
     return {
       groups,
       selectedGroupId,
       messagesByGroupId,
       archives,
-    }
+    };
   } catch (error) {
-    console.error("[Group] 读取项目组缓存失败:", error)
-    return emptyPersistence()
+    console.error("[Group] 读取项目组缓存失败:", error);
+    return emptyPersistence();
   }
 }
 
 function writeStoredState(state: GroupPersistence) {
   if (typeof window === "undefined") {
-    return
+    return;
   }
 
   try {
-    window.localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify(state))
+    window.localStorage.setItem(GROUP_STORAGE_KEY, JSON.stringify(state));
   } catch (error) {
-    console.error("[Group] 写入项目组缓存失败:", error)
+    console.error("[Group] 写入项目组缓存失败:", error);
   }
 }
 
-function toPersistence(state: Pick<GroupState, "groups" | "selectedGroupId" | "messagesByGroupId" | "archives">): GroupPersistence {
+function toPersistence(
+  state: Pick<GroupState, "groups" | "selectedGroupId" | "messagesByGroupId" | "archives">,
+): GroupPersistence {
   return {
     groups: state.groups,
     selectedGroupId: state.selectedGroupId,
     messagesByGroupId: state.messagesByGroupId,
     archives: state.archives,
-  }
+  };
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message.trim()) {
-    return error.message.trim()
+    return error.message.trim();
   }
 
   if (typeof error === "string" && error.trim()) {
-    return error.trim()
+    return error.trim();
   }
 
-  return fallback
+  return fallback;
 }
 
 function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function resolveGroupMembers(group: Group, agents: Agent[]) {
-  const agentMap = new Map(agents.map((agent) => [agent.id, agent]))
+  const agentMap = new Map(agents.map((agent) => [agent.id, agent]));
   const resolvedMembers = normalizeMembers(
     group.members.map((member) => {
-      const latestAgent = agentMap.get(member.id)
+      const latestAgent = agentMap.get(member.id);
       return {
         id: member.id,
         name: latestAgent?.name?.trim() || member.name,
         emoji: latestAgent?.emoji?.trim() || member.emoji,
         avatarUrl: latestAgent?.avatarUrl?.trim() || member.avatarUrl,
         role: latestAgent?.role?.trim() || member.role,
-      }
-    })
-  )
+      };
+    }),
+  );
 
   if (resolvedMembers.some((member) => member.id === group.leaderId)) {
-    return resolvedMembers
+    return resolvedMembers;
   }
 
-  const leader = agentMap.get(group.leaderId)
+  const leader = agentMap.get(group.leaderId);
   if (!leader) {
-    return resolvedMembers
+    return resolvedMembers;
   }
 
   return normalizeMembers([
@@ -371,24 +383,24 @@ function resolveGroupMembers(group: Group, agents: Agent[]) {
       avatarUrl: leader.avatarUrl,
       role: leader.role,
     },
-  ])
+  ]);
 }
 
 function buildGroupSessionKey(agentId: string, mainKey: string) {
-  return `agent:${agentId}:${mainKey}`
+  return `agent:${agentId}:${mainKey}`;
 }
 
 function findMentionIndex(text: string, name: string) {
-  const safeName = name.trim()
+  const safeName = name.trim();
   if (!safeName) {
-    return -1
+    return -1;
   }
 
   const matcher = new RegExp(
     `(?:^|[\\s（(])@${escapeRegExp(safeName)}(?=$|\\s|[，。,.!?！？:：；;、）)])`,
-    "i"
-  )
-  return text.search(matcher)
+    "i",
+  );
+  return text.search(matcher);
 }
 
 function extractMentionTargets(text: string, members: AgentInfo[]) {
@@ -398,28 +410,28 @@ function extractMentionTargets(text: string, members: AgentInfo[]) {
       index: findMentionIndex(text, member.name),
     }))
     .filter((entry) => entry.index >= 0)
-    .sort((left, right) => left.index - right.index)
-    .map((entry) => entry.member)
+    .toSorted((left, right) => left.index - right.index)
+    .map((entry) => entry.member);
 }
 
 function resolveTargetMembers(group: Group, text: string, agents: Agent[]) {
-  const members = resolveGroupMembers(group, agents)
-  const mentionedMembers = extractMentionTargets(text, members)
+  const members = resolveGroupMembers(group, agents);
+  const mentionedMembers = extractMentionTargets(text, members);
 
   if (mentionedMembers.length > 0) {
     return {
       members,
       targets: mentionedMembers,
       userSpecifiedTargets: true,
-    }
+    };
   }
 
-  const leader = members.find((member) => member.id === group.leaderId) ?? members[0] ?? null
+  const leader = members.find((member) => member.id === group.leaderId) ?? members[0] ?? null;
   return {
     members,
     targets: leader ? [leader] : [],
     userSpecifiedTargets: false,
-  }
+  };
 }
 
 function toContextMembers(members: AgentInfo[]): GroupMember[] {
@@ -427,70 +439,72 @@ function toContextMembers(members: AgentInfo[]): GroupMember[] {
     id: member.id,
     name: member.name,
     title: member.role,
-  }))
+  }));
 }
 
 function pickLatestAssistantReply(messages: ChatMessage[], startedAt: number) {
   const assistantMessages = messages.filter(
-    (message) => message.role === "assistant" && message.content.trim()
-  )
+    (message) => message.role === "assistant" && message.content.trim(),
+  );
   if (assistantMessages.length === 0) {
-    return null
+    return null;
   }
 
   const freshAssistantMessage =
     // 优先拿本轮发送之后生成的回复，避免误取旧历史。
     [...assistantMessages]
-      .reverse()
+      .toReversed()
       .find(
         (message) =>
-          typeof message.timestamp === "number" && Number.isFinite(message.timestamp) && message.timestamp >= startedAt - 1000
-      ) ?? null
+          typeof message.timestamp === "number" &&
+          Number.isFinite(message.timestamp) &&
+          message.timestamp >= startedAt - 1000,
+      ) ?? null;
 
-  return freshAssistantMessage ?? assistantMessages[assistantMessages.length - 1] ?? null
+  return freshAssistantMessage ?? assistantMessages[assistantMessages.length - 1] ?? null;
 }
 
 export const useGroupStore = create<GroupState>((set, get) => {
-  const initialState = readStoredState()
+  const initialState = readStoredState();
 
   function updateState(updater: (state: GroupState) => Partial<GroupState>) {
     set((state) => {
-      const patch = updater(state)
-      const nextState = { ...state, ...patch }
-      writeStoredState(toPersistence(nextState))
-      return patch
-    })
+      const patch = updater(state);
+      const nextState = { ...state, ...patch };
+      writeStoredState(toPersistence(nextState));
+      return patch;
+    });
   }
 
   function getGroupEpoch(groupId: string) {
-    return groupMessageEpochs.get(groupId) ?? 0
+    return groupMessageEpochs.get(groupId) ?? 0;
   }
 
   function bumpGroupEpoch(groupId: string) {
-    const nextEpoch = getGroupEpoch(groupId) + 1
-    groupMessageEpochs.set(groupId, nextEpoch)
-    return nextEpoch
+    const nextEpoch = getGroupEpoch(groupId) + 1;
+    groupMessageEpochs.set(groupId, nextEpoch);
+    return nextEpoch;
   }
 
   function beginGroupSend(groupId: string, count: number) {
-    const nextCount = Math.max(0, (pendingGroupSendCounts.get(groupId) ?? 0) + count)
-    pendingGroupSendCounts.set(groupId, nextCount)
+    const nextCount = Math.max(0, (pendingGroupSendCounts.get(groupId) ?? 0) + count);
+    pendingGroupSendCounts.set(groupId, nextCount);
     updateState((state) => ({
       isSendingByGroupId: {
         ...state.isSendingByGroupId,
         [groupId]: nextCount > 0,
       },
-    }))
+    }));
   }
 
   function finishGroupSend(groupId: string) {
-    const currentCount = pendingGroupSendCounts.get(groupId) ?? 0
-    const nextCount = Math.max(0, currentCount - 1)
+    const currentCount = pendingGroupSendCounts.get(groupId) ?? 0;
+    const nextCount = Math.max(0, currentCount - 1);
 
     if (nextCount === 0) {
-      pendingGroupSendCounts.delete(groupId)
+      pendingGroupSendCounts.delete(groupId);
     } else {
-      pendingGroupSendCounts.set(groupId, nextCount)
+      pendingGroupSendCounts.set(groupId, nextCount);
     }
 
     updateState((state) => ({
@@ -498,18 +512,18 @@ export const useGroupStore = create<GroupState>((set, get) => {
         ...state.isSendingByGroupId,
         [groupId]: nextCount > 0,
       },
-    }))
+    }));
   }
 
   function cancelGroupPending(groupId: string) {
-    bumpGroupEpoch(groupId)
-    pendingGroupSendCounts.delete(groupId)
+    bumpGroupEpoch(groupId);
+    pendingGroupSendCounts.delete(groupId);
     updateState((state) => ({
       isSendingByGroupId: {
         ...state.isSendingByGroupId,
         [groupId]: false,
       },
-    }))
+    }));
   }
 
   async function ensureGroupAgentRuntime(agent: Agent, agentStore = useAgentStore.getState()) {
@@ -517,17 +531,17 @@ export const useGroupStore = create<GroupState>((set, get) => {
       agent.modelName?.trim() ||
       agentStore.agents.find((item) => item.id === agent.id)?.modelName?.trim() ||
       agentStore.defaultModelLabel?.trim() ||
-      ""
+      "";
 
     if (currentModelRef.startsWith("openai/")) {
-      await agentStore.ensureModelRuntimeConfig(agent.id, currentModelRef)
+      await agentStore.ensureModelRuntimeConfig(agent.id, currentModelRef);
     }
   }
 
   async function loadLatestAssistantReply(sessionKey: string, startedAt: number) {
-    const payload = await gateway.loadHistory(sessionKey, GROUP_HISTORY_PULL_LIMIT)
-    const messages = adaptHistoryMessages(payload)
-    return pickLatestAssistantReply(messages, startedAt)
+    const payload = await gateway.loadHistory(sessionKey, GROUP_HISTORY_PULL_LIMIT);
+    const messages = adaptHistoryMessages(payload);
+    return pickLatestAssistantReply(messages, startedAt);
   }
 
   function appendGroupAssistantMessage(groupId: string, message: GroupChatMessage) {
@@ -536,23 +550,23 @@ export const useGroupStore = create<GroupState>((set, get) => {
         ...state.messagesByGroupId,
         [groupId]: [...(state.messagesByGroupId[groupId] ?? []), message],
       },
-    }))
+    }));
   }
 
   async function dispatchMessageToTarget(params: {
-    groupId: string
-    group: Group
-    member: AgentInfo
-    members: AgentInfo[]
-    text: string
-    userSpecifiedTargets: boolean
-    epoch: number
+    groupId: string;
+    group: Group;
+    member: AgentInfo;
+    members: AgentInfo[];
+    text: string;
+    userSpecifiedTargets: boolean;
+    epoch: number;
   }) {
-    const { groupId, group, member, members, text, userSpecifiedTargets, epoch } = params
+    const { groupId, group, member, members, text, userSpecifiedTargets, epoch } = params;
 
     try {
-      const agentStore = useAgentStore.getState()
-      const liveAgent = agentStore.agents.find((agent) => agent.id === member.id)
+      const agentStore = useAgentStore.getState();
+      const liveAgent = agentStore.agents.find((agent) => agent.id === member.id);
       const targetMember = liveAgent
         ? {
             ...member,
@@ -561,7 +575,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
             avatarUrl: liveAgent.avatarUrl,
             role: liveAgent.role,
           }
-        : member
+        : member;
 
       const targetAgent = liveAgent ?? {
         id: targetMember.id,
@@ -569,13 +583,13 @@ export const useGroupStore = create<GroupState>((set, get) => {
         emoji: targetMember.emoji || "",
         avatarUrl: targetMember.avatarUrl,
         role: targetMember.role,
-      }
+      };
 
       if (!agentStore.mainKey.trim()) {
-        throw new Error("当前 Agent 会话未就绪，请稍后重试")
+        throw new Error("当前 Agent 会话未就绪，请稍后重试");
       }
 
-      await ensureGroupAgentRuntime(targetAgent, agentStore)
+      await ensureGroupAgentRuntime(targetAgent, agentStore);
 
       const contextPrefix = buildGroupContext({
         groupName: group.name,
@@ -583,25 +597,25 @@ export const useGroupStore = create<GroupState>((set, get) => {
         leaderId: group.leaderId,
         targetAgentId: targetMember.id,
         userSpecifiedTargets,
-      })
-      const actualMessage = `${contextPrefix}${text}`
-      const sessionKey = buildGroupSessionKey(targetMember.id, agentStore.mainKey)
-      const startedAt = Date.now()
+      });
+      const actualMessage = `${contextPrefix}${text}`;
+      const sessionKey = buildGroupSessionKey(targetMember.id, agentStore.mainKey);
+      const startedAt = Date.now();
 
-      console.log(`[Group] 注入群聊上下文 → Agent: ${targetMember.name}, 群: ${group.name}`)
-      const result = await gateway.sendChat(actualMessage, sessionKey)
+      console.log(`[Group] 注入群聊上下文 → Agent: ${targetMember.name}, 群: ${group.name}`);
+      const result = await gateway.sendChat(actualMessage, sessionKey);
       if (!result.ok) {
-        throw new Error(result.error?.message?.trim() || "连接 Gateway 失败，请确认服务已启动")
+        throw new Error(result.error?.message?.trim() || "连接 Gateway 失败，请确认服务已启动");
       }
 
       // 群聊不复用 1v1 的活跃回复桶，直接回拉目标 Agent 的历史拿最终结果。
-      const reply = await loadLatestAssistantReply(sessionKey, startedAt)
+      const reply = await loadLatestAssistantReply(sessionKey, startedAt);
       if (!reply) {
-        throw new Error("未获取到 Agent 回复")
+        throw new Error("未获取到 Agent 回复");
       }
 
       if (getGroupEpoch(groupId) !== epoch) {
-        return
+        return;
       }
 
       appendGroupAssistantMessage(groupId, {
@@ -620,11 +634,11 @@ export const useGroupStore = create<GroupState>((set, get) => {
         senderName: targetMember.name,
         senderEmoji: targetMember.emoji,
         senderAvatarUrl: targetMember.avatarUrl,
-      })
-      console.log(`[Group] 群成员回复: ${targetMember.name}`)
+      });
+      console.log(`[Group] 群成员回复: ${targetMember.name}`);
     } catch (error) {
-      const errorText = getErrorMessage(error, "连接 Gateway 失败，请确认服务已启动")
-      console.error(`[Group] 群消息发送失败: ${member.name}`, error)
+      const errorText = getErrorMessage(error, "连接 Gateway 失败，请确认服务已启动");
+      console.error(`[Group] 群消息发送失败: ${member.name}`, error);
 
       if (getGroupEpoch(groupId) === epoch) {
         appendGroupAssistantMessage(groupId, {
@@ -639,10 +653,10 @@ export const useGroupStore = create<GroupState>((set, get) => {
           senderName: member.name,
           senderEmoji: member.emoji,
           senderAvatarUrl: member.avatarUrl,
-        })
+        });
       }
     } finally {
-      finishGroupSend(groupId)
+      finishGroupSend(groupId);
     }
   }
 
@@ -651,18 +665,18 @@ export const useGroupStore = create<GroupState>((set, get) => {
     isSendingByGroupId: {},
 
     fetchGroups: () => {
-      const nextState = readStoredState()
-      console.log(`[Group] 获取项目组列表: ${nextState.groups.length} 个`)
+      const nextState = readStoredState();
+      console.log(`[Group] 获取项目组列表: ${nextState.groups.length} 个`);
       set({
         ...nextState,
         isSendingByGroupId: {},
-      })
+      });
     },
 
     createGroup: (data) => {
-      const name = data.name.trim()
-      const description = data.description?.trim() || undefined
-      const members = normalizeMembers(data.members)
+      const name = data.name.trim();
+      const description = data.description?.trim() || undefined;
+      const members = normalizeMembers(data.members);
       const group: Group = {
         id: crypto.randomUUID(),
         name,
@@ -670,50 +684,50 @@ export const useGroupStore = create<GroupState>((set, get) => {
         members,
         leaderId: data.leaderId,
         createdAt: new Date().toISOString(),
-      }
+      };
 
-      let createdGroup = group
+      let createdGroup = group;
       updateState((state) => {
-        const nextGroups = [group, ...state.groups]
+        const nextGroups = [group, ...state.groups];
         const nextMessagesByGroupId = {
           ...state.messagesByGroupId,
           [group.id]: [],
-        }
+        };
 
-        console.log(`[Group] 创建项目组成功: ${group.name} (${group.id})`)
-        createdGroup = group
+        console.log(`[Group] 创建项目组成功: ${group.name} (${group.id})`);
+        createdGroup = group;
         return {
           groups: nextGroups,
           selectedGroupId: group.id,
           messagesByGroupId: ensureMessageBuckets(nextGroups, nextMessagesByGroupId),
-        }
-      })
-      return createdGroup
+        };
+      });
+      return createdGroup;
     },
 
     selectGroup: (groupId) => {
-      console.log(`[Group] 选中项目组: ${groupId}`)
+      console.log(`[Group] 选中项目组: ${groupId}`);
       updateState(() => ({
         selectedGroupId: groupId,
-      }))
+      }));
     },
 
     clearSelectedGroup: () => {
-      console.log("[Group] 清空当前项目组选中态")
+      console.log("[Group] 清空当前项目组选中态");
       updateState(() => ({
         selectedGroupId: null,
-      }))
+      }));
     },
 
     sendGroupMessage: async (groupId, text) => {
-      const cleanText = text.trim()
+      const cleanText = text.trim();
       if (!cleanText) {
-        return
+        return;
       }
 
-      const group = get().groups.find((item) => item.id === groupId)
+      const group = get().groups.find((item) => item.id === groupId);
       if (!group) {
-        return
+        return;
       }
 
       const userMessage: GroupChatMessage = {
@@ -723,32 +737,32 @@ export const useGroupStore = create<GroupState>((set, get) => {
         timestamp: Date.now(),
         isNew: true,
         isHistorical: false,
-      }
+      };
 
-      const agentStore = useAgentStore.getState()
+      const agentStore = useAgentStore.getState();
       const { members, targets, userSpecifiedTargets } = resolveTargetMembers(
         group,
         cleanText,
-        agentStore.agents
-      )
+        agentStore.agents,
+      );
       if (targets.length === 0) {
-        console.error(`[Group] 发送群消息失败: ${group.name} 没有可用成员`)
-        return
+        console.error(`[Group] 发送群消息失败: ${group.name} 没有可用成员`);
+        return;
       }
 
-      const epoch = getGroupEpoch(groupId)
+      const epoch = getGroupEpoch(groupId);
 
       console.log(
-        `[Group] 发送群消息: ${group.name} -> ${targets.map((member) => member.name).join(", ")}`
-      )
+        `[Group] 发送群消息: ${group.name} -> ${targets.map((member) => member.name).join(", ")}`,
+      );
       updateState((state) => ({
         messagesByGroupId: {
           ...state.messagesByGroupId,
           [groupId]: [...(state.messagesByGroupId[groupId] ?? []), userMessage],
         },
-      }))
+      }));
 
-      beginGroupSend(groupId, targets.length)
+      beginGroupSend(groupId, targets.length);
       await Promise.all(
         targets.map((member) =>
           dispatchMessageToTarget({
@@ -759,19 +773,19 @@ export const useGroupStore = create<GroupState>((set, get) => {
             text: cleanText,
             userSpecifiedTargets,
             epoch,
-          })
-        )
-      )
+          }),
+        ),
+      );
     },
 
     archiveGroupMessages: (groupId) => {
-      const group = get().groups.find((item) => item.id === groupId)
-      const messages = get().messagesByGroupId[groupId] ?? []
+      const group = get().groups.find((item) => item.id === groupId);
+      const messages = get().messagesByGroupId[groupId] ?? [];
       if (!group || messages.length === 0) {
-        return false
+        return false;
       }
 
-      cancelGroupPending(groupId)
+      cancelGroupPending(groupId);
 
       const archive: GroupArchive = {
         id: crypto.randomUUID(),
@@ -779,9 +793,9 @@ export const useGroupStore = create<GroupState>((set, get) => {
         groupName: group.name,
         createdAt: new Date().toISOString(),
         messages,
-      }
+      };
 
-      console.log(`[Group] 归档群聊记录: ${group.name}`)
+      console.log(`[Group] 归档群聊记录: ${group.name}`);
       updateState((state) => ({
         archives: [archive, ...state.archives],
         messagesByGroupId: {
@@ -792,13 +806,13 @@ export const useGroupStore = create<GroupState>((set, get) => {
           ...state.isSendingByGroupId,
           [groupId]: false,
         },
-      }))
-      return true
+      }));
+      return true;
     },
 
     resetGroupMessages: (groupId) => {
-      cancelGroupPending(groupId)
-      console.log(`[Group] 重置群聊记录: ${groupId}`)
+      cancelGroupPending(groupId);
+      console.log(`[Group] 重置群聊记录: ${groupId}`);
       updateState((state) => ({
         messagesByGroupId: {
           ...state.messagesByGroupId,
@@ -808,3 +822,61 @@ export const useGroupStore = create<GroupState>((set, get) => {
           ...state.isSendingByGroupId,
           [groupId]: false,
         },
+      }));
+    },
+  };
+});
+
+export function getGroupContextMetrics(messages: GroupChatMessage[]) {
+  const inputTokens = messages.reduce((total, message) => {
+    if (message.role !== "user") {
+      return total;
+    }
+
+    return total + estimateTokens(message.content);
+  }, 0);
+  const assistantUsage = messages.reduce<ChatUsage>(
+    (summary, message) => {
+      if (message.role !== "assistant") {
+        return summary;
+      }
+
+      const usage = message.usage;
+      const output = usage?.output ?? estimateTokens(message.content);
+      const input = usage?.input ?? 0;
+      const cacheRead = usage?.cacheRead ?? 0;
+      const cacheWrite = usage?.cacheWrite ?? 0;
+      return {
+        input: summary.input + input,
+        output: summary.output + output,
+        cacheRead: summary.cacheRead + cacheRead,
+        cacheWrite: summary.cacheWrite + cacheWrite,
+        totalTokens: summary.totalTokens + input + output + cacheRead + cacheWrite,
+      };
+    },
+    {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+    },
+  );
+  const currentUsed = messages.reduce((total, message) => {
+    return total + estimateTokens(message.content) + estimateTokens(message.thinking ?? "");
+  }, 0);
+
+  return {
+    currentUsed,
+    total: DEFAULT_GROUP_CONTEXT_WINDOW,
+    inputTokens: inputTokens + assistantUsage.input,
+    outputTokens: assistantUsage.output,
+    cacheHitTokens: assistantUsage.cacheRead + assistantUsage.cacheWrite,
+    totalConsumed:
+      inputTokens +
+      assistantUsage.input +
+      assistantUsage.output +
+      assistantUsage.cacheRead +
+      assistantUsage.cacheWrite,
+  };
+}

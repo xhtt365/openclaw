@@ -1,14 +1,7 @@
 "use client";
 
+import { Search, Plus, ChevronDown, ChevronRight, Briefcase, Users } from "lucide-react";
 import { useState } from "react";
-import {
-  Search,
-  Plus,
-  ChevronDown,
-  ChevronRight,
-  Briefcase,
-  Users,
-} from "lucide-react";
 
 export interface Employee {
   id: string;
@@ -161,7 +154,7 @@ export function Sidebar({ selectedId, onSelectEmployee }: SidebarProps) {
     employees: dept.employees.filter(
       (e) =>
         e.name.toLowerCase().includes(search.toLowerCase()) ||
-        e.role.toLowerCase().includes(search.toLowerCase())
+        e.role.toLowerCase().includes(search.toLowerCase()),
     ),
   })).filter((dept) => dept.employees.length > 0);
 
@@ -178,13 +171,14 @@ export function Sidebar({ selectedId, onSelectEmployee }: SidebarProps) {
       {/* Brand Area */}
       <div className="p-4 space-y-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
         <div className="flex items-center gap-3">
-          <div
-            className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-base flex-shrink-0 brand-gradient"
-          >
+          <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-base flex-shrink-0 brand-gradient">
             S
           </div>
           <div className="min-w-0">
-            <div className="text-base font-bold leading-tight" style={{ color: "var(--text-primary)" }}>
+            <div
+              className="text-base font-bold leading-tight"
+              style={{ color: "var(--text-primary)" }}
+            >
               SoloBrave
             </div>
             <div className="text-xs mt-0.5 truncate" style={{ color: "var(--text-secondary)" }}>
@@ -226,7 +220,10 @@ export function Sidebar({ selectedId, onSelectEmployee }: SidebarProps) {
       </div>
 
       {/* Add Employee + Function Buttons */}
-      <div className="px-3 py-2.5 space-y-2" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+      <div
+        className="px-3 py-2.5 space-y-2"
+        style={{ borderBottom: "1px solid var(--border-subtle)" }}
+      >
         <button
           className="w-full py-2 rounded-lg text-sm font-semibold text-white transition-all duration-150 hover:opacity-90 active:opacity-75"
           style={{ background: "linear-gradient(135deg, var(--brand-from), var(--brand-to))" }}
@@ -270,11 +267,20 @@ export function Sidebar({ selectedId, onSelectEmployee }: SidebarProps) {
               className="w-full flex items-center gap-1.5 px-3 py-1.5 transition-all duration-150 hover:opacity-80"
             >
               {collapsed[dept.id] ? (
-                <ChevronRight className="w-3 h-3 flex-shrink-0" style={{ color: "var(--text-secondary)" }} />
+                <ChevronRight
+                  className="w-3 h-3 flex-shrink-0"
+                  style={{ color: "var(--text-secondary)" }}
+                />
               ) : (
-                <ChevronDown className="w-3 h-3 flex-shrink-0" style={{ color: "var(--text-secondary)" }} />
+                <ChevronDown
+                  className="w-3 h-3 flex-shrink-0"
+                  style={{ color: "var(--text-secondary)" }}
+                />
               )}
-              <span className="text-xs font-medium uppercase tracking-wide" style={{ color: "var(--text-secondary)" }}>
+              <span
+                className="text-xs font-medium uppercase tracking-wide"
+                style={{ color: "var(--text-secondary)" }}
+              >
                 {dept.name}
               </span>
               <span className="text-xs ml-1" style={{ color: "var(--text-secondary)" }}>
@@ -295,17 +301,26 @@ export function Sidebar({ selectedId, onSelectEmployee }: SidebarProps) {
                       backgroundColor: isSelected ? "rgba(255,107,53,0.07)" : "transparent",
                     }}
                     onMouseEnter={(e) => {
-                      if (!isSelected) (e.currentTarget as HTMLButtonElement).style.backgroundColor = "rgba(255,255,255,0.03)";
+                      if (!isSelected) {
+                        (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                          "rgba(255,255,255,0.03)";
+                      }
                     }}
                     onMouseLeave={(e) => {
-                      if (!isSelected) (e.currentTarget as HTMLButtonElement).style.backgroundColor = "transparent";
+                      if (!isSelected) {
+                        (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                          "transparent";
+                      }
                     }}
                   >
                     {/* Selected indicator */}
                     {isSelected && (
                       <span
                         className="absolute left-0 top-0 bottom-0 w-[3px] rounded-r"
-                        style={{ background: "linear-gradient(to bottom, var(--brand-from), var(--brand-to))" }}
+                        style={{
+                          background:
+                            "linear-gradient(to bottom, var(--brand-from), var(--brand-to))",
+                        }}
                       />
                     )}
 
@@ -323,17 +338,26 @@ export function Sidebar({ selectedId, onSelectEmployee }: SidebarProps) {
                     {/* Info */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-1">
-                        <span className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)" }}>
+                        <span
+                          className="text-sm font-semibold truncate"
+                          style={{ color: "var(--text-primary)" }}
+                        >
                           {emp.name}
                         </span>
-                        <span className="text-xs flex-shrink-0" style={{ color: "var(--text-secondary)" }}>
+                        <span
+                          className="text-xs flex-shrink-0"
+                          style={{ color: "var(--text-secondary)" }}
+                        >
                           {emp.timestamp}
                         </span>
                       </div>
                       <div className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>
                         {emp.role}
                       </div>
-                      <div className="text-xs truncate mt-0.5" style={{ color: "var(--text-secondary)", opacity: 0.7 }}>
+                      <div
+                        className="text-xs truncate mt-0.5"
+                        style={{ color: "var(--text-secondary)", opacity: 0.7 }}
+                      >
                         {emp.lastMessage}
                       </div>
                     </div>
@@ -354,11 +378,6 @@ export function Sidebar({ selectedId, onSelectEmployee }: SidebarProps) {
           已连接
         </span>
       </div>
-    </aside>
-  );
-}
-
-export { DEPARTMENTS };
     </aside>
   );
 }
