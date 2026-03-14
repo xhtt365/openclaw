@@ -1,3 +1,8 @@
+import {
+  resolveGatewayLaunchAgentLabel,
+  resolveLegacyGatewayLaunchAgentLabels,
+} from "../daemon/constants.js";
+
 const SUPERVISOR_HINTS = {
   launchd: ["LAUNCH_JOB_LABEL", "LAUNCH_JOB_NAME", "XPC_SERVICE_NAME", "OPENCLAW_LAUNCHD_LABEL"],
   systemd: ["OPENCLAW_SYSTEMD_UNIT", "INVOCATION_ID", "SYSTEMD_EXEC_PID", "JOURNAL_STREAM"],
@@ -21,12 +26,36 @@ function hasAnyHint(env: NodeJS.ProcessEnv, keys: readonly string[]): boolean {
   });
 }
 
+function hasGatewayLaunchdHint(env: NodeJS.ProcessEnv): boolean {
+  const explicitLabel = env.OPENCLAW_LAUNCHD_LABEL?.trim();
+  if (explicitLabel) {
+    return true;
+  }
+
+  const expectedLabels = new Set([
+    resolveGatewayLaunchAgentLabel(env.OPENCLAW_PROFILE),
+    ...resolveLegacyGatewayLaunchAgentLabels(env.OPENCLAW_PROFILE),
+  ]);
+
+  return ["LAUNCH_JOB_LABEL", "LAUNCH_JOB_NAME", "XPC_SERVICE_NAME"].some((key) => {
+    const rawValue = env[key];
+    if (typeof rawValue !== "string") {
+      return false;
+    }
+    const value = rawValue.trim();
+    if (!value || value === "0") {
+      return false;
+    }
+    return expectedLabels.has(value);
+  });
+}
+
 export function detectRespawnSupervisor(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): RespawnSupervisor | null {
   if (platform === "darwin") {
-    return hasAnyHint(env, SUPERVISOR_HINTS.launchd) ? "launchd" : null;
+    return hasGatewayLaunchdHint(env) ? "launchd" : null;
   }
   if (platform === "linux") {
     return hasAnyHint(env, SUPERVISOR_HINTS.systemd) ? "systemd" : null;

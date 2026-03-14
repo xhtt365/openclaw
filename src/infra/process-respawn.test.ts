@@ -155,6 +155,32 @@ describe("restartGatewayProcessWithFreshPid", () => {
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
+  it("ignores generic XPC_SERVICE_NAME values from interactive macOS shells", () => {
+    clearSupervisorHints();
+    setPlatform("darwin");
+    process.env.XPC_SERVICE_NAME = "0";
+    spawnMock.mockReturnValue({ pid: 4242, unref: vi.fn() });
+
+    const result = restartGatewayProcessWithFreshPid();
+
+    expect(result).toEqual({ mode: "spawned", pid: 4242 });
+    expect(scheduleDetachedLaunchdRestartHandoffMock).not.toHaveBeenCalled();
+    expect(triggerOpenClawRestartMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores unrelated macOS launch job labels", () => {
+    clearSupervisorHints();
+    setPlatform("darwin");
+    process.env.LAUNCH_JOB_LABEL = "com.apple.Terminal";
+    spawnMock.mockReturnValue({ pid: 4242, unref: vi.fn() });
+
+    const result = restartGatewayProcessWithFreshPid();
+
+    expect(result).toEqual({ mode: "spawned", pid: 4242 });
+    expect(scheduleDetachedLaunchdRestartHandoffMock).not.toHaveBeenCalled();
+    expect(triggerOpenClawRestartMock).not.toHaveBeenCalled();
+  });
+
   it("spawns detached child with current exec argv", () => {
     delete process.env.OPENCLAW_NO_RESPAWN;
     clearSupervisorHints();
@@ -171,7 +197,7 @@ describe("restartGatewayProcessWithFreshPid", () => {
       ["--import", "tsx", "/repo/dist/index.js", "gateway", "run"],
       expect.objectContaining({
         detached: true,
-        stdio: "inherit",
+        stdio: "ignore",
       }),
     );
   });

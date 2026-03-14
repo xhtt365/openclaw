@@ -1,3 +1,4 @@
+import { isRestartEnabled } from "../../config/commands.js";
 import { loadConfig } from "../../config/config.js";
 import { extractDeliveryInfo } from "../../config/sessions.js";
 import { resolveOpenClawPackageRoot } from "../../infra/openclaw-root.js";
@@ -6,16 +7,139 @@ import {
   type RestartSentinelPayload,
   writeRestartSentinel,
 } from "../../infra/restart-sentinel.js";
-import { scheduleGatewaySigusr1Restart } from "../../infra/restart.js";
+import { scheduleGatewaySigusr1Restart, triggerOpenClawRestart } from "../../infra/restart.js";
 import { normalizeUpdateChannel } from "../../infra/update-channels.js";
 import { runGatewayUpdate } from "../../infra/update-runner.js";
 import { formatControlPlaneActor, resolveControlPlaneActor } from "../control-plane-audit.js";
-import { validateUpdateRunParams } from "../protocol/index.js";
+import { ErrorCodes, errorShape, validateUpdateRunParams } from "../protocol/index.js";
 import { parseRestartRequestParams } from "./restart-request.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { assertValidParams } from "./validation.js";
 
+function buildRestartSentinelPayload(params: {
+  sessionKey?: string;
+  note?: string;
+  deliveryContext?: RestartSentinelPayload["deliveryContext"];
+  threadId?: string;
+  reason?: string | null;
+}) {
+  return {
+    kind: "restart",
+    status: "ok",
+    ts: Date.now(),
+    sessionKey: params.sessionKey,
+    deliveryContext: params.deliveryContext,
+    threadId: params.threadId,
+    message: params.note ?? params.reason ?? null,
+    doctorHint: formatDoctorNonInteractiveHint(),
+    stats: {
+      mode: "gateway.restart",
+      reason: params.reason ?? null,
+    },
+  } satisfies RestartSentinelPayload;
+}
+
 export const updateHandlers: GatewayRequestHandlers = {
+  "gateway.restart": async ({ params, respond, client, context }) => {
+    if (!assertValidParams(params, validateUpdateRunParams, "gateway.restart", respond)) {
+      return;
+    }
+
+    const config = loadConfig();
+    if (!isRestartEnabled(config)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          "Gateway restart is disabled (commands.restart=false).",
+        ),
+      );
+      return;
+    }
+
+    const actor = resolveControlPlaneActor(client);
+    const { sessionKey, note, restartDelayMs } = parseRestartRequestParams(params);
+    const { deliveryContext, threadId } = extractDeliveryInfo(sessionKey);
+    const payload = buildRestartSentinelPayload({
+      sessionKey,
+      note,
+      deliveryContext,
+      threadId,
+      reason: "gateway.restart",
+    });
+
+    let sentinelPath: string | null = null;
+    try {
+      sentinelPath = await writeRestartSentinel(payload);
+    } catch {
+      sentinelPath = null;
+    }
+
+    const hasSigusr1Listener = process.listenerCount("SIGUSR1") > 0;
+    if (hasSigusr1Listener) {
+      const restart = scheduleGatewaySigusr1Restart({
+        delayMs: restartDelayMs,
+        reason: "gateway.restart",
+        audit: {
+          actor: actor.actor,
+          deviceId: actor.deviceId,
+          clientIp: actor.clientIp,
+          changedPaths: [],
+        },
+      });
+
+      context?.logGateway?.info(
+        `gateway.restart requested ${formatControlPlaneActor(actor)} mode=sigusr1`,
+      );
+
+      respond(
+        true,
+        {
+          ok: true,
+          restart,
+          sentinel: {
+            path: sentinelPath,
+            payload,
+          },
+        },
+        undefined,
+      );
+      return;
+    }
+
+    const restart = triggerOpenClawRestart();
+    context?.logGateway?.info(
+      `gateway.restart requested ${formatControlPlaneActor(actor)} mode=${restart.method}`,
+    );
+
+    if (!restart.ok) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.UNAVAILABLE,
+          restart.detail
+            ? `gateway restart failed (${restart.method}): ${restart.detail}`
+            : `gateway restart failed (${restart.method})`,
+        ),
+      );
+      return;
+    }
+
+    respond(
+      true,
+      {
+        ok: true,
+        restart,
+        sentinel: {
+          path: sentinelPath,
+          payload,
+        },
+      },
+      undefined,
+    );
+  },
   "update.run": async ({ params, respond, client, context }) => {
     if (!assertValidParams(params, validateUpdateRunParams, "update.run", respond)) {
       return;

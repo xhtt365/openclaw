@@ -75,7 +75,7 @@ export function restartGatewayProcessWithFreshPid(): GatewayRespawnResult {
     const child = spawn(process.execPath, args, {
       env: process.env,
       detached: true,
-      stdio: "inherit",
+      stdio: "ignore",
     });
     child.unref();
     return { mode: "spawned", pid: child.pid ?? undefined };
