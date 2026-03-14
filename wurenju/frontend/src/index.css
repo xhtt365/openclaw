@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+:root {
+  color: #e2e8f0;
+  background:
+    radial-gradient(circle at top, rgba(249, 115, 22, 0.22), transparent 32%),
+    linear-gradient(180deg, #020617 0%, #111827 100%);
+  font-family: "Geist Variable", "PingFang SC", "Hiragino Sans GB", sans-serif;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+a {
+  color: inherit;
+}
+
+code {
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace;
+}
