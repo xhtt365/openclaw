@@ -1,7 +1,7 @@
 import "@fontsource-variable/geist";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import App from "./App";
+import RecoveryShell from "./RecoveryShell";
 import "./index.css";
 
 const container = document.getElementById("root");
@@ -12,6 +12,6 @@ if (!container) {
 
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <RecoveryShell />
   </StrictMode>,
 );
