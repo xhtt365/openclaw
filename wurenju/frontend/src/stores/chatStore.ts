@@ -38,6 +38,7 @@ interface ChatState {
   getUsageForAgent: (agentId: string) => ChatUsage;
   getContextWindowSizeForAgent: (agentId: string) => number;
   getCurrentContextUsedForAgent: (agentId: string) => number;
+  hasHistoryLoadedForAgent: (agentId: string) => boolean;
   isHistoryLoadingForAgent: (agentId: string) => boolean;
   isSendingForAgent: (agentId: string) => boolean;
   isAnySending: () => boolean;
@@ -777,6 +778,14 @@ export const useChatStore = create<ChatState>((set, get) => {
       }
 
       return getNumber(get().currentContextUsedByAgentId, agentId);
+    },
+
+    hasHistoryLoadedForAgent: (agentId) => {
+      if (!agentId) {
+        return false;
+      }
+
+      return isTrue(get().historyLoadedByAgentId, agentId);
     },
 
     isHistoryLoadingForAgent: (agentId) => {

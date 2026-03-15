@@ -9,7 +9,15 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { memo, type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  type ChangeEvent,
+  type WheelEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { GroupChatHeader } from "@/components/chat/GroupChatHeader";
 import { GroupMentionPopover } from "@/components/chat/GroupMentionPopover";
 import { GroupThinkingStatus } from "@/components/chat/GroupThinkingStatus";
@@ -32,6 +40,11 @@ import {
   type GroupChatMessage,
   type ThinkingAgent,
 } from "@/stores/groupStore";
+import {
+  getScrollBottomTop,
+  getShouldStickToBottomOnWheel,
+  isScrollNearBottom,
+} from "@/utils/chatScroll";
 import { resolveDisplayAgentMembers } from "@/utils/groupMembers";
 import {
   findActiveGroupMention,
@@ -216,11 +229,15 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const messageViewportRef = useRef<HTMLDivElement>(null);
+  const messageContentRef = useRef<HTMLDivElement>(null);
   const messageElementRefs = useRef(new Map<string, HTMLDivElement>());
   const hasInitializedNotificationRef = useRef(false);
   const seenAssistantMessageIdsRef = useRef(new Set<string>());
   const copyTimerRef = useRef<number | null>(null);
   const feedbackTimerRef = useRef<number | null>(null);
+  const shouldStickToBottomRef = useRef(true);
+  const hasAutoScrolledRef = useRef(false);
 
   const metrics = useMemo(() => getGroupContextMetrics(messages), [messages]);
   const thinkingAgents = useMemo(() => Array.from(thinkingAgentMap.values()), [thinkingAgentMap]);
@@ -414,6 +431,7 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
       return;
     }
 
+    shouldStickToBottomRef.current = true;
     void sendGroupMessage(group.id, text);
     setInput("");
     setCaretPosition(0);
@@ -423,8 +441,38 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
       textareaRef.current.style.height = "auto";
     }
     window.requestAnimationFrame(() => {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      scrollMessagesToBottom("auto");
     });
+  }
+
+  function scrollMessagesToBottom(behavior: ScrollBehavior) {
+    const viewport = messageViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    viewport.scrollTo({
+      top: getScrollBottomTop(viewport),
+      behavior,
+    });
+  }
+
+  function handleMessageViewportScroll() {
+    const viewport = messageViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    shouldStickToBottomRef.current = isScrollNearBottom(viewport);
+  }
+
+  function handleMessageViewportWheel(event: WheelEvent<HTMLDivElement>) {
+    const viewport = messageViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    shouldStickToBottomRef.current = getShouldStickToBottomOnWheel(viewport, event.deltaY);
   }
 
   async function handleCopyMessage(message: GroupChatMessage) {
@@ -607,8 +655,48 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
   }
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    shouldStickToBottomRef.current = true;
+    hasAutoScrolledRef.current = false;
+  }, [group.id]);
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      if (!messageViewportRef.current) {
+        return;
+      }
+
+      if (shouldStickToBottomRef.current || !hasAutoScrolledRef.current) {
+        scrollMessagesToBottom("auto");
+        shouldStickToBottomRef.current = true;
+      }
+
+      hasAutoScrolledRef.current = true;
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
   }, [isSending, messages.length, thinkingAgents.length]);
+
+  useEffect(() => {
+    const content = messageContentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const resizeObserver = new ResizeObserver(() => {
+      if (!shouldStickToBottomRef.current) {
+        return;
+      }
+
+      scrollMessagesToBottom("auto");
+    });
+    resizeObserver.observe(content);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -781,65 +869,75 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
         </div>
       ) : null}
 
-      <div className="im-scroll min-h-0 flex-1 overflow-y-auto px-6 py-8">
-        {hasMessages ? (
-          <div className="flex w-full flex-col gap-6">
-            {messages.map((message) => {
-              const isSearchHit =
-                trimmedSearchQuery.length > 0 &&
-                matchesMessageSearch(
-                  [message.content, message.thinking ?? ""].filter(Boolean).join("\n"),
-                  trimmedSearchQuery,
-                );
-              const isSearchActive = activeMatchedMessageId === message.id;
+      <div
+        ref={messageViewportRef}
+        onWheelCapture={handleMessageViewportWheel}
+        onScroll={handleMessageViewportScroll}
+        className="im-scroll min-h-0 flex-1 overflow-y-auto px-6 py-8"
+      >
+        <div
+          ref={messageContentRef}
+          className={cn("flex w-full flex-col gap-6", hasMessages ? "" : "min-h-full")}
+        >
+          {hasMessages ? (
+            <>
+              {messages.map((message) => {
+                const isSearchHit =
+                  trimmedSearchQuery.length > 0 &&
+                  matchesMessageSearch(
+                    [message.content, message.thinking ?? ""].filter(Boolean).join("\n"),
+                    trimmedSearchQuery,
+                  );
+                const isSearchActive = activeMatchedMessageId === message.id;
 
-              return (
-                <div
-                  key={message.id}
-                  ref={(node) => {
-                    if (node) {
-                      messageElementRefs.current.set(message.id, node);
-                      return;
-                    }
-
-                    messageElementRefs.current.delete(message.id);
-                  }}
-                  className={cn(
-                    "rounded-[22px] transition-all duration-200 scroll-mt-28",
-                    isSearchHit ? "ring-1 ring-amber-300/22" : "",
-                    isSearchActive ? "bg-amber-400/[0.06] ring-2 ring-amber-300/50" : "",
-                  )}
-                >
-                  <MessageBubble
+                return (
+                  <div
                     key={message.id}
-                    message={message}
-                    agentName={resolveAgentName(message, group)}
-                    agentAvatarText={resolveAgentAvatarText(message, group)}
-                    agentAvatarColor={getAvatarColor(
-                      message.senderId ?? resolveAgentName(message, group),
+                    ref={(node) => {
+                      if (node) {
+                        messageElementRefs.current.set(message.id, node);
+                        return;
+                      }
+
+                      messageElementRefs.current.delete(message.id);
+                    }}
+                    className={cn(
+                      "rounded-[22px] transition-all duration-200 scroll-mt-28",
+                      isSearchHit ? "ring-1 ring-amber-300/22" : "",
+                      isSearchActive ? "bg-amber-400/[0.06] ring-2 ring-amber-300/50" : "",
                     )}
-                    agentAvatarUrl={message.senderAvatarUrl}
-                    userAvatar={userAvatar}
-                    isCopied={copiedMessageId === message.id}
-                    isTyping={false}
-                    onTypingComplete={() => {}}
-                    onUserAvatarClick={handleAvatarTrigger}
-                    onCopy={handleCopyMessage}
-                    onDownload={handleDownloadMessage}
-                    onRefresh={handleRefreshMessage}
-                    searchQuery={trimmedSearchQuery}
-                  />
-                </div>
-              );
-            })}
+                  >
+                    <MessageBubble
+                      key={message.id}
+                      message={message}
+                      agentName={resolveAgentName(message, group)}
+                      agentAvatarText={resolveAgentAvatarText(message, group)}
+                      agentAvatarColor={getAvatarColor(
+                        message.senderId ?? resolveAgentName(message, group),
+                      )}
+                      agentAvatarUrl={message.senderAvatarUrl}
+                      userAvatar={userAvatar}
+                      isCopied={copiedMessageId === message.id}
+                      isTyping={false}
+                      onTypingComplete={() => {}}
+                      onUserAvatarClick={handleAvatarTrigger}
+                      onCopy={handleCopyMessage}
+                      onDownload={handleDownloadMessage}
+                      onRefresh={handleRefreshMessage}
+                      searchQuery={trimmedSearchQuery}
+                    />
+                  </div>
+                );
+              })}
 
-            <GroupThinkingStatus members={group.members} thinkingAgents={thinkingAgents} />
+              <GroupThinkingStatus members={group.members} thinkingAgents={thinkingAgents} />
 
-            <div ref={bottomRef} />
-          </div>
-        ) : (
-          <GroupWelcomeView group={group} onMention={insertMention} />
-        )}
+              <div ref={bottomRef} />
+            </>
+          ) : (
+            <GroupWelcomeView group={group} onMention={insertMention} />
+          )}
+        </div>
       </div>
 
       <div className="shrink-0 border-t border-gray-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">

@@ -1,7 +1,15 @@
 "use client";
 
 import { Archive, Minimize2, MoreVertical, RotateCcw, Send, Zap } from "lucide-react";
-import { memo, type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  type ChangeEvent,
+  type KeyboardEvent,
+  type WheelEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { GroupArchiveChatArea } from "@/components/chat/GroupArchiveChatArea";
 import { GroupChatArea } from "@/components/chat/GroupChatArea";
 import { MessageBubble } from "@/components/chat/MessageBubble";
@@ -13,6 +21,11 @@ import { cn } from "@/lib/utils";
 import { useAgentStore } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
 import type { Group, GroupArchive } from "@/stores/groupStore";
+import {
+  getScrollBottomTop,
+  getShouldStickToBottomOnWheel,
+  isScrollNearBottom,
+} from "@/utils/chatScroll";
 import type { ChatMessage } from "@/utils/messageAdapter";
 
 function HistoryDivider() {
@@ -85,6 +98,7 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
     state.getCurrentContextUsedForAgent(activeAgentId),
   );
   const isWaiting = useChatStore((state) => state.isSendingForAgent(activeAgentId));
+  const hasHistoryLoaded = useChatStore((state) => state.hasHistoryLoadedForAgent(activeAgentId));
   const isHistoryLoading = useChatStore((state) => state.isHistoryLoadingForAgent(activeAgentId));
   const isAnySending = useChatStore((state) => state.isAnySending());
 
@@ -119,10 +133,14 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const messageViewportRef = useRef<HTMLDivElement>(null);
+  const messageContentRef = useRef<HTMLDivElement>(null);
   const seenAssistantMessageIdsRef = useRef<Set<string>>(new Set());
   const didInitHistoryRef = useRef(false);
   const copyTimerRef = useRef<number | null>(null);
   const feedbackTimerRef = useRef<number | null>(null);
+  const shouldStickToBottomRef = useRef(true);
+  const hasAutoScrolledRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -138,6 +156,8 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
   useEffect(() => {
     seenAssistantMessageIdsRef.current = new Set();
     didInitHistoryRef.current = false;
+    shouldStickToBottomRef.current = true;
+    hasAutoScrolledRef.current = false;
     const frame = window.requestAnimationFrame(() => {
       setTypingMessageId(null);
       setInput("");
@@ -188,9 +208,76 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
     setTypingMessageId(newAssistantMessages[newAssistantMessages.length - 1].id);
   }, [messages]);
 
+  function scrollMessagesToBottom(behavior: ScrollBehavior) {
+    const viewport = messageViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    viewport.scrollTo({
+      top: getScrollBottomTop(viewport),
+      behavior,
+    });
+  }
+
+  function handleMessageViewportScroll() {
+    const viewport = messageViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    shouldStickToBottomRef.current = isScrollNearBottom(viewport);
+  }
+
+  function handleMessageViewportWheel(event: WheelEvent<HTMLDivElement>) {
+    const viewport = messageViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    shouldStickToBottomRef.current = getShouldStickToBottomOnWheel(viewport, event.deltaY);
+  }
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const frameId = window.requestAnimationFrame(() => {
+      if (!messageViewportRef.current) {
+        return;
+      }
+
+      // 只在用户仍停留在底部时自动跟随，避免查看历史时被强制拉回。
+      if (shouldStickToBottomRef.current || !hasAutoScrolledRef.current) {
+        scrollMessagesToBottom("auto");
+        shouldStickToBottomRef.current = true;
+      }
+
+      hasAutoScrolledRef.current = true;
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
   }, [messages, isHistoryLoading, isWaiting, typingMessageId]);
+
+  useEffect(() => {
+    const content = messageContentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    // 打字动画会持续撑高消息区域，贴底时补滚动，不打断用户翻历史。
+    const resizeObserver = new ResizeObserver(() => {
+      if (!shouldStickToBottomRef.current) {
+        return;
+      }
+
+      scrollMessagesToBottom("auto");
+    });
+    resizeObserver.observe(content);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, []);
 
   function autoResize() {
     const textarea = textareaRef.current;
@@ -209,6 +296,7 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
       return;
     }
 
+    shouldStickToBottomRef.current = true;
     setInput("");
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -470,8 +558,13 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
         </div>
       </header>
 
-      <div className="im-scroll min-h-0 flex-1 overflow-y-auto px-6 py-6">
-        <div className="flex w-full flex-col gap-6">
+      <div
+        ref={messageViewportRef}
+        onWheelCapture={handleMessageViewportWheel}
+        onScroll={handleMessageViewportScroll}
+        className="im-scroll min-h-0 flex-1 overflow-y-auto px-6 py-6"
+      >
+        <div ref={messageContentRef} className="flex w-full flex-col gap-6">
           {visibleMessages.map((message, index) => (
             <div key={message.id} className="space-y-4">
               {shouldShowHistoryDivider && index === firstNewMessageIndex ? (
@@ -497,13 +590,13 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
             </div>
           ))}
 
-          {isHistoryLoading && visibleMessages.length === 0 ? (
+          {isHistoryLoading && !hasHistoryLoaded && visibleMessages.length === 0 ? (
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-3 text-sm text-[var(--color-text-secondary)]">
               正在加载历史消息...
             </div>
           ) : null}
 
-          {!isHistoryLoading && !isWaiting && visibleMessages.length === 0 ? (
+          {hasHistoryLoaded && !isHistoryLoading && !isWaiting && visibleMessages.length === 0 ? (
             <div className="pt-16 text-center text-sm text-[var(--color-text-secondary)]">
               还没有聊天记录，先和 {agentName} 打个招呼。
             </div>
