@@ -214,6 +214,30 @@ export interface GatewayChatEventPayload {
   errorMessage?: string;
 }
 
+export interface GatewayAgentTurnParams {
+  agentId?: string;
+  sessionKey: string;
+  message: string;
+  thinking?: string;
+  deliver?: boolean;
+  timeout?: number;
+  extraSystemPrompt?: string;
+}
+
+export interface GatewayAgentTurnAcceptedPayload {
+  runId?: string;
+  status?: string;
+  acceptedAt?: number;
+}
+
+export interface GatewayAgentWaitPayload {
+  runId?: string;
+  status?: string;
+  startedAt?: number;
+  endedAt?: number;
+  error?: string;
+}
+
 export interface GatewayCronJob {
   id: string;
   name: string;
@@ -296,6 +320,26 @@ function toPositiveInteger(value: unknown) {
   return Math.max(1, Math.floor(parsed));
 }
 
+function isGroupSessionKey(value: unknown) {
+  return typeof value === "string" && value.includes(":group:");
+}
+
+function summarizeTextFieldForLog(label: string, value: unknown) {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  return `[${label} ${value.length} chars]`;
+}
+
+function resolveRequestLogPrefix(method: string, params: Record<string, unknown>) {
+  if ((method === "agent" || method === "chat.history") && isGroupSessionKey(params.sessionKey)) {
+    return "[Group]";
+  }
+
+  return "[GW]";
+}
+
 function sanitizeRequestParamsForLog(method: string, params: Record<string, unknown>) {
   if (method === "config.patch" || method === "config.apply" || method === "config.set") {
     const next = { ...params };
@@ -305,7 +349,50 @@ function sanitizeRequestParamsForLog(method: string, params: Record<string, unkn
     return next;
   }
 
+  if (method === "agent") {
+    return {
+      ...params,
+      message: summarizeTextFieldForLog("message", params.message),
+      thinking: summarizeTextFieldForLog("thinking", params.thinking),
+      extraSystemPrompt: summarizeTextFieldForLog("system", params.extraSystemPrompt),
+    };
+  }
+
   return params;
+}
+
+function sanitizeResponsePayloadForLog(
+  method: string,
+  payload: Record<string, unknown> | undefined,
+  params: Record<string, unknown>,
+) {
+  if (!payload) {
+    return payload;
+  }
+
+  if (method === "chat.history") {
+    return {
+      sessionKey: typeof params.sessionKey === "string" ? params.sessionKey : undefined,
+      messageCount: Array.isArray(payload.messages) ? payload.messages.length : 0,
+    };
+  }
+
+  return payload;
+}
+
+function summarizeEventPayloadForLog(payload: unknown) {
+  if (!isRecord(payload)) {
+    return payload;
+  }
+
+  return {
+    sessionKey: typeof payload.sessionKey === "string" ? payload.sessionKey : undefined,
+    runId: typeof payload.runId === "string" ? payload.runId : undefined,
+    state: typeof payload.state === "string" ? payload.state : undefined,
+    stream: typeof payload.stream === "string" ? payload.stream : undefined,
+    messageCount: Array.isArray(payload.messages) ? payload.messages.length : undefined,
+    keys: Object.keys(payload),
+  };
 }
 
 export function normalizeRestartGatewayError(error: unknown) {
@@ -531,7 +618,11 @@ class GatewayService {
     }
 
     if (data.type === "event") {
-      console.log("[GW] event payload:", data.event || "unknown", data.payload ?? {});
+      console.log(
+        "[GW] event payload:",
+        data.event || "unknown",
+        summarizeEventPayloadForLog(data.payload),
+      );
       this.dispatchEvent(data.event, data.payload);
     }
 
@@ -782,10 +873,12 @@ class GatewayService {
   async sendRequest<T = Record<string, unknown>>(
     method: string,
     params: Record<string, unknown> = {},
+    timeoutMs = 10000,
   ): Promise<T> {
-    console.log(`[GW] sendRequest ${method}:`, sanitizeRequestParamsForLog(method, params));
+    const logPrefix = resolveRequestLogPrefix(method, params);
+    console.log(`${logPrefix} sendRequest ${method}:`, sanitizeRequestParamsForLog(method, params));
 
-    const frame = await this.requestFrame(method, params, 10000);
+    const frame = await this.requestFrame(method, params, timeoutMs);
     if (!frame.ok) {
       const error = new Error(frame.error?.message || `${method} failed`);
       if (error.message.includes("missing scope:")) {
@@ -793,12 +886,49 @@ class GatewayService {
           `[GW] scope error: method=${method} requested=${GATEWAY_OPERATOR_SCOPES.join(",")} granted=${this.grantedScopes.join(",") || "none"} message=${error.message}`,
         );
       }
-      console.error("[GW] error:", error);
+      if (logPrefix === "[Group]") {
+        console.error(`[Group] Gateway 请求失败: method=${method}`, error);
+      } else {
+        console.error("[GW] error:", error);
+      }
       throw error;
     }
 
-    console.log(`[GW] sendRequest ${method} -> response`, frame.payload);
+    console.log(
+      `${logPrefix} sendRequest ${method} -> response`,
+      sanitizeResponsePayloadForLog(method, frame.payload, params),
+    );
     return (frame.payload ?? {}) as T;
+  }
+
+  async sendAgentTurn(params: GatewayAgentTurnParams): Promise<GatewayAgentTurnAcceptedPayload> {
+    const idempotencyKey = crypto.randomUUID();
+    const payload = {
+      agentId: params.agentId,
+      sessionKey: params.sessionKey,
+      message: params.message,
+      thinking: params.thinking,
+      deliver: params.deliver,
+      timeout: params.timeout,
+      extraSystemPrompt: params.extraSystemPrompt,
+      idempotencyKey,
+    } satisfies Record<string, unknown>;
+    console.log(
+      `[Group] 发送 Agent 请求: sessionKey=${params.sessionKey}, agentId=${params.agentId ?? "auto"}, id=${idempotencyKey}, hasExtraSystemPrompt=${Boolean(params.extraSystemPrompt?.trim())}, messageLength=${params.message.length}`,
+    );
+    return this.sendRequest<GatewayAgentTurnAcceptedPayload>("agent", payload);
+  }
+
+  async waitForAgentRun(runId: string, timeoutMs = 120000): Promise<GatewayAgentWaitPayload> {
+    console.log(`[GW] agent.wait: runId=${runId}, timeoutMs=${timeoutMs}`);
+    return this.sendRequest<GatewayAgentWaitPayload>(
+      "agent.wait",
+      {
+        runId,
+        timeoutMs,
+      },
+      timeoutMs + 5000,
+    );
   }
 
   async compactSession(
@@ -1187,17 +1317,20 @@ class GatewayService {
   // }
   // 前端适配时主要读取 role / content / usage / timestamp，其它字段按需保留。
   async loadHistory(sessionKey: string, limit = 200): Promise<GatewayHistoryPayload | null> {
-    console.log(`[GW] loadHistory: ${sessionKey}`);
+    const logPrefix = isGroupSessionKey(sessionKey) ? "[Group]" : "[GW]";
+    console.log(`${logPrefix} 读取会话历史: key=${sessionKey}, limit=${limit}`);
 
     try {
-      const payload = await this.sendRequest<GatewayHistoryPayload>("chat.history", {
+      return await this.sendRequest<GatewayHistoryPayload>("chat.history", {
         sessionKey,
         limit,
       });
-      console.log("[GW] loadHistory raw:", JSON.stringify(payload, null, 2));
-      return payload;
     } catch (error) {
-      console.error("[GW] error:", error);
+      if (logPrefix === "[Group]") {
+        console.error("[Group] 读取会话历史失败:", error);
+      } else {
+        console.error("[GW] error:", error);
+      }
       return null;
     }
   }
@@ -1367,10 +1500,14 @@ class GatewayService {
     };
 
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(
-        GATEWAY_DEVICE_IDENTITY_STORAGE_KEY,
-        JSON.stringify(storedIdentity),
-      );
+      try {
+        window.localStorage.setItem(
+          GATEWAY_DEVICE_IDENTITY_STORAGE_KEY,
+          JSON.stringify(storedIdentity),
+        );
+      } catch (error) {
+        console.error("[GW] 保存设备身份失败:", error);
+      }
     }
 
     return {

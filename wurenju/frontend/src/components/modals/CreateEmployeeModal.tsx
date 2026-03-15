@@ -213,19 +213,6 @@ export function CreateEmployeeModal({
 
   useEffect(() => {
     if (!open) {
-      setStep(1);
-      setForm(INITIAL_FORM_STATE);
-      setModels([]);
-      setModelQuery("");
-      setSelectedModelRef("");
-      setDefaultModelLabel("全局默认模型");
-      setIsLoadingModels(false);
-      setModelsError("");
-      setSubmitError("");
-      setIsSubmitting(false);
-      setCreatingStep("idle");
-      setDraftAgentId("");
-      setHasCreatedAgent(false);
       return;
     }
 
@@ -306,6 +293,23 @@ export function CreateEmployeeModal({
     if (!nextOpen && isSubmitting) {
       return;
     }
+
+    if (!nextOpen) {
+      setStep(1);
+      setForm(INITIAL_FORM_STATE);
+      setModels([]);
+      setModelQuery("");
+      setSelectedModelRef("");
+      setDefaultModelLabel("全局默认模型");
+      setIsLoadingModels(false);
+      setModelsError("");
+      setSubmitError("");
+      setIsSubmitting(false);
+      setCreatingStep("idle");
+      setDraftAgentId("");
+      setHasCreatedAgent(false);
+    }
+
     onOpenChange(nextOpen);
   }
 

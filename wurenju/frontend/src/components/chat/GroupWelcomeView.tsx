@@ -1,5 +1,6 @@
 import { memo } from "react";
 import type { Group } from "@/stores/groupStore";
+import { getGroupDisplayMemberCount } from "@/utils/groupMembers";
 
 type GroupWelcomeViewProps = {
   group: Group;
@@ -13,6 +14,7 @@ function resolveAvatarText(name: string, emoji?: string) {
 function GroupWelcomeViewInner({ group, onMention }: GroupWelcomeViewProps) {
   const visibleMembers = group.members.slice(0, 4);
   const hiddenCount = Math.max(0, group.members.length - visibleMembers.length);
+  const totalMembers = getGroupDisplayMemberCount(group);
 
   return (
     <div className="flex min-h-full items-center justify-center">
@@ -25,7 +27,7 @@ function GroupWelcomeViewInner({ group, onMention }: GroupWelcomeViewProps) {
           🎉 欢迎来到 {group.name}
         </h2>
         <p className="mt-3 text-[15px] text-[var(--color-text-secondary)]">
-          {group.members.length} 位成员已加入
+          {totalMembers} 位成员已加入
         </p>
 
         <div className="mt-8 w-full rounded-[24px] border border-emerald-400/15 bg-emerald-500/10 px-6 py-5 text-left shadow-[0_18px_60px_rgba(16,185,129,0.08)] backdrop-blur-xl">

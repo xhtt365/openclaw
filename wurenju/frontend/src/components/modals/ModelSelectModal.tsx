@@ -198,6 +198,7 @@ export function ModelSelectModal({
   const [addError, setAddError] = useState("");
   const [collapsedProviders, setCollapsedProviders] = useState<Record<string, boolean>>({});
   const [jsonInput, setJsonInput] = useState(ADD_MODEL_TEMPLATE);
+  const effectiveSelectedModel = selectedModel || currentAgentModel || "";
 
   const currentModelInfo = resolveCurrentModelInfo(currentAgentModel, availableModels);
   const allModels = flattenModelGroups(availableModels);
@@ -206,7 +207,7 @@ export function ModelSelectModal({
 
   function resetModalState() {
     setActiveTab("switch");
-    setSelectedModel(currentAgentModel ?? "");
+    setSelectedModel("");
     setLoadError("");
     setSaveError("");
     setAddError("");
@@ -260,16 +261,8 @@ export function ModelSelectModal({
     };
   }, [availableModels.length, fetchModels, open]);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    setSelectedModel(currentAgentModel ?? "");
-  }, [currentAgentModel, open]);
-
   async function handleSave() {
-    if (!selectedModel || selectedModel === currentAgentModel) {
+    if (!effectiveSelectedModel || effectiveSelectedModel === currentAgentModel) {
       handleDialogOpenChange(false);
       return;
     }
@@ -277,10 +270,10 @@ export function ModelSelectModal({
     setSaveError("");
 
     try {
-      await setAgentModel(agentId, selectedModel);
+      await setAgentModel(agentId, effectiveSelectedModel);
       toast({
         title: "✅ 模型已切换",
-        description: `${agentName} 已切换到 ${resolveCurrentModelInfo(selectedModel, availableModels).title}`,
+        description: `${agentName} 已切换到 ${resolveCurrentModelInfo(effectiveSelectedModel, availableModels).title}`,
       });
       handleDialogOpenChange(false);
     } catch (error) {
@@ -401,7 +394,7 @@ export function ModelSelectModal({
                           key={modelRef}
                           provider={provider}
                           model={model}
-                          selected={selectedModel === modelRef}
+                          selected={effectiveSelectedModel === modelRef}
                           current={currentAgentModel === modelRef}
                           onClick={() => setSelectedModel(modelRef)}
                         />
@@ -448,7 +441,7 @@ export function ModelSelectModal({
                                         key={modelRef}
                                         provider={group.provider}
                                         model={model}
-                                        selected={selectedModel === modelRef}
+                                        selected={effectiveSelectedModel === modelRef}
                                         current={currentAgentModel === modelRef}
                                         onClick={() => setSelectedModel(modelRef)}
                                       />
@@ -515,7 +508,11 @@ export function ModelSelectModal({
             <Button
               type="button"
               onClick={() => void handleSave()}
-              disabled={modelSaving || !selectedModel || selectedModel === currentAgentModel}
+              disabled={
+                modelSaving ||
+                !effectiveSelectedModel ||
+                effectiveSelectedModel === currentAgentModel
+              }
             >
               {modelSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               保存

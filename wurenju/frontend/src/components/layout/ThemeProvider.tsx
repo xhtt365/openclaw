@@ -30,7 +30,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useLayoutEffect(() => {
     applyThemeClass(theme);
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch (error) {
+      console.error("[Theme] 保存主题失败:", error);
+    }
   }, [theme]);
 
   const setTheme = useCallback((nextTheme: ThemeMode) => {
@@ -47,7 +51,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       setTheme,
       toggleTheme,
     }),
-    [setTheme, theme, toggleTheme]
+    [setTheme, theme, toggleTheme],
   );
 
   return (

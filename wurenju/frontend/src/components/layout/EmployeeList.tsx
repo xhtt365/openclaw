@@ -1,6 +1,15 @@
 "use client";
 
-import { Briefcase, Building2, ChevronDown, Plus, Search, Settings2, Users } from "lucide-react";
+import {
+  Archive,
+  Briefcase,
+  Building2,
+  ChevronDown,
+  Plus,
+  Search,
+  Settings2,
+  Users,
+} from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CreateEmployeeModal } from "@/components/modals/CreateEmployeeModal";
@@ -8,7 +17,8 @@ import { CreateGroupModal } from "@/components/modals/CreateGroupModal";
 import { cn } from "@/lib/utils";
 import { useAgentStore, type Agent } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
-import { useGroupStore } from "@/stores/groupStore";
+import { useGroupStore, type GroupArchive } from "@/stores/groupStore";
+import { getGroupDisplayMemberCount } from "@/utils/groupMembers";
 import type { ChatMessage } from "@/utils/messageAdapter";
 
 type EmployeeStatus = "online" | "thinking" | "offline" | "error";
@@ -100,6 +110,41 @@ function getPreview(messages: ChatMessage[]) {
   };
 }
 
+function formatSidebarTimestamp(date: Date) {
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  return sameDay
+    ? date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+    : `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function getArchivePreview(archive: GroupArchive) {
+  const visibleMessages = archive.messages.filter(
+    (message) => !message.isLoading && message.content.trim(),
+  );
+  const latestMessage = visibleMessages[visibleMessages.length - 1];
+
+  if (!latestMessage) {
+    return {
+      preview: "已归档，可随时回看",
+      timestamp: formatSidebarTimestamp(new Date(archive.createdAt)),
+    };
+  }
+
+  const previewText = latestMessage.content.replace(/\s+/g, " ").trim();
+  const senderLabel =
+    latestMessage.role === "user" ? "你" : latestMessage.senderName?.trim() || "成员";
+  const timestampSource =
+    typeof latestMessage.timestamp === "number" && Number.isFinite(latestMessage.timestamp)
+      ? new Date(latestMessage.timestamp)
+      : new Date(archive.createdAt);
+
+  return {
+    preview: `${senderLabel}：${previewText}`,
+    timestamp: formatSidebarTimestamp(timestampSource),
+  };
+}
+
 function toEmployee(agent: Agent, preview: ReturnType<typeof getPreview>): Employee {
   const avatarText = agent.emoji?.trim() || agent.name.charAt(0).toUpperCase() || "A";
 
@@ -174,14 +219,18 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
   const closeDetail = useAgentStore((state) => state.closeDetail);
   const groups = useGroupStore((state) => state.groups);
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
+  const selectedArchiveId = useGroupStore((state) => state.selectedArchiveId);
+  const archives = useGroupStore((state) => state.archives);
   const selectGroup = useGroupStore((state) => state.selectGroup);
   const clearSelectedGroup = useGroupStore((state) => state.clearSelectedGroup);
+  const selectArchive = useGroupStore((state) => state.selectArchive);
+  const clearSelectedArchive = useGroupStore((state) => state.clearSelectedArchive);
   const switchAgent = useChatStore((state) => state.switchAgent);
   const status = useChatStore((state) => state.status);
   const messagesByAgentId = useChatStore((state) => state.messagesByAgentId);
 
   const activeAgentId = currentAgentId || selectedEmployeeId;
-  const resolvedActiveTab: SidebarTab = selectedGroupId ? "groups" : activeTab;
+  const resolvedActiveTab: SidebarTab = selectedGroupId || selectedArchiveId ? "groups" : activeTab;
   const keyword = search.trim().toLowerCase();
   const connection = getConnectionStyle(status);
 
@@ -225,6 +274,27 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
     );
   });
 
+  const visibleArchives = archives
+    .filter((archive) => {
+      if (!keyword) {
+        return true;
+      }
+
+      return (
+        archive.groupName.toLowerCase().includes(keyword) ||
+        archive.messages.some((message) => {
+          const senderLabel = message.role === "user" ? "你" : message.senderName?.trim() || "成员";
+          return (
+            senderLabel.toLowerCase().includes(keyword) ||
+            message.content.toLowerCase().includes(keyword)
+          );
+        })
+      );
+    })
+    .toSorted(
+      (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+    );
+
   useEffect(() => {
     let isActive = true;
 
@@ -263,6 +333,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
   async function handleSelectAgent(agent: Agent) {
     setActiveTab("functions");
     clearSelectedGroup();
+    clearSelectedArchive();
     closeDetail();
     onSelectEmployee(buildInitialEmployee(agent));
     await switchAgent(agent.id);
@@ -272,6 +343,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
     console.log("[Group] 切换到职能 Tab");
     setActiveTab("functions");
     clearSelectedGroup();
+    clearSelectedArchive();
     closeDetail();
   }
 
@@ -289,8 +361,22 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
     selectGroup(groupId);
   }
 
+  function handleSelectArchive(archiveId: string) {
+    closeDetail();
+    setActiveTab("groups");
+    selectArchive(archiveId);
+  }
+
   function toggleGroup(groupId: string) {
     const key = `functions:${groupId}`;
+    setCollapsedGroups((current) => ({
+      ...current,
+      [key]: !current[key],
+    }));
+  }
+
+  function toggleArchiveSection() {
+    const key = "groups:archives";
     setCollapsedGroups((current) => ({
       ...current,
       [key]: !current[key],
@@ -513,53 +599,147 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
             </>
           ) : (
             <>
-              {groups.length === 0 ? (
+              {groups.length === 0 && archives.length === 0 ? (
                 <div className="flex min-h-[180px] items-center justify-center px-6 text-center text-sm leading-6 text-[var(--color-text-secondary)]">
                   还没有项目组，点击「项目组」标签直接创建
                 </div>
               ) : null}
 
-              {groups.length > 0 && visibleGroups.length === 0 ? (
+              {(groups.length > 0 || archives.length > 0) &&
+              visibleGroups.length === 0 &&
+              visibleArchives.length === 0 ? (
                 <div className="flex min-h-[180px] items-center justify-center px-6 text-center text-sm leading-6 text-[var(--color-text-secondary)]">
-                  没找到匹配的项目组
+                  没找到匹配的项目组或归档
                 </div>
               ) : null}
 
-              <div className="space-y-2">
-                {visibleGroups.map((group) => {
-                  const isSelected = selectedGroupId === group.id;
+              <div className="space-y-4">
+                {visibleGroups.length > 0 ? (
+                  <div className="space-y-2">
+                    {visibleGroups.map((group) => {
+                      const isSelected = selectedGroupId === group.id;
 
-                  return (
+                      return (
+                        <button
+                          key={group.id}
+                          type="button"
+                          onClick={() => handleSelectGroup(group.id)}
+                          className={cn(
+                            "group relative flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left backdrop-blur-xl transition-all duration-200",
+                            isSelected
+                              ? "border-violet-400/35 bg-violet-500/10 shadow-[0_16px_50px_rgba(139,92,246,0.12)]"
+                              : "border-white/[0.06] bg-white/[0.03] hover:border-white/[0.12] hover:bg-white/[0.06]",
+                          )}
+                        >
+                          {isSelected ? (
+                            <span className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r bg-violet-400" />
+                          ) : null}
+
+                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#8b5cf6,#3b82f6)] text-[22px] font-semibold text-white shadow-[0_12px_36px_rgba(139,92,246,0.22)]">
+                            #
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
+                              {group.name}
+                            </div>
+                            <div className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                              {getGroupDisplayMemberCount(group)}人
+                            </div>
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-text-secondary)]">
+                              <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2 py-1 text-emerald-100">
+                                You
+                              </span>
+                              {group.members.slice(0, 2).map((member) => (
+                                <span
+                                  key={member.id}
+                                  className="rounded-full border border-white/[0.08] bg-white/[0.05] px-2 py-1"
+                                >
+                                  {member.name}
+                                </span>
+                              ))}
+                              {group.members.length > 2 ? (
+                                <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2 py-1">
+                                  +{group.members.length - 2}
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+
+                {visibleArchives.length > 0 ? (
+                  <section className="rounded-2xl border border-white/[0.06] bg-white/[0.03] px-2 py-2 backdrop-blur-xl">
                     <button
-                      key={group.id}
                       type="button"
-                      onClick={() => handleSelectGroup(group.id)}
-                      className={cn(
-                        "group relative flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left backdrop-blur-xl transition-all duration-200",
-                        isSelected
-                          ? "border-violet-400/35 bg-violet-500/10 shadow-[0_16px_50px_rgba(139,92,246,0.12)]"
-                          : "border-white/[0.06] bg-white/[0.03] hover:border-white/[0.12] hover:bg-white/[0.06]",
-                      )}
+                      onClick={toggleArchiveSection}
+                      className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-white/[0.04] hover:text-[var(--color-text-primary)]"
                     >
-                      {isSelected ? (
-                        <span className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r bg-violet-400" />
-                      ) : null}
-
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#8b5cf6,#3b82f6)] text-[22px] font-semibold text-white shadow-[0_12px_36px_rgba(139,92,246,0.22)]">
-                        #
-                      </div>
-
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
-                          {group.name}
-                        </div>
-                        <div className="mt-1 text-xs text-[var(--color-text-secondary)]">
-                          {group.members.length}人
-                        </div>
-                      </div>
+                      <span className="inline-flex items-center gap-2">
+                        <ChevronDown
+                          className={cn(
+                            "h-4 w-4 transition-transform duration-300",
+                            collapsedGroups["groups:archives"] ? "-rotate-90" : "rotate-0",
+                          )}
+                        />
+                        <Archive className="h-3.5 w-3.5" />
+                        项目组归档
+                      </span>
+                      <span>{visibleArchives.length}</span>
                     </button>
-                  );
-                })}
+
+                    {!collapsedGroups["groups:archives"] ? (
+                      <div className="mt-2 space-y-2 px-1 pb-1">
+                        {visibleArchives.map((archive) => {
+                          const preview = getArchivePreview(archive);
+                          const isSelected = selectedArchiveId === archive.id;
+
+                          return (
+                            <button
+                              key={archive.id}
+                              type="button"
+                              onClick={() => handleSelectArchive(archive.id)}
+                              className={cn(
+                                "group relative flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left backdrop-blur-xl transition-all duration-200",
+                                isSelected
+                                  ? "border-amber-300/30 bg-amber-500/[0.08] shadow-[0_16px_50px_rgba(245,158,11,0.14)]"
+                                  : "border-white/[0.06] bg-white/[0.03] hover:border-white/[0.12] hover:bg-white/[0.06]",
+                              )}
+                            >
+                              {isSelected ? (
+                                <span className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r bg-amber-300" />
+                              ) : null}
+
+                              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#475569,#1e293b)] text-white shadow-[0_12px_36px_rgba(15,23,42,0.24)]">
+                                <Archive className="h-5 w-5" />
+                              </div>
+
+                              <div className="min-w-0 flex-1">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <span className="min-w-0 flex-1 truncate text-sm font-semibold text-[var(--color-text-primary)]">
+                                    {archive.groupName}
+                                  </span>
+                                  <span className="shrink-0 text-[11px] text-[var(--color-text-secondary)]">
+                                    {preview.timestamp}
+                                  </span>
+                                </div>
+                                <div className="mt-1 truncate text-xs text-[var(--color-text-secondary)]">
+                                  {preview.preview}
+                                </div>
+                                <div className="mt-2 inline-flex items-center rounded-full border border-amber-300/15 bg-amber-500/[0.08] px-2 py-1 text-[11px] text-amber-100">
+                                  已归档 · {archive.messages.length} 条消息
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </section>
+                ) : null}
               </div>
             </>
           )}

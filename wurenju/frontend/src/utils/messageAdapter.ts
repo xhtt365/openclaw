@@ -1,4 +1,5 @@
 import type { GatewayHistoryPayload, GatewayMessage } from "@/services/gateway";
+import { sanitizeAssistantText } from "@/utils/messageSanitizer";
 import { normalizeUsage } from "@/utils/usage";
 
 export interface ChatUsage {
@@ -95,11 +96,18 @@ export function hasRenderableUsage(usage?: ChatUsage): usage is ChatUsage {
 }
 
 export function adaptRealtimeMessage(message: GatewayMessage): ChatMessage {
+  const content =
+    message.role === "assistant" ? sanitizeAssistantText(message.content) : message.content;
+  const thinking =
+    message.role === "assistant" && typeof message.thinking === "string"
+      ? sanitizeAssistantText(message.thinking)
+      : message.thinking;
+
   return {
     id: crypto.randomUUID(),
     role: message.role,
-    content: message.content,
-    thinking: message.thinking,
+    content,
+    thinking,
     model: message.model,
     usage: normalizeChatUsage(message.usage),
     timestamp: message.timestamp,
@@ -119,8 +127,14 @@ export function adaptHistoryMessage(message: unknown): ChatMessage | null {
   }
 
   const blocks = Array.isArray(rawMessage.content) ? rawMessage.content : [];
-  const { content, thinking } = extractBlockContent(blocks);
+  const extracted = extractBlockContent(blocks);
   const timestamp = toFiniteNumber(rawMessage.timestamp);
+  const content =
+    rawMessage.role === "assistant" ? sanitizeAssistantText(extracted.content) : extracted.content;
+  const thinking =
+    rawMessage.role === "assistant" && extracted.thinking
+      ? sanitizeAssistantText(extracted.thinking)
+      : extracted.thinking;
 
   return {
     id: crypto.randomUUID(),

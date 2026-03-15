@@ -2,6 +2,7 @@
 
 import { Archive, Minimize2, MoreVertical, RotateCcw, Send, Zap } from "lucide-react";
 import { memo, type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { GroupArchiveChatArea } from "@/components/chat/GroupArchiveChatArea";
 import { GroupChatArea } from "@/components/chat/GroupChatArea";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import type { Employee } from "@/components/layout/EmployeeList";
@@ -11,7 +12,7 @@ import { ContextRing } from "@/components/ui/ContextRing";
 import { cn } from "@/lib/utils";
 import { useAgentStore } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
-import type { Group } from "@/stores/groupStore";
+import type { Group, GroupArchive } from "@/stores/groupStore";
 import type { ChatMessage } from "@/utils/messageAdapter";
 
 function HistoryDivider() {
@@ -55,6 +56,7 @@ function readStoredAvatar() {
 interface ChatAreaProps {
   employee: Employee;
   group?: Group | null;
+  archive?: GroupArchive | null;
 }
 
 type SessionAction = "compact" | "archive" | "reset";
@@ -344,9 +346,13 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
         return;
       }
 
-      window.localStorage.setItem("userAvatar", reader.result);
-      setUserAvatar(reader.result);
-      console.log("[UI] 用户头像已更新");
+      try {
+        window.localStorage.setItem("userAvatar", reader.result);
+        setUserAvatar(reader.result);
+        console.log("[UI] 用户头像已更新");
+      } catch (error) {
+        console.error("[UI] 保存用户头像失败:", error);
+      }
     });
     reader.addEventListener("error", () => {
       console.error("[UI] 用户头像读取失败:", reader.error);
@@ -694,9 +700,13 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
 const MemoAgentChatArea = memo(AgentChatArea);
 MemoAgentChatArea.displayName = "AgentChatArea";
 
-function ChatAreaInner({ employee, group }: ChatAreaProps) {
+function ChatAreaInner({ employee, group, archive }: ChatAreaProps) {
   if (group) {
     return <GroupChatArea key={group.id} group={group} />;
+  }
+
+  if (archive) {
+    return <GroupArchiveChatArea key={archive.id} archive={archive} />;
   }
 
   return <MemoAgentChatArea employee={employee} />;
