@@ -7,6 +7,7 @@ import { adaptHistoryMessages, type ChatMessage, type ChatUsage } from "@/utils/
 const GROUP_STORAGE_KEY = "wurenju.groups.v1";
 const DEFAULT_GROUP_CONTEXT_WINDOW = 8192;
 const GROUP_HISTORY_PULL_LIMIT = 24;
+const MAX_GROUP_ROUTE_DEPTH = 6;
 
 const pendingGroupSendCounts = new Map<string, number>();
 const groupMessageEpochs = new Map<string, number>();
@@ -35,6 +36,12 @@ export type GroupChatMessage = ChatMessage & {
   senderAvatarUrl?: string;
 };
 
+export type ThinkingAgent = {
+  id: string;
+  name: string;
+  pendingCount: number;
+};
+
 export type GroupArchive = {
   id: string;
   groupId: string;
@@ -58,15 +65,49 @@ type GroupPersistence = {
 };
 
 type GroupState = GroupPersistence & {
+  thinkingAgentsByGroupId: Map<string, Map<string, ThinkingAgent>>;
   isSendingByGroupId: Record<string, boolean>;
   fetchGroups: () => void;
   createGroup: (data: CreateGroupInput) => Group;
   selectGroup: (groupId: string) => void;
   clearSelectedGroup: () => void;
   sendGroupMessage: (groupId: string, text: string) => Promise<void>;
+  getThinkingAgentsForGroup: (groupId: string) => ThinkingAgent[];
+  addThinkingAgents: (groupId: string, agents: AgentInfo[]) => ThinkingAgent[];
+  removeThinkingAgent: (groupId: string, agentId: string) => ThinkingAgent[];
+  clearThinkingAgents: (groupId: string) => void;
   archiveGroupMessages: (groupId: string) => boolean;
   resetGroupMessages: (groupId: string) => void;
 };
+
+type GroupDispatchSource = {
+  senderId?: string;
+  senderName: string;
+  depth: number;
+  type: "user" | "assistant";
+};
+
+type ThinkingBuckets = Map<string, Map<string, ThinkingAgent>>;
+type ThinkingUpdateResult = {
+  thinkingAgentsByGroupId: ThinkingBuckets;
+  currentAgents: ThinkingAgent[];
+};
+
+type ThinkingAddResult = ThinkingUpdateResult & {
+  addedAgents: ThinkingAgent[];
+};
+
+type ThinkingRemoveResult = ThinkingUpdateResult & {
+  removedAgent: ThinkingAgent | null;
+};
+
+type ThinkingCompleteResult = ThinkingUpdateResult & {
+  removedAgent: ThinkingAgent | null;
+  addedAgents: ThinkingAgent[];
+  remainingAfterComplete: ThinkingAgent[];
+};
+
+const EMPTY_THINKING_GROUP: Map<string, ThinkingAgent> = new Map();
 
 function emptyPersistence(): GroupPersistence {
   return {
@@ -403,13 +444,14 @@ function findMentionIndex(text: string, name: string) {
   return text.search(matcher);
 }
 
-function extractMentionTargets(text: string, members: AgentInfo[]) {
+function extractMentionTargets(text: string, members: AgentInfo[], excludeMemberIds: string[] = []) {
+  const excluded = new Set(excludeMemberIds);
   return members
     .map((member) => ({
       member,
       index: findMentionIndex(text, member.name),
     }))
-    .filter((entry) => entry.index >= 0)
+    .filter((entry) => entry.index >= 0 && !excluded.has(entry.member.id))
     .toSorted((left, right) => left.index - right.index)
     .map((entry) => entry.member);
 }
@@ -440,6 +482,166 @@ function toContextMembers(members: AgentInfo[]): GroupMember[] {
     name: member.name,
     title: member.role,
   }));
+}
+
+function buildRelayMessage(senderName: string, text: string) {
+  return [
+    `[群内协作转发] 以下内容来自项目组成员「${senderName}」在群聊中的最新发言。`,
+    "请你直接回应这条协作请求，给出实质内容；如果还需要其他成员配合，可以继续 @成员名。",
+    "",
+    text,
+  ].join("\n");
+}
+
+function getThinkingAgentsFromBuckets(thinkingAgentsByGroupId: ThinkingBuckets, groupId: string) {
+  const thinkingGroup = thinkingAgentsByGroupId.get(groupId) ?? EMPTY_THINKING_GROUP;
+  return Array.from(thinkingGroup.values());
+}
+
+function withThinkingGroup(
+  thinkingAgentsByGroupId: ThinkingBuckets,
+  groupId: string,
+  updater: (thinkingGroup: Map<string, ThinkingAgent>) => void,
+) {
+  const nextBuckets = new Map(thinkingAgentsByGroupId);
+  const currentGroup = thinkingAgentsByGroupId.get(groupId) ?? EMPTY_THINKING_GROUP;
+  const nextGroup = new Map(currentGroup);
+
+  updater(nextGroup);
+
+  if (nextGroup.size === 0) {
+    nextBuckets.delete(groupId);
+  } else {
+    nextBuckets.set(groupId, nextGroup);
+  }
+
+  return nextBuckets;
+}
+
+function addThinkingAgentsToBuckets(
+  thinkingAgentsByGroupId: ThinkingBuckets,
+  groupId: string,
+  agents: AgentInfo[],
+): ThinkingAddResult {
+  const addedAgents: ThinkingAgent[] = [];
+  const nextBuckets = withThinkingGroup(thinkingAgentsByGroupId, groupId, (thinkingGroup) => {
+    agents.forEach((agent) => {
+      const safeName = agent.name.trim() || agent.id;
+      const current = thinkingGroup.get(agent.id);
+
+      if (!current) {
+        const nextAgent = {
+          id: agent.id,
+          name: safeName,
+          pendingCount: 1,
+        };
+        thinkingGroup.set(agent.id, nextAgent);
+        addedAgents.push(nextAgent);
+        return;
+      }
+
+      thinkingGroup.set(agent.id, {
+        ...current,
+        name: safeName,
+        pendingCount: current.pendingCount + 1,
+      });
+    });
+  });
+
+  return {
+    thinkingAgentsByGroupId: nextBuckets,
+    currentAgents: getThinkingAgentsFromBuckets(nextBuckets, groupId),
+    addedAgents,
+  };
+}
+
+function removeThinkingAgentFromBuckets(
+  thinkingAgentsByGroupId: ThinkingBuckets,
+  groupId: string,
+  agentId: string,
+): ThinkingRemoveResult {
+  let removedAgent: ThinkingAgent | null = null;
+  const nextBuckets = withThinkingGroup(thinkingAgentsByGroupId, groupId, (thinkingGroup) => {
+    const current = thinkingGroup.get(agentId);
+    if (!current) {
+      return;
+    }
+
+    removedAgent = current;
+    if (current.pendingCount > 1) {
+      thinkingGroup.set(agentId, {
+        ...current,
+        pendingCount: current.pendingCount - 1,
+      });
+      return;
+    }
+
+    thinkingGroup.delete(agentId);
+  });
+
+  return {
+    thinkingAgentsByGroupId: nextBuckets,
+    currentAgents: getThinkingAgentsFromBuckets(nextBuckets, groupId),
+    removedAgent,
+  };
+}
+
+function completeThinkingAgentsInBuckets(
+  thinkingAgentsByGroupId: ThinkingBuckets,
+  groupId: string,
+  agentId: string,
+  nextAgents: AgentInfo[],
+): ThinkingCompleteResult {
+  let removedAgent: ThinkingAgent | null = null;
+  const addedAgents: ThinkingAgent[] = [];
+  let remainingAfterComplete: ThinkingAgent[] = [];
+
+  const nextBuckets = withThinkingGroup(thinkingAgentsByGroupId, groupId, (thinkingGroup) => {
+    const current = thinkingGroup.get(agentId);
+    if (current) {
+      removedAgent = current;
+      if (current.pendingCount > 1) {
+        thinkingGroup.set(agentId, {
+          ...current,
+          pendingCount: current.pendingCount - 1,
+        });
+      } else {
+        thinkingGroup.delete(agentId);
+      }
+    }
+
+    remainingAfterComplete = Array.from(thinkingGroup.values());
+
+    nextAgents.forEach((agent) => {
+      const safeName = agent.name.trim() || agent.id;
+      const existing = thinkingGroup.get(agent.id);
+
+      if (!existing) {
+        const nextThinkingAgent = {
+          id: agent.id,
+          name: safeName,
+          pendingCount: 1,
+        };
+        thinkingGroup.set(agent.id, nextThinkingAgent);
+        addedAgents.push(nextThinkingAgent);
+        return;
+      }
+
+      thinkingGroup.set(agent.id, {
+        ...existing,
+        name: safeName,
+        pendingCount: existing.pendingCount + 1,
+      });
+    });
+  });
+
+  return {
+    thinkingAgentsByGroupId: nextBuckets,
+    currentAgents: getThinkingAgentsFromBuckets(nextBuckets, groupId),
+    removedAgent,
+    addedAgents,
+    remainingAfterComplete,
+  };
 }
 
 function pickLatestAssistantReply(messages: ChatMessage[], startedAt: number) {
@@ -474,6 +676,24 @@ export const useGroupStore = create<GroupState>((set, get) => {
       writeStoredState(toPersistence(nextState));
       return patch;
     });
+  }
+
+  function syncThinkingBuckets(
+    updater: (thinkingAgentsByGroupId: ThinkingBuckets) => ThinkingUpdateResult,
+  ) {
+    let result: ThinkingUpdateResult = {
+      thinkingAgentsByGroupId: new Map(),
+      currentAgents: [],
+    };
+
+    updateState((state) => {
+      result = updater(state.thinkingAgentsByGroupId);
+      return {
+        thinkingAgentsByGroupId: result.thinkingAgentsByGroupId,
+      };
+    });
+
+    return result;
   }
 
   function getGroupEpoch(groupId: string) {
@@ -519,11 +739,45 @@ export const useGroupStore = create<GroupState>((set, get) => {
     bumpGroupEpoch(groupId);
     pendingGroupSendCounts.delete(groupId);
     updateState((state) => ({
+      thinkingAgentsByGroupId: withThinkingGroup(state.thinkingAgentsByGroupId, groupId, (thinkingGroup) => {
+        thinkingGroup.clear();
+      }),
       isSendingByGroupId: {
         ...state.isSendingByGroupId,
         [groupId]: false,
       },
     }));
+  }
+
+  function addThinkingAgentsInternal(groupId: string, agents: AgentInfo[]) {
+    return syncThinkingBuckets((thinkingAgentsByGroupId) =>
+      addThinkingAgentsToBuckets(thinkingAgentsByGroupId, groupId, agents),
+    ) as ThinkingAddResult;
+  }
+
+  function removeThinkingAgentInternal(groupId: string, agentId: string) {
+    return syncThinkingBuckets((thinkingAgentsByGroupId) =>
+      removeThinkingAgentFromBuckets(thinkingAgentsByGroupId, groupId, agentId),
+    ) as ThinkingRemoveResult;
+  }
+
+  function completeThinkingAgentsInternal(groupId: string, agentId: string, nextAgents: AgentInfo[]) {
+    return syncThinkingBuckets((thinkingAgentsByGroupId) =>
+      completeThinkingAgentsInBuckets(thinkingAgentsByGroupId, groupId, agentId, nextAgents),
+    ) as ThinkingCompleteResult;
+  }
+
+  function clearThinkingAgentsInternal(groupId: string) {
+    syncThinkingBuckets((thinkingAgentsByGroupId) => {
+      const nextBuckets = withThinkingGroup(thinkingAgentsByGroupId, groupId, (thinkingGroup) => {
+        thinkingGroup.clear();
+      });
+
+      return {
+        thinkingAgentsByGroupId: nextBuckets,
+        currentAgents: [],
+      };
+    });
   }
 
   async function ensureGroupAgentRuntime(agent: Agent, agentStore = useAgentStore.getState()) {
@@ -553,6 +807,39 @@ export const useGroupStore = create<GroupState>((set, get) => {
     }));
   }
 
+  async function queueGroupDispatches(
+    groupId: string,
+    requests: Array<{
+      group: Group;
+      member: AgentInfo;
+      members: AgentInfo[];
+      text: string;
+      userSpecifiedTargets: boolean;
+      epoch: number;
+      source: GroupDispatchSource;
+    }>,
+  ) {
+    if (requests.length === 0) {
+      return;
+    }
+
+    beginGroupSend(groupId, requests.length);
+    await Promise.all(
+      requests.map((request) =>
+        dispatchMessageToTarget({
+          groupId,
+          group: request.group,
+          member: request.member,
+          members: request.members,
+          text: request.text,
+          userSpecifiedTargets: request.userSpecifiedTargets,
+          epoch: request.epoch,
+          source: request.source,
+        }),
+      ),
+    );
+  }
+
   async function dispatchMessageToTarget(params: {
     groupId: string;
     group: Group;
@@ -561,8 +848,9 @@ export const useGroupStore = create<GroupState>((set, get) => {
     text: string;
     userSpecifiedTargets: boolean;
     epoch: number;
+    source: GroupDispatchSource;
   }) {
-    const { groupId, group, member, members, text, userSpecifiedTargets, epoch } = params;
+    const { groupId, group, member, members, text, userSpecifiedTargets, epoch, source } = params;
 
     try {
       const agentStore = useAgentStore.getState();
@@ -598,7 +886,9 @@ export const useGroupStore = create<GroupState>((set, get) => {
         targetAgentId: targetMember.id,
         userSpecifiedTargets,
       });
-      const actualMessage = `${contextPrefix}${text}`;
+      const payloadText =
+        source.type === "assistant" ? buildRelayMessage(source.senderName, text) : text;
+      const actualMessage = `${contextPrefix}${payloadText}`;
       const sessionKey = buildGroupSessionKey(targetMember.id, agentStore.mainKey);
       const startedAt = Date.now();
 
@@ -636,9 +926,63 @@ export const useGroupStore = create<GroupState>((set, get) => {
         senderAvatarUrl: targetMember.avatarUrl,
       });
       console.log(`[Group] 群成员回复: ${targetMember.name}`);
+
+      if (source.depth >= MAX_GROUP_ROUTE_DEPTH) {
+        const completionResult = completeThinkingAgentsInternal(groupId, targetMember.id, []);
+        const remainingNames = completionResult.remainingAfterComplete
+          .map((item) => item.name)
+          .join(", ");
+        console.log(
+          `[Group] 回复完成: ${targetMember.name}, 剩余思考中: ${remainingNames || "无"}`,
+        );
+        console.warn(`[Group] 群内协作转发达到深度上限: ${group.name}`);
+        return;
+      }
+
+      const nextTargets = extractMentionTargets(reply.content, members, [targetMember.id]);
+      const completionResult = completeThinkingAgentsInternal(groupId, targetMember.id, nextTargets);
+      const remainingNames = completionResult.remainingAfterComplete
+        .map((item) => item.name)
+        .join(", ");
+      console.log(
+        `[Group] 回复完成: ${targetMember.name}, 剩余思考中: ${remainingNames || "无"}`,
+      );
+
+      if (completionResult.addedAgents.length > 0) {
+        console.log(
+          `[Group] 递归路由: ${targetMember.name} 的回复触发 → ${completionResult.addedAgents.map((item) => item.name).join("、")} 加入思考`,
+        );
+      }
+
+      if (nextTargets.length === 0) {
+        return;
+      }
+
+      await queueGroupDispatches(
+        groupId,
+        nextTargets.map((nextTarget) => ({
+          group,
+          member: nextTarget,
+          members,
+          text: reply.content,
+          userSpecifiedTargets: true,
+          epoch,
+          source: {
+            senderId: targetMember.id,
+            senderName: targetMember.name,
+            depth: source.depth + 1,
+            type: "assistant",
+          },
+        })),
+      );
     } catch (error) {
       const errorText = getErrorMessage(error, "连接 Gateway 失败，请确认服务已启动");
       console.error(`[Group] 群消息发送失败: ${member.name}`, error);
+
+      const removeResult = removeThinkingAgentInternal(groupId, member.id);
+      console.log(
+        `[Group] 回复失败移出思考中: ${member.name}, 剩余思考中: ${removeResult.currentAgents.map((item) => item.name).join(", ") || "无"}`,
+      );
 
       if (getGroupEpoch(groupId) === epoch) {
         appendGroupAssistantMessage(groupId, {
@@ -662,6 +1006,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
 
   return {
     ...initialState,
+    thinkingAgentsByGroupId: new Map(),
     isSendingByGroupId: {},
 
     fetchGroups: () => {
@@ -669,6 +1014,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
       console.log(`[Group] 获取项目组列表: ${nextState.groups.length} 个`);
       set({
         ...nextState,
+        thinkingAgentsByGroupId: new Map(),
         isSendingByGroupId: {},
       });
     },
@@ -719,6 +1065,24 @@ export const useGroupStore = create<GroupState>((set, get) => {
       }));
     },
 
+    getThinkingAgentsForGroup: (groupId) => {
+      return getThinkingAgentsFromBuckets(get().thinkingAgentsByGroupId, groupId);
+    },
+
+    addThinkingAgents: (groupId, agents) => {
+      const result = addThinkingAgentsInternal(groupId, agents);
+      return result.currentAgents;
+    },
+
+    removeThinkingAgent: (groupId, agentId) => {
+      const result = removeThinkingAgentInternal(groupId, agentId);
+      return result.currentAgents;
+    },
+
+    clearThinkingAgents: (groupId) => {
+      clearThinkingAgentsInternal(groupId);
+    },
+
     sendGroupMessage: async (groupId, text) => {
       const cleanText = text.trim();
       if (!cleanText) {
@@ -762,19 +1126,24 @@ export const useGroupStore = create<GroupState>((set, get) => {
         },
       }));
 
-      beginGroupSend(groupId, targets.length);
-      await Promise.all(
-        targets.map((member) =>
-          dispatchMessageToTarget({
-            groupId,
-            group,
-            member,
-            members,
-            text: cleanText,
-            userSpecifiedTargets,
-            epoch,
-          }),
-        ),
+      addThinkingAgentsInternal(groupId, targets);
+      console.log(`[Group] 思考中: ${targets.map((member) => member.name).join(", ")}`);
+
+      await queueGroupDispatches(
+        groupId,
+        targets.map((member) => ({
+          group,
+          member,
+          members,
+          text: cleanText,
+          userSpecifiedTargets,
+          epoch,
+          source: {
+            senderName: "用户",
+            depth: 0,
+            type: "user",
+          },
+        })),
       );
     },
 

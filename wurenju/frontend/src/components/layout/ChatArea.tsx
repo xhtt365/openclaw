@@ -506,8 +506,22 @@ function AgentChatArea({ employee }: Pick<ChatAreaProps, "employee">) {
           {isWaiting ? (
             <div className="flex justify-start">
               <div className="inline-flex items-center gap-2 rounded-full bg-[var(--color-bg-card)] px-3 py-1.5 text-xs text-[var(--color-brand-light)]">
+                {agentAvatarUrl ? (
+                  <img
+                    alt={agentName}
+                    className="h-5 w-5 rounded-full object-cover"
+                    src={agentAvatarUrl}
+                  />
+                ) : (
+                  <span
+                    className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold text-[var(--color-text-on-brand)]"
+                    style={{ backgroundColor: employee.avatarColor }}
+                  >
+                    {agentAvatarText}
+                  </span>
+                )}
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--color-brand)]" />
-                思考中...
+                {agentName} 思考中...
               </div>
             </div>
           ) : null}

@@ -1,7 +1,8 @@
 import { memo, type ChangeEvent, useEffect, useMemo, useRef, useState } from "react"
-import { Archive, Download, RotateCcw, Send } from "lucide-react"
+import { Archive, Download, RotateCcw, Send, Zap } from "lucide-react"
 import { MessageBubble } from "@/components/chat/MessageBubble"
 import { GroupChatHeader } from "@/components/chat/GroupChatHeader"
+import { GroupThinkingStatus } from "@/components/chat/GroupThinkingStatus"
 import { GroupWelcomeView } from "@/components/chat/GroupWelcomeView"
 import { ContextRing } from "@/components/ui/ContextRing"
 import { cn } from "@/lib/utils"
@@ -10,9 +11,11 @@ import {
   useGroupStore,
   type Group,
   type GroupChatMessage,
+  type ThinkingAgent,
 } from "@/stores/groupStore"
 
 const EMPTY_GROUP_MESSAGES: GroupChatMessage[] = []
+const EMPTY_THINKING_AGENTS: Map<string, ThinkingAgent> = new Map()
 
 type GroupChatAreaProps = {
   group: Group
@@ -22,6 +25,11 @@ type ActionFeedback = {
   tone: "success" | "error"
   message: string
 }
+
+const compactTokenFormatter = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+})
 
 function hashText(value: string) {
   return Array.from(value).reduce((total, char) => total + char.charCodeAt(0), 0)
@@ -87,24 +95,23 @@ function formatTranscript(messages: GroupChatMessage[], group: Group) {
   return lines.join("\n")
 }
 
+function formatCompactTokens(value: number) {
+  return compactTokenFormatter.format(Math.max(0, Math.floor(value)))
+}
+
 function MentionChip({
   label,
-  avatarText,
   onClick,
 }: {
   label: string
-  avatarText: string
   onClick: () => void
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-3 rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-[var(--color-text-primary)] shadow-[0_10px_28px_rgba(0,0,0,0.18)] backdrop-blur-xl transition-all duration-200 hover:border-violet-400/35 hover:bg-violet-500/10 hover:text-white"
+      className="inline-flex h-7 items-center rounded-md border border-gray-200/80 bg-white px-2.5 text-[12px] font-medium text-gray-500 transition-all duration-150 hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:border-orange-400/30 dark:hover:bg-orange-500/10 dark:hover:text-orange-200"
     >
-      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(255,255,255,0.08)] text-[12px] font-semibold text-[var(--color-text-primary)]">
-        {avatarText}
-      </span>
       <span>@{label}</span>
     </button>
   )
@@ -115,7 +122,10 @@ MemoMentionChip.displayName = "MentionChip"
 
 function GroupChatAreaInner({ group }: GroupChatAreaProps) {
   const messages = useGroupStore((state) => state.messagesByGroupId[group.id] ?? EMPTY_GROUP_MESSAGES)
-  const isSending = useGroupStore((state) => state.isSendingByGroupId[group.id] === true)
+  const isSending = useGroupStore((state) =>  state.isSendingByGroupId[group.id])
+  const thinkingAgentMap = useGroupStore(
+    (state) => state.thinkingAgentsByGroupId.get(group.id) ?? EMPTY_THINKING_AGENTS
+  )
   const sendGroupMessage = useGroupStore((state) => state.sendGroupMessage)
   const archiveGroupMessages = useGroupStore((state) => state.archiveGroupMessages)
   const resetGroupMessages = useGroupStore((state) => state.resetGroupMessages)
@@ -129,7 +139,9 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
   const avatarInputRef = useRef<HTMLInputElement>(null)
 
   const metrics = useMemo(() => getGroupContextMetrics(messages), [messages])
+  const thinkingAgents = useMemo(() => Array.from(thinkingAgentMap.values()), [thinkingAgentMap])
   const hasMessages = messages.length > 0
+  const contextIndicatorLabel = `${formatCompactTokens(metrics.currentUsed)}/${formatCompactTokens(metrics.total)}`
 
   function autoResize() {
     const textarea = textareaRef.current
@@ -283,7 +295,7 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
-  }, [isSending, messages.length])
+  }, [isSending, messages.length, thinkingAgents.length])
 
   return (
     <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg-primary)]">
@@ -291,7 +303,7 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
 
       <div className="im-scroll min-h-0 flex-1 overflow-y-auto px-6 py-8">
         {hasMessages ? (
-          <div className="mx-auto flex w-full max-w-[860px] flex-col gap-6">
+          <div className="flex w-full flex-col gap-6">
             {messages.map((message) => (
               <MessageBubble
                 key={message.id}
@@ -311,14 +323,7 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
               />
             ))}
 
-            {isSending ? (
-              <div className="flex justify-start">
-                <div className="inline-flex items-center gap-2 rounded-full bg-[var(--color-bg-card)] px-3 py-1.5 text-xs text-violet-300">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-400" />
-                  群成员思考中...
-                </div>
-              </div>
-            ) : null}
+            <GroupThinkingStatus members={group.members} thinkingAgents={thinkingAgents} />
 
             <div ref={bottomRef} />
           </div>
@@ -327,16 +332,16 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
         )}
       </div>
 
-      <div className="shrink-0 border-t border-white/[0.08] bg-[rgba(10,10,10,0.82)] px-6 pb-5 pt-4 backdrop-blur-2xl">
-        <div className="mx-auto w-full max-w-[860px]">
+      <div className="shrink-0 border-t border-gray-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+        <div className="relative px-4 pb-4 pt-4">
           {actionFeedback ? (
-            <div className="mb-3 flex justify-end">
+            <div className="pointer-events-none absolute right-4 top-1 z-10">
               <span
                 className={cn(
-                  "inline-flex rounded-full border px-3 py-1 text-[11px] font-medium",
+                  "inline-flex rounded-full border px-3 py-1 text-[11px] font-medium shadow-[0_12px_32px_rgba(0,0,0,0.26)] backdrop-blur-sm",
                   actionFeedback.tone === "success"
-                    ? "border-emerald-400/20 bg-emerald-500/12 text-emerald-200"
-                    : "border-rose-400/20 bg-rose-500/12 text-rose-200"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/20 dark:bg-emerald-500/15 dark:text-emerald-100"
+                    : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/20 dark:bg-rose-500/15 dark:text-rose-100"
                 )}
               >
                 {actionFeedback.message}
@@ -345,35 +350,38 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
           ) : null}
 
           {hasMessages ? (
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-3 overflow-x-auto pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="flex shrink-0 items-center gap-3">
                 <button
                   type="button"
                   onClick={handleExportHistory}
-                  className="inline-flex h-9 items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-4 text-sm text-[var(--color-text-secondary)] transition-all duration-200 hover:border-white/[0.14] hover:bg-white/[0.08] hover:text-white"
+                  className="inline-flex h-11 items-center gap-2 rounded-lg bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(15,23,42,0.18)] transition-all duration-150 hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:brightness-100"
+                  disabled={!hasMessages}
                 >
-                  <Download className="h-4 w-4" />
+                  <Download className="h-4 w-4 text-white" />
                   导出
                 </button>
                 <button
                   type="button"
                   onClick={handleArchiveHistory}
-                  className="inline-flex h-9 items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-4 text-sm text-[var(--color-text-secondary)] transition-all duration-200 hover:border-white/[0.14] hover:bg-white/[0.08] hover:text-white"
+                  className="inline-flex h-11 items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(15,23,42,0.18)] transition-all duration-150 hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:brightness-100"
+                  disabled={!hasMessages}
                 >
-                  <Archive className="h-4 w-4" />
+                  <Archive className="h-4 w-4 text-white" />
                   归档
                 </button>
                 <button
                   type="button"
                   onClick={handleResetHistory}
-                  className="inline-flex h-9 items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-4 text-sm text-[var(--color-text-secondary)] transition-all duration-200 hover:border-white/[0.14] hover:bg-white/[0.08] hover:text-white"
+                  className="inline-flex h-11 items-center gap-2 rounded-lg bg-purple-600 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(15,23,42,0.18)] transition-all duration-150 hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:brightness-100"
+                  disabled={!hasMessages}
                 >
-                  <RotateCcw className="h-4 w-4" />
+                  <RotateCcw className="h-4 w-4 text-white" />
                   重置
                 </button>
               </div>
 
-              <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+              <div className="flex shrink-0 items-center gap-2">
                 <ContextRing
                   currentUsed={metrics.currentUsed}
                   total={metrics.total}
@@ -382,7 +390,9 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
                   cacheHitTokens={metrics.cacheHitTokens}
                   totalConsumed={metrics.totalConsumed}
                 />
-                <span>消耗预计 Tokens: {metrics.totalConsumed}</span>
+                <span className="text-xs font-medium tabular-nums text-gray-600 dark:text-zinc-300">
+                  {contextIndicatorLabel}
+                </span>
               </div>
             </div>
           ) : null}
@@ -395,7 +405,7 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
             onChange={handleAvatarChange}
           />
 
-          <div className="rounded-[24px] border border-white/[0.08] bg-white/[0.04] px-4 py-4 shadow-[0_18px_60px_rgba(0,0,0,0.18)]">
+          <div className="rounded-[10px] border border-gray-200 bg-gray-50 px-4 py-2 transition-[border-color,box-shadow] duration-[250ms] focus-within:border-amber-400 focus-within:ring-1 focus-within:ring-amber-300/60 dark:border-zinc-700 dark:bg-zinc-800 dark:focus-within:border-amber-300 dark:focus-within:ring-amber-300/30">
             <div className="flex items-end gap-3">
               <textarea
                 ref={textareaRef}
@@ -412,7 +422,7 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
                 }}
                 placeholder="输入消息... 使用 @ 提及成员"
                 rows={1}
-                className="min-h-8 max-h-32 flex-1 resize-none bg-transparent py-1 text-sm leading-6 text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-secondary)]"
+                className="min-h-7 max-h-24 flex-1 resize-none bg-transparent py-1 text-sm leading-6 text-gray-800 outline-none placeholder:text-gray-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
               />
 
               <button
@@ -420,23 +430,24 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
                 onClick={handleSend}
                 disabled={!input.trim() || isSending}
                 className={cn(
-                  "flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white transition-all duration-200",
-                  input.trim() && !isSending
-                    ? "bg-[linear-gradient(135deg,#8b5cf6,#3b82f6)] shadow-[0_10px_32px_rgba(139,92,246,0.32)] hover:scale-105"
-                    : "cursor-not-allowed bg-white/[0.1] text-white/60"
+                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-orange-400 text-white transition-all duration-200 hover:bg-orange-500 dark:bg-orange-500 dark:hover:bg-orange-400",
+                  isSending
+                    ? "animate-[spin_1s_linear_infinite]"
+                    : "hover:scale-110 hover:shadow-[0_0_20px_var(--color-brand-glow)] active:scale-90",
+                  input.trim() ? "" : "cursor-not-allowed opacity-50"
                 )}
                 aria-label="发送群消息"
               >
-                <Send className="h-4 w-4" />
+                {isSending ? <Zap className="h-4 w-4" /> : <Send className="h-4 w-4" />}
               </button>
             </div>
 
-            <div className="mt-4 flex flex-wrap items-center gap-3">
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-200/80 pt-3 text-[11px] text-gray-400 dark:border-zinc-700 dark:text-zinc-500">
+              <span className="font-medium">提及:</span>
               {group.members.map((member) => (
                 <MemoMentionChip
                   key={member.id}
                   label={member.name}
-                  avatarText={member.emoji?.trim() || member.name.trim().charAt(0).toUpperCase() || "#"}
                   onClick={() => {
                     insertMention(member.name)
                   }}
@@ -444,6 +455,10 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
               ))}
             </div>
           </div>
+
+          <p className="mt-2 text-center text-[10px] text-gray-500 dark:text-zinc-400">
+            按 Enter 发送，Shift + Enter 换行
+          </p>
         </div>
       </div>
     </section>
