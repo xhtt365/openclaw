@@ -1,21 +1,21 @@
-import { memo } from "react"
-import { motion } from "framer-motion"
-import type { Agent } from "@/stores/agentStore"
+import { motion } from "framer-motion";
+import { memo } from "react";
+import type { Agent } from "@/stores/agentStore";
 import type {
   OfficeAgentMetrics,
   OfficeAgentMotion,
   OfficeAgentStatus,
   OfficeAnimationKind,
   OfficeZone,
-} from "@/stores/officeStore"
+} from "@/stores/officeStore";
 
 type AgentCardProps = {
-  agent: Agent
-  zone: OfficeZone
-  status: OfficeAgentStatus
-  motionState?: OfficeAgentMotion
-  metrics?: OfficeAgentMetrics
-}
+  agent: Agent;
+  zone: OfficeZone;
+  status: OfficeAgentStatus;
+  motionState?: OfficeAgentMotion;
+  metrics?: OfficeAgentMetrics;
+};
 
 const AVATAR_COLORS = [
   "var(--color-avatar-1)",
@@ -24,46 +24,38 @@ const AVATAR_COLORS = [
   "var(--color-avatar-4)",
   "var(--color-avatar-5)",
   "var(--color-avatar-6)",
-] as const
+] as const;
 
 function hashText(value: string) {
-  return Array.from(value).reduce((total, char) => total + char.charCodeAt(0), 0)
+  return Array.from(value).reduce((total, char) => total + char.charCodeAt(0), 0);
 }
 
 function getAvatarColor(agentId: string) {
-  return AVATAR_COLORS[hashText(agentId) % AVATAR_COLORS.length]
+  return AVATAR_COLORS[hashText(agentId) % AVATAR_COLORS.length];
 }
 
-function resolveBorderClass(zone: OfficeZone) {
+function resolveBorderColor(zone: OfficeZone) {
   if (zone === "chat") {
-    return "border-emerald-500"
+    return "var(--zone-chat)";
   }
 
   if (zone === "work") {
-    return "border-amber-500"
+    return "var(--zone-work)";
   }
 
-  return "border-gray-600"
+  return "var(--zone-idle)";
 }
 
-function resolveProgressColor(percent: number) {
-  if (percent > 80) {
-    return "#ef4444"
-  }
-
-  if (percent >= 50) {
-    return "#f59e0b"
-  }
-
-  return "#10b981"
+function resolveProgressColor() {
+  return "var(--brand-primary)";
 }
 
 function resolveRole(agent: Agent) {
-  return agent.role?.trim() || "Agent"
+  return agent.role?.trim() || "Agent";
 }
 
 function resolveDisplayText(agent: Agent) {
-  return agent.emoji?.trim() || agent.name.charAt(0).toUpperCase() || "A"
+  return agent.emoji?.trim() || agent.name.charAt(0).toUpperCase() || "A";
 }
 
 function resolveMotionTransition(transition: OfficeAnimationKind) {
@@ -79,7 +71,7 @@ function resolveMotionTransition(transition: OfficeAnimationKind) {
         damping: 30,
         mass: 0.9,
       },
-    }
+    };
   }
 
   return {
@@ -90,76 +82,76 @@ function resolveMotionTransition(transition: OfficeAnimationKind) {
       damping: 30,
       mass: 0.9,
     },
-  }
+  };
 }
 
 function formatTokenCount(value: number) {
   if (value >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(1)}M`
+    return `${(value / 1_000_000).toFixed(1)}M`;
   }
 
   if (value >= 1_000) {
-    return `${(value / 1_000).toFixed(1)}K`
+    return `${(value / 1_000).toFixed(1)}K`;
   }
 
-  return `${value}`
+  return `${value}`;
 }
 
 function formatTokenUsage(currentContextUsed: number, contextWindowSize: number) {
-  return `${formatTokenCount(currentContextUsed)} / ${formatTokenCount(contextWindowSize)}`
+  return `${formatTokenCount(currentContextUsed)} / ${formatTokenCount(contextWindowSize)}`;
 }
 
 function formatDuration(ms: number) {
   if (ms < 1_000) {
-    return `${Math.max(0.1, ms / 1_000).toFixed(1)}s`
+    return `${Math.max(0.1, ms / 1_000).toFixed(1)}s`;
   }
 
-  return `${(ms / 1_000).toFixed(1)}s`
+  return `${(ms / 1_000).toFixed(1)}s`;
 }
 
 function formatRelativeTime(timestamp: number) {
-  const diffMs = Math.max(0, Date.now() - timestamp)
-  const diffMinutes = Math.floor(diffMs / 60_000)
+  const diffMs = Math.max(0, Date.now() - timestamp);
+  const diffMinutes = Math.floor(diffMs / 60_000);
   if (diffMinutes <= 0) {
-    return "刚刚活跃"
+    return "刚刚活跃";
   }
 
   if (diffMinutes < 60) {
-    return `${diffMinutes} 分钟前`
+    return `${diffMinutes} 分钟前`;
   }
 
-  const diffHours = Math.floor(diffMinutes / 60)
+  const diffHours = Math.floor(diffMinutes / 60);
   if (diffHours < 24) {
-    return `${diffHours} 小时前`
+    return `${diffHours} 小时前`;
   }
 
-  const diffDays = Math.floor(diffHours / 24)
-  return `${diffDays} 天前`
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays} 天前`;
 }
 
 function normalizeModelName(modelName?: string | null) {
-  const trimmed = modelName?.trim()
+  const trimmed = modelName?.trim();
   if (!trimmed) {
-    return null
+    return null;
   }
 
-  const suffix = trimmed.split("/").pop()?.trim()
-  return suffix || trimmed
+  const suffix = trimmed.split("/").pop()?.trim();
+  return suffix || trimmed;
 }
 
 function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCardProps) {
-  const pulseKey = motionState?.pulseKey ?? 0
-  const transition = motionState?.transition ?? "idle"
-  const modelName = normalizeModelName(metrics?.modelName ?? agent.modelName ?? null)
+  const pulseKey = motionState?.pulseKey ?? 0;
+  const transition = motionState?.transition ?? "idle";
+  const modelName = normalizeModelName(metrics?.modelName ?? agent.modelName ?? null);
 
   if (zone === "lounge") {
-    const shouldFadeIn = transition === "return"
+    const shouldFadeIn = transition === "return";
     const lastActiveText =
-      typeof metrics?.lastActiveAt === "number" ? formatRelativeTime(metrics.lastActiveAt) : null
+      typeof metrics?.lastActiveAt === "number" ? formatRelativeTime(metrics.lastActiveAt) : null;
 
     return (
       <motion.div
-        className="pointer-events-none flex w-full max-w-[132px] flex-col items-center gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.03] px-3 py-4 text-center opacity-[0.55]"
+        className="pointer-events-none flex w-full max-w-[132px] flex-col items-center gap-3 rounded-2xl border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] px-3 py-4 text-center opacity-[0.55]"
         initial={shouldFadeIn ? { opacity: 0 } : false}
         animate={{ opacity: 0.55 }}
         exit={{ opacity: 0, transition: { duration: 0.3 } }}
@@ -169,13 +161,17 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
           {agent.avatarUrl ? (
             <img
               alt={agent.name}
-              className={`h-12 w-12 rounded-full border-2 ${resolveBorderClass(zone)} object-cover`}
+              className="h-12 w-12 rounded-full border-2 object-cover"
+              style={{ borderColor: resolveBorderColor(zone) }}
               src={agent.avatarUrl}
             />
           ) : (
             <div
-              className={`flex h-12 w-12 items-center justify-center rounded-full border-2 ${resolveBorderClass(zone)} text-sm font-semibold text-white`}
-              style={{ backgroundColor: getAvatarColor(agent.id) }}
+              className="flex h-12 w-12 items-center justify-center rounded-full border-2 text-sm font-semibold text-[var(--text-inverse)]"
+              style={{
+                borderColor: resolveBorderColor(zone),
+                backgroundColor: getAvatarColor(agent.id),
+              }}
             >
               {resolveDisplayText(agent)}
             </div>
@@ -185,32 +181,36 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
           <div className="truncate text-[13px] font-medium text-[var(--color-text-primary)]">
             {agent.name}
           </div>
-          <div className="mt-1 text-[10px] font-semibold tracking-[0.18em] text-gray-500">
+          <div className="mt-1 text-[10px] font-semibold tracking-[0.18em] text-[var(--color-text-secondary)]">
             STANDBY
           </div>
-          {lastActiveText ? <div className="mt-1 text-[10px] text-gray-500">{lastActiveText}</div> : null}
+          {lastActiveText ? (
+            <div className="mt-1 text-[10px] text-[var(--color-text-secondary)]">
+              {lastActiveText}
+            </div>
+          ) : null}
         </div>
       </motion.div>
-    )
+    );
   }
 
   const hasContextMetrics =
     typeof metrics?.contextWindowSize === "number" &&
     metrics.contextWindowSize > 0 &&
-    typeof metrics.currentContextUsed === "number"
-  const resolvedContextWindowSize = hasContextMetrics ? metrics.contextWindowSize : null
-  const resolvedCurrentContextUsed = hasContextMetrics ? metrics.currentContextUsed : null
+    typeof metrics.currentContextUsed === "number";
+  const resolvedContextWindowSize = hasContextMetrics ? metrics.contextWindowSize : null;
+  const resolvedCurrentContextUsed = hasContextMetrics ? metrics.currentContextUsed : null;
   const percent =
     hasContextMetrics && resolvedContextWindowSize && resolvedCurrentContextUsed !== null
       ? Math.max(0, Math.min(100, (resolvedCurrentContextUsed / resolvedContextWindowSize) * 100))
-      : 0
-  const shouldSummon = transition === "summon"
+      : 0;
+  const shouldSummon = transition === "summon";
 
   return (
     <motion.div
       layout
       layoutId={`agent-card-${agent.id}`}
-      className="pointer-events-none h-full rounded-2xl border border-white/10 bg-white/[0.05] shadow-[0_18px_48px_rgba(0,0,0,0.22)]"
+      className="pointer-events-none h-full rounded-2xl border border-[var(--modal-shell-border)] bg-[var(--surface-glass-strong)] shadow-[var(--shadow-md)]"
       initial={shouldSummon ? { scale: 0.3, opacity: 0, y: 20 } : false}
       animate={{ scale: 1, opacity: 1, y: 0 }}
       exit={{
@@ -231,22 +231,26 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
             {agent.avatarUrl ? (
               <img
                 alt={agent.name}
-                className={`h-16 w-16 rounded-full border-2 ${resolveBorderClass(zone)} object-cover`}
+                className="h-16 w-16 rounded-full border-2 object-cover"
+                style={{ borderColor: resolveBorderColor(zone) }}
                 src={agent.avatarUrl}
               />
             ) : (
               <div
-                className={`flex h-16 w-16 items-center justify-center rounded-full border-2 ${resolveBorderClass(zone)} text-lg font-semibold text-white`}
-                style={{ backgroundColor: getAvatarColor(agent.id) }}
+                className="flex h-16 w-16 items-center justify-center rounded-full border-2 text-lg font-semibold text-[var(--text-inverse)]"
+                style={{
+                  borderColor: resolveBorderColor(zone),
+                  backgroundColor: getAvatarColor(agent.id),
+                }}
               >
                 {resolveDisplayText(agent)}
               </div>
             )}
             <span
-              className={[
-                "absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-2 border-[var(--color-bg-card)]",
-                zone === "chat" ? "bg-emerald-500" : "bg-amber-500",
-              ].join(" ")}
+              className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-2 border-[var(--color-bg-card)]"
+              style={{
+                backgroundColor: zone === "chat" ? "var(--zone-chat)" : "var(--zone-work)",
+              }}
             />
           </div>
 
@@ -256,15 +260,17 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
                 <div className="truncate text-lg font-semibold text-[var(--color-text-primary)]">
                   {agent.name}
                 </div>
-                <div className="mt-1 truncate text-xs text-gray-400">{resolveRole(agent)}</div>
+                <div className="mt-1 truncate text-xs text-[var(--color-text-secondary)]">
+                  {resolveRole(agent)}
+                </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   {modelName ? (
-                    <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-gray-400">
+                    <span className="rounded bg-[var(--surface-soft-strong)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-secondary)]">
                       {modelName}
                     </span>
                   ) : null}
                   {metrics?.turnCount ? (
-                    <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-gray-400">
+                    <span className="rounded-full bg-[var(--surface-soft-strong)] px-2 py-0.5 text-[10px] text-[var(--color-text-secondary)]">
                       第 {metrics.turnCount} 轮
                     </span>
                   ) : null}
@@ -273,17 +279,19 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
 
               <div className="flex shrink-0 flex-col items-end gap-2">
                 {status.taskId ? (
-                  <span className="rounded-full bg-amber-500/14 px-2 py-1 text-[10px] font-semibold tracking-[0.12em] text-amber-300">
+                  <span className="rounded-full bg-[var(--surface-brand-soft)] px-2 py-1 text-[10px] font-semibold tracking-[0.12em] text-[var(--surface-brand-text)]">
                     {status.taskId}
                   </span>
                 ) : null}
               </div>
             </div>
 
-            <div className="mt-5 flex items-start justify-between gap-3 text-sm text-gray-300">
-              <div className="min-w-0 flex-1 text-sm text-gray-300">{status.detail}</div>
+            <div className="mt-5 flex items-start justify-between gap-3 text-sm text-[var(--color-text-primary)]">
+              <div className="min-w-0 flex-1 text-sm text-[var(--color-text-primary)]">
+                {status.detail}
+              </div>
               {metrics?.lastResponseMs ? (
-                <div className="shrink-0 text-[11px] tabular-nums text-gray-500">
+                <div className="shrink-0 text-[11px] tabular-nums text-[var(--color-text-secondary)]">
                   {formatDuration(metrics.lastResponseMs)}
                 </div>
               ) : null}
@@ -293,16 +301,16 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
 
         {hasContextMetrics ? (
           <div className="mt-6 flex items-center gap-3">
-            <div className="h-[3px] flex-1 overflow-hidden rounded-full bg-white/8">
+            <div className="h-[3px] flex-1 overflow-hidden rounded-full bg-[var(--surface-soft-strong)]">
               <div
                 className="h-full rounded-full transition-[width,background-color] duration-[600ms]"
                 style={{
                   width: `${percent}%`,
-                  backgroundColor: resolveProgressColor(percent),
+                  backgroundColor: resolveProgressColor(),
                 }}
               />
             </div>
-            <div className="shrink-0 text-[11px] tabular-nums text-gray-400">
+            <div className="shrink-0 text-[11px] tabular-nums text-[var(--color-text-secondary)]">
               {resolvedCurrentContextUsed !== null && resolvedContextWindowSize
                 ? formatTokenUsage(resolvedCurrentContextUsed, resolvedContextWindowSize)
                 : null}
@@ -311,8 +319,8 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
         ) : null}
       </motion.div>
     </motion.div>
-  )
+  );
 }
 
-export const AgentCard = memo(AgentCardInner)
-AgentCard.displayName = "AgentCard"
+export const AgentCard = memo(AgentCardInner);
+AgentCard.displayName = "AgentCard";

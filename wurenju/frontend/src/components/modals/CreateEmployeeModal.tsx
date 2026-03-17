@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronLeft, ChevronRight, Loader2, Search, ShieldAlert } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,28 +13,17 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { PRESET_AVATARS } from "@/config/presetAvatars";
 import { buildDefaultAgentFiles } from "@/constants/agentTemplates";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { gateway, type GatewayAgentUpdateParams } from "@/services/gateway";
 import { useAgentStore } from "@/stores/agentStore";
 import type { ModelProviderGroup } from "@/types/model";
+import { saveAgentAvatarMapping } from "@/utils/agentAvatar";
 import { buildAvailableAgentId } from "@/utils/agentId";
 
-const EMPLOYEE_EMOJIS = [
-  "🧑‍💻",
-  "👩‍🎨",
-  "👨‍🔬",
-  "👩‍💼",
-  "🧑‍🏫",
-  "👨‍⚕️",
-  "🦊",
-  "🐱",
-  "🐶",
-  "🦄",
-  "🤖",
-  "👾",
-] as const;
+const DEFAULT_EMPLOYEE_EMOJI = "🤖";
 
 const STEP_ITEMS = [
   { id: 1, label: "1. 基本信息" },
@@ -49,14 +38,16 @@ type EmployeeFormState = {
   displayName: string;
   role: string;
   bio: string;
-  emoji: (typeof EMPLOYEE_EMOJIS)[number];
+  emoji: string;
+  avatarId: string;
 };
 
 const INITIAL_FORM_STATE: EmployeeFormState = {
   displayName: "",
   role: "",
   bio: "",
-  emoji: EMPLOYEE_EMOJIS[0],
+  emoji: DEFAULT_EMPLOYEE_EMOJI,
+  avatarId: "",
 };
 
 function joinGatewayPath(baseDir: string, leaf: string) {
@@ -185,9 +176,11 @@ function ModelCard({
 export function CreateEmployeeModal({
   open,
   onOpenChange,
+  onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onCreated?: (agentId: string) => Promise<void> | void;
 }) {
   const fetchAgents = useAgentStore((state) => state.fetchAgents);
   const agents = useAgentStore((state) => state.agents);
@@ -288,6 +281,26 @@ export function CreateEmployeeModal({
   const selectedModelLabel = selectedModel
     ? `${selectedModel.provider} / ${selectedModel.name}`
     : `使用全局默认模型${defaultModelLabel ? ` (${defaultModelLabel})` : ""}`;
+  const selectedPresetAvatar = useMemo(
+    () => PRESET_AVATARS.find((avatar) => avatar.id === form.avatarId) ?? null,
+    [form.avatarId],
+  );
+
+  function resetModalState() {
+    setStep(1);
+    setForm(INITIAL_FORM_STATE);
+    setModels([]);
+    setModelQuery("");
+    setSelectedModelRef("");
+    setDefaultModelLabel("全局默认模型");
+    setIsLoadingModels(false);
+    setModelsError("");
+    setSubmitError("");
+    setIsSubmitting(false);
+    setCreatingStep("idle");
+    setDraftAgentId("");
+    setHasCreatedAgent(false);
+  }
 
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen && isSubmitting) {
@@ -295,19 +308,7 @@ export function CreateEmployeeModal({
     }
 
     if (!nextOpen) {
-      setStep(1);
-      setForm(INITIAL_FORM_STATE);
-      setModels([]);
-      setModelQuery("");
-      setSelectedModelRef("");
-      setDefaultModelLabel("全局默认模型");
-      setIsLoadingModels(false);
-      setModelsError("");
-      setSubmitError("");
-      setIsSubmitting(false);
-      setCreatingStep("idle");
-      setDraftAgentId("");
-      setHasCreatedAgent(false);
+      resetModalState();
     }
 
     onOpenChange(nextOpen);
@@ -353,6 +354,10 @@ export function CreateEmployeeModal({
       await gateway.updateAgent(agentId, updateParams);
       setCreatingStep("writing-files");
 
+      if (selectedPresetAvatar) {
+        saveAgentAvatarMapping(agentId, selectedPresetAvatar.src);
+      }
+
       const defaultAgentFiles = buildDefaultAgentFiles({
         agentName: trimmedDisplayName,
         emoji: form.emoji,
@@ -383,6 +388,8 @@ export function CreateEmployeeModal({
 
       setIsSubmitting(false);
       await wait(500);
+      await onCreated?.(agentId);
+      resetModalState();
       onOpenChange(false);
     } catch (error) {
       const message =
@@ -401,7 +408,7 @@ export function CreateEmployeeModal({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="overflow-hidden rounded-[20px] border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0 text-[var(--color-text-primary)] shadow-[0_24px_80px_rgba(0,0,0,0.45)] sm:max-w-3xl">
+      <DialogContent className="overflow-hidden rounded-[20px] border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0 text-[var(--color-text-primary)] shadow-[var(--shadow-xl)] sm:max-w-3xl">
         <div className="border-b border-border px-6 py-5">
           <DialogHeader className="gap-3 text-left">
             <DialogTitle className="text-xl">创建员工</DialogTitle>
@@ -477,33 +484,41 @@ export function CreateEmployeeModal({
 
               <div className="space-y-3">
                 <div className="text-sm font-medium text-foreground">头像选择</div>
-                <div className="grid grid-cols-6 gap-2">
-                  {EMPLOYEE_EMOJIS.map((emoji) => {
-                    const isSelected = form.emoji === emoji;
+                <div className="grid max-h-[280px] grid-cols-5 gap-2 overflow-y-auto pr-1">
+                  {PRESET_AVATARS.map((avatar) => {
+                    const isSelected = form.avatarId === avatar.id;
 
                     return (
                       <button
-                        key={emoji}
+                        key={avatar.id}
                         type="button"
                         onClick={() =>
                           setForm((current) => ({
                             ...current,
-                            emoji,
+                            avatarId: avatar.id,
                           }))
                         }
                         className={cn(
-                          "flex h-12 items-center justify-center rounded-xl border text-2xl transition-all",
+                          "h-14 w-14 overflow-hidden rounded-full border-2 transition-all",
                           isSelected
-                            ? "border-primary bg-primary/12 shadow-[0_0_0_1px_var(--color-brand-glow)]"
-                            : "border-border bg-[var(--color-bg-card)] hover:border-primary/40 hover:bg-[var(--color-bg-hover)]",
+                            ? "border-[var(--brand-primary)] shadow-[0_0_0_2px_var(--brand-subtle)]"
+                            : "border-transparent hover:border-[color:var(--brand-subtle)]",
                         )}
-                        aria-label={`选择头像 ${emoji}`}
+                        aria-label={`选择头像 ${avatar.label}`}
                         aria-pressed={isSelected}
+                        title={avatar.label}
                       >
-                        {emoji}
+                        <img
+                          src={avatar.src}
+                          alt={avatar.label}
+                          className="h-full w-full object-cover"
+                        />
                       </button>
                     );
                   })}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  未选图片时仍会使用默认 emoji 作为 Gateway fallback。
                 </div>
               </div>
             </div>
@@ -596,8 +611,16 @@ export function CreateEmployeeModal({
 
               <section className="rounded-[18px] border border-border bg-[var(--color-bg-card)] p-5">
                 <div className="flex items-start gap-4">
-                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-bg-secondary)] text-4xl shadow-sm">
-                    {form.emoji}
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--color-bg-secondary)] text-4xl shadow-sm">
+                    {selectedPresetAvatar ? (
+                      <img
+                        src={selectedPresetAvatar.src}
+                        alt={selectedPresetAvatar.label}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      form.emoji
+                    )}
                   </div>
                   <div className="min-w-0 space-y-4">
                     <div>
@@ -633,7 +656,7 @@ export function CreateEmployeeModal({
                     creatingStep === "error"
                       ? "border-destructive/30 bg-destructive/5 text-destructive"
                       : creatingStep === "done"
-                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+                        ? "border-[var(--ok)] bg-[var(--ok-subtle)] text-[var(--ok)]"
                         : "border-primary/20 bg-primary/8 text-primary",
                   )}
                 >

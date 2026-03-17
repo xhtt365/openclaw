@@ -3,6 +3,7 @@
 import { Archive, Building2, ChevronDown, Plus, Search, Settings, Users } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ThemeToggle } from "@/components/chat/components/theme-toggle";
 import { CreateEmployeeModal } from "@/components/modals/CreateEmployeeModal";
 import { CreateGroupModal } from "@/components/modals/CreateGroupModal";
 import { DepartmentManageModal } from "@/components/modals/DepartmentManageModal";
@@ -10,6 +11,8 @@ import { cn } from "@/lib/utils";
 import { useAgentStore, type Agent } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
 import { useGroupStore, type GroupArchive, type GroupChatMessage } from "@/stores/groupStore";
+import "@/styles/openclaw-sidebar.css";
+import { AGENT_AVATAR_STORAGE_KEY, getAgentAvatarInfo } from "@/utils/agentAvatar";
 import { getGroupDisplayMemberCount } from "@/utils/groupMembers";
 import type { ChatMessage } from "@/utils/messageAdapter";
 import {
@@ -106,11 +109,11 @@ const AVATAR_COLORS = [
 ] as const;
 
 const GROUP_ICON_GRADIENTS = [
-  "linear-gradient(135deg,#8b5cf6,#3b82f6)",
-  "linear-gradient(135deg,#f97316,#ef4444)",
-  "linear-gradient(135deg,#14b8a6,#06b6d4)",
-  "linear-gradient(135deg,#eab308,#f59e0b)",
-  "linear-gradient(135deg,#ec4899,#8b5cf6)",
+  "linear-gradient(135deg, var(--accent-2), var(--info))",
+  "linear-gradient(135deg, var(--accent), var(--danger))",
+  "linear-gradient(135deg, var(--accent-2), var(--accent))",
+  "linear-gradient(135deg, var(--warn), var(--accent))",
+  "linear-gradient(135deg, var(--info), var(--accent-2))",
 ] as const;
 
 function hashText(value: string) {
@@ -256,20 +259,20 @@ function buildInitialEmployee(agent: Agent) {
 function getConnectionStyle(status: ConnectionStatus) {
   if (status === "connected") {
     return {
-      dotClassName: "bg-green-500",
+      dotColor: "var(--ok)",
       label: "已连接",
     };
   }
 
   if (status === "connecting") {
     return {
-      dotClassName: "bg-amber-400",
+      dotColor: "var(--warn)",
       label: "连接中",
     };
   }
 
   return {
-    dotClassName: "bg-red-500",
+    dotColor: "var(--danger)",
     label: "连接断开",
   };
 }
@@ -282,16 +285,16 @@ function matchesKeyword(keyword: string, values: Array<string | undefined>) {
   return values.some((value) => value?.toLowerCase().includes(keyword));
 }
 
-function getEmployeeStatusDotClass(status: string) {
+function getEmployeeStatusDotColor(status: string) {
   if (status === "error") {
-    return "bg-red-500";
+    return "var(--danger)";
   }
 
   if (status === "offline") {
-    return "bg-gray-400";
+    return "var(--muted)";
   }
 
-  return "bg-green-500";
+  return "var(--ok)";
 }
 
 function SidebarSectionHeader({
@@ -306,25 +309,23 @@ function SidebarSectionHeader({
   onToggle: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className="flex w-full items-center gap-2 px-1 py-2 text-left text-[12px] font-medium text-gray-400 transition-colors duration-200 hover:text-gray-500"
-    >
+    <button type="button" onClick={onToggle} className="workspace-sidebar__section-header">
       <ChevronDown
         className={cn(
-          "h-3.5 w-3.5 shrink-0 transition-transform duration-200",
+          "workspace-sidebar__section-chevron shrink-0 transition-transform duration-200",
           collapsed ? "-rotate-90" : "rotate-0",
         )}
       />
       <span className="truncate leading-5">{label}</span>
-      {typeof count === "number" ? <span className="shrink-0 leading-5">{count}</span> : null}
+      {typeof count === "number" ? (
+        <span className="ml-auto shrink-0 leading-5">{count}</span>
+      ) : null}
     </button>
   );
 }
 
 function EmptyHint({ children }: { children: string }) {
-  return <div className="px-4 py-3 text-[12px] leading-5 text-gray-400">{children}</div>;
+  return <div className="workspace-sidebar__empty">{children}</div>;
 }
 
 function EmployeeMenuAction({
@@ -387,6 +388,11 @@ function EmployeeRow({
   const hasDepartments = departments.length > 0;
   const showUngroupAction = Boolean(departmentId);
   const isActionActive = isDetailActive || isMenuOpen;
+  const avatarInfo = getAgentAvatarInfo(
+    employee.id,
+    employee.avatarUrl ?? employee.emoji ?? employee.avatarText,
+    employee.name,
+  );
 
   useEffect(() => {
     if (!isMenuOpen) {
@@ -425,76 +431,60 @@ function EmployeeRow({
     <div className={cn("group relative", isMenuOpen && "z-40")}>
       <div
         className={cn(
-          "relative rounded-xl transition-all duration-200",
-          isSelected ? "bg-gray-100" : "hover:bg-gray-100",
+          "workspace-sidebar__row",
+          isSelected ? "workspace-sidebar__row--selected" : "",
         )}
       >
-        {isSelected ? (
-          <span className="absolute bottom-2 left-0 top-2 w-[3px] rounded-r bg-orange-500" />
-        ) : null}
+        {isSelected ? <span className="workspace-sidebar__row-accent" /> : null}
 
         <button
           type="button"
           onClick={onSelect}
-          className="flex min-h-16 w-full min-w-0 items-center gap-3 px-3 py-3 pr-11 text-left"
+          className="flex min-h-16 w-full min-w-0 items-center gap-3 text-left"
         >
-          <div className="relative shrink-0">
-            {employee.avatarUrl ? (
+          <div className="workspace-sidebar__row-avatar">
+            {avatarInfo.type === "image" ? (
               <img
                 alt={employee.name}
                 className="h-10 w-10 rounded-full object-cover"
-                src={employee.avatarUrl}
+                src={avatarInfo.value}
               />
             ) : (
               <div
                 className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold text-[var(--color-text-on-brand)]"
                 style={{ backgroundColor: employee.avatarColor }}
               >
-                {employee.avatarText}
+                {avatarInfo.value}
               </div>
             )}
             <span
-              className={cn(
-                "absolute bottom-0 right-0 h-2 w-2 rounded-full border-2 border-[var(--color-bg-secondary)]",
-                getEmployeeStatusDotClass(employee.status),
-              )}
+              className="workspace-sidebar__row-avatar-badge"
+              style={{ backgroundColor: getEmployeeStatusDotColor(employee.status) }}
             />
           </div>
 
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-[14px] font-semibold leading-5 text-[var(--color-text-primary)]">
-                {employee.name}
-              </span>
+          <div className="workspace-sidebar__row-body">
+            <div className="workspace-sidebar__row-title">
+              <span className="workspace-sidebar__row-name">{employee.name}</span>
               {employee.role ? (
-                <span className="min-w-0 truncate text-[12px] font-normal leading-5 text-gray-400">
-                  {employee.role}
-                </span>
+                <span className="workspace-sidebar__row-meta">{employee.role}</span>
               ) : null}
             </div>
-            <div className="truncate text-[12px] leading-5 text-gray-400">
+            <div className="workspace-sidebar__row-preview">
               {employee.lastMessage || "暂无消息"}
             </div>
           </div>
         </button>
 
-        <div
-          ref={menuRef}
-          className={cn("absolute right-3 top-1/2 -translate-y-1/2", isMenuOpen && "z-50")}
-        >
+        <div ref={menuRef} className={cn("workspace-sidebar__row-menu", isMenuOpen && "z-50")}>
           <button
             type="button"
             onClick={(event) => {
               event.stopPropagation();
               setIsMenuOpen((current) => !current);
             }}
-            className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200",
-              isActionActive
-                ? "translate-x-0 bg-[var(--color-bg-soft)] text-[var(--color-brand)] opacity-100"
-                : "translate-x-2 opacity-0 group-hover:translate-x-0 group-hover:opacity-100 hover:bg-[var(--color-bg-soft)]",
-            )}
-            style={!isActionActive ? { color: "var(--color-text-secondary)" } : undefined}
+            className="workspace-sidebar__row-menu-button"
+            data-open={isActionActive ? "true" : "false"}
             aria-label={`打开 ${employee.name} 操作菜单`}
             aria-expanded={isMenuOpen}
             aria-haspopup="menu"
@@ -503,11 +493,7 @@ function EmployeeRow({
           </button>
 
           {isMenuOpen ? (
-            <div
-              role="menu"
-              className="absolute right-0 top-[calc(100%+8px)] z-30 w-48 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] p-1.5 shadow-[0_18px_40px_var(--color-shadow-card)]"
-              style={{ animation: "sidebar-popover-fade-in 150ms var(--ease-standard)" }}
-            >
+            <div role="menu" className="workspace-sidebar__row-menu-panel z-30">
               <EmployeeMenuAction
                 leading="✏️"
                 label="编辑资料"
@@ -524,9 +510,7 @@ function EmployeeRow({
               />
 
               <div className="my-1 h-px bg-[var(--color-border)]" />
-              <div className="px-3 pb-1 pt-1 text-[11px] font-medium text-[var(--color-text-secondary)]">
-                移动到分组
-              </div>
+              <div className="workspace-sidebar__row-menu-section-title">移动到分组</div>
 
               {hasDepartments ? (
                 departments.map((department) => (
@@ -576,33 +560,25 @@ function ProjectGroupRow({
       type="button"
       onClick={onClick}
       className={cn(
-        "group relative flex min-h-16 w-full items-center gap-3 overflow-hidden rounded-xl px-3 py-3 text-left transition-all duration-200",
-        selected ? "bg-gray-100" : "hover:bg-gray-100",
+        "workspace-sidebar__row group overflow-hidden",
+        selected ? "workspace-sidebar__row--selected" : "",
       )}
     >
-      {selected ? (
-        <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r bg-orange-500" />
-      ) : null}
+      {selected ? <span className="workspace-sidebar__row-accent" /> : null}
 
       <div
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--accent-foreground)]"
         style={{ background: getGroupIconBackground(groupId) }}
       >
         <Users className="h-4 w-4" />
       </div>
 
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-[14px] font-semibold leading-5 text-[var(--color-text-primary)]">
-            {name}
-          </span>
-          <span className="shrink-0 text-[12px] font-normal leading-5 text-gray-400">
-            {memberCount} 人
-          </span>
+      <div className="workspace-sidebar__row-body">
+        <div className="workspace-sidebar__row-title">
+          <span className="workspace-sidebar__row-name">{name}</span>
+          <span className="workspace-sidebar__row-meta">{memberCount} 人</span>
         </div>
-        <div className="truncate text-[12px] leading-5 text-gray-400">
-          {preview.preview || "暂无消息"}
-        </div>
+        <div className="workspace-sidebar__row-preview">{preview.preview || "暂无消息"}</div>
       </div>
     </button>
   );
@@ -616,26 +592,25 @@ function GroupArchiveRow({ archive, selected, onClick }: GroupArchiveRowProps) {
       type="button"
       onClick={onClick}
       className={cn(
-        "group relative flex min-h-16 w-full items-center gap-3 overflow-hidden rounded-xl px-3 py-3 text-left transition-all duration-200",
-        selected ? "bg-gray-100" : "hover:bg-gray-100",
+        "workspace-sidebar__row group overflow-hidden",
+        selected ? "workspace-sidebar__row--selected" : "",
       )}
     >
-      {selected ? (
-        <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r bg-orange-500" />
-      ) : null}
+      {selected ? <span className="workspace-sidebar__row-accent" /> : null}
 
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-700 text-white">
+      <div
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--accent-foreground)]"
+        style={{ background: "linear-gradient(135deg, var(--muted-strong), var(--muted))" }}
+      >
         <Archive className="h-4 w-4" />
       </div>
 
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-[14px] font-semibold leading-5 text-[var(--color-text-primary)]">
-            {archive.groupName}
-          </span>
-          <span className="shrink-0 text-[12px] leading-5 text-gray-400">{preview.timestamp}</span>
+      <div className="workspace-sidebar__row-body">
+        <div className="workspace-sidebar__row-title">
+          <span className="workspace-sidebar__row-name">{archive.groupName}</span>
+          <span className="workspace-sidebar__row-meta">{preview.timestamp}</span>
         </div>
-        <div className="truncate text-[12px] leading-5 text-gray-400">{preview.preview}</div>
+        <div className="workspace-sidebar__row-preview">{preview.preview}</div>
       </div>
     </button>
   );
@@ -650,20 +625,21 @@ function DirectArchiveRow({ archive }: DirectArchiveRowProps) {
       onClick={() => {
         console.log("[Archive] 1v1 归档回看暂未实现:", archive.id);
       }}
-      className="group relative flex min-h-16 w-full items-center gap-3 overflow-hidden rounded-xl px-3 py-3 text-left transition-all duration-200 hover:bg-gray-100"
+      className="workspace-sidebar__row group overflow-hidden"
     >
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-700 text-white">
+      <div
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--accent-foreground)]"
+        style={{ background: "linear-gradient(135deg, var(--info), var(--accent-2))" }}
+      >
         <span className="text-[11px] font-semibold">1v1</span>
       </div>
 
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-[14px] font-semibold leading-5 text-[var(--color-text-primary)]">
-            {archive.agentName}
-          </span>
-          <span className="shrink-0 text-[12px] leading-5 text-gray-400">{preview.timestamp}</span>
+      <div className="workspace-sidebar__row-body">
+        <div className="workspace-sidebar__row-title">
+          <span className="workspace-sidebar__row-name">{archive.agentName}</span>
+          <span className="workspace-sidebar__row-meta">{preview.timestamp}</span>
         </div>
-        <div className="truncate text-[12px] leading-5 text-gray-400">{preview.preview}</div>
+        <div className="workspace-sidebar__row-preview">{preview.preview}</div>
       </div>
     </button>
   );
@@ -689,6 +665,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
   const [isCreateEmployeeOpen, setIsCreateEmployeeOpen] = useState(false);
   const [isDepartmentManageOpen, setIsDepartmentManageOpen] = useState(false);
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
+  const [, setAgentAvatarVersion] = useState(0);
   const agents = useAgentStore((state) => state.agents);
   const currentAgentId = useAgentStore((state) => state.currentAgentId);
   const isLoading = useAgentStore((state) => state.isLoading);
@@ -826,6 +803,23 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
   }, []);
 
   useEffect(() => {
+    function handleAvatarRefresh(event?: Event) {
+      if (event instanceof StorageEvent && event.key && event.key !== AGENT_AVATAR_STORAGE_KEY) {
+        return;
+      }
+
+      setAgentAvatarVersion((current) => current + 1);
+    }
+
+    window.addEventListener("xiaban-agent-avatar-updated", handleAvatarRefresh);
+    window.addEventListener("storage", handleAvatarRefresh);
+    return () => {
+      window.removeEventListener("xiaban-agent-avatar-updated", handleAvatarRefresh);
+      window.removeEventListener("storage", handleAvatarRefresh);
+    };
+  }, []);
+
+  useEffect(() => {
     let isActive = true;
 
     const initAgents = async () => {
@@ -879,6 +873,19 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
     await switchAgent(agent.id);
   }
 
+  async function handleCreatedAgent(agentId: string) {
+    const nextAgent = useAgentStore.getState().agents.find((agent) => agent.id === agentId);
+    if (!nextAgent) {
+      return;
+    }
+
+    clearSelectedGroup();
+    clearSelectedArchive();
+    closeDetail();
+    onSelectEmployee(buildInitialEmployee(nextAgent));
+    await switchAgent(nextAgent.id);
+  }
+
   function handleSelectGroup(groupId: string) {
     closeDetail();
     selectGroup(groupId);
@@ -925,64 +932,65 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
 
   return (
     <>
-      <aside className="flex h-full min-h-0 w-[var(--sidebar-w)] min-w-[var(--sidebar-w)] flex-col bg-[var(--color-bg-secondary)]">
-        <div className="border-b border-[var(--color-border)] px-5 pb-5 pt-6">
-          <div className="flex items-center gap-4">
-            <div className="brand-gradient flex h-14 w-14 items-center justify-center rounded-2xl text-[24px] shadow-[0_12px_32px_var(--color-shadow-avatar)]">
-              <span aria-hidden="true">🦞</span>
-            </div>
-            <div>
-              <div className="text-[20px] font-bold tracking-tight text-[var(--color-text-primary)]">
-                虾班
+      <aside className="workspace-sidebar">
+        <div className="workspace-sidebar__hero">
+          <div className="flex items-start justify-between gap-4">
+            <div className="workspace-sidebar__brand">
+              <div className="workspace-sidebar__brand-logo">
+                <span aria-hidden="true">🦞</span>
               </div>
-              <div className="mt-1 text-xs text-[var(--color-text-secondary)]">你的AI永不下班</div>
+              <div>
+                <div className="workspace-sidebar__brand-name">虾班</div>
+                <div className="workspace-sidebar__brand-subtitle">你的 AI 永不下班</div>
+              </div>
             </div>
+            <ThemeToggle />
           </div>
 
           <button
             type="button"
             onClick={() => navigate("/office")}
-            className="mt-5 flex w-full items-center gap-3 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-500 px-4 py-4 text-left text-white shadow-sm transition-all duration-200 hover:brightness-105 hover:shadow-md active:scale-[0.98]"
+            className="workspace-sidebar__office"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20">
+            <div className="workspace-sidebar__office-icon">
               <Building2 className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <div className="truncate text-[15px] font-semibold">龙虾办公室</div>
-              <div className="mt-0.5 truncate text-xs text-white/80">欢迎董事长视察工作</div>
+              <div className="workspace-sidebar__office-title truncate">龙虾办公室</div>
+              <div className="workspace-sidebar__office-subtitle truncate">欢迎董事长视察工作</div>
             </div>
           </button>
         </div>
 
-        <div className="border-b border-[var(--color-border)] px-5 py-4">
-          <div className="group relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-secondary)]" />
+        <div className="workspace-sidebar__search">
+          <div className="workspace-sidebar__search-wrap">
+            <Search className="workspace-sidebar__search-icon" />
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="搜索员工、项目组、归档..."
-              className="h-11 w-full rounded-xl border border-transparent bg-[var(--color-bg-input)] pl-10 pr-3 text-sm text-[var(--color-text-primary)] outline-none transition-[border-color,box-shadow] duration-200 placeholder:text-[var(--color-text-secondary)] focus:border-[var(--color-brand)] focus:shadow-[0_0_0_1px_var(--color-brand-glow)]"
+              className="workspace-sidebar__search-input"
             />
           </div>
         </div>
 
-        <div className="border-b border-[var(--color-border)] px-5 py-4">
+        <div className="workspace-sidebar__toolbar">
           <button
             type="button"
             onClick={() => setIsCreateEmployeeOpen(true)}
-            className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-blue-500 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:brightness-110 hover:shadow-md active:scale-[0.98]"
+            className="workspace-sidebar__toolbar-primary"
           >
             <Plus className="h-4 w-4" />
             新增员工
           </button>
 
-          <div className="mt-4 grid grid-cols-2 gap-2">
+          <div className="workspace-sidebar__toolbar-grid">
             <button
               type="button"
               onClick={() => {
                 setIsDepartmentManageOpen(true);
               }}
-              className="flex h-9 items-center justify-center rounded-lg bg-gray-100 px-3 text-[13px] font-medium whitespace-nowrap text-[var(--color-text-primary)] transition-all duration-200 hover:bg-gray-200 hover:shadow-sm"
+              className="workspace-sidebar__toolbar-secondary whitespace-nowrap"
             >
               部门管理
             </button>
@@ -991,23 +999,23 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
               onClick={() => {
                 setIsCreateGroupOpen(true);
               }}
-              className="flex h-9 items-center justify-center rounded-lg bg-gray-100 px-3 text-[13px] font-medium whitespace-nowrap text-[var(--color-text-primary)] transition-all duration-200 hover:bg-gray-200 hover:shadow-sm"
+              className="workspace-sidebar__toolbar-secondary whitespace-nowrap"
             >
               新建项目组
             </button>
           </div>
         </div>
 
-        <div className="im-scroll flex-1 overflow-y-auto px-3 py-4">
+        <div className="im-scroll workspace-sidebar__body">
           {isLoading && agents.length === 0 ? <EmptyHint>正在加载员工列表...</EmptyHint> : null}
 
           {!isLoading && keyword && !hasVisibleContent ? (
             <EmptyHint>没找到匹配的员工、项目组或归档</EmptyHint>
           ) : null}
 
-          <div className="space-y-3">
+          <div className="workspace-sidebar__sections">
             {shouldShowPinnedSection ? (
-              <section className="border-t border-gray-100 pt-3 first:border-t-0 first:pt-0">
+              <section className="workspace-sidebar__section">
                 <SidebarSectionHeader
                   label="置顶"
                   count={pinnedEntries.length}
@@ -1016,7 +1024,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
                 />
 
                 {!collapsedSections[SECTION_KEYS.pinned] ? (
-                  <div className="space-y-1 px-1 pb-1">
+                  <div className="workspace-sidebar__section-items">
                     {pinnedEntries.map(({ agent, employee, pinned, departmentId }) => (
                       <EmployeeRow
                         key={`pinned:${employee.id}`}
@@ -1049,7 +1057,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
             ) : null}
 
             {shouldShowGroupsSection ? (
-              <section className="border-t border-gray-100 pt-3 first:border-t-0 first:pt-0">
+              <section className="workspace-sidebar__section">
                 <SidebarSectionHeader
                   label="项目组"
                   count={visibleGroups.length}
@@ -1058,7 +1066,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
                 />
 
                 {!collapsedSections[SECTION_KEYS.groups] ? (
-                  <div className="space-y-1 px-1 pb-1">
+                  <div className="workspace-sidebar__section-items">
                     {visibleGroups.map((group) => (
                       <ProjectGroupRow
                         key={group.id}
@@ -1082,10 +1090,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
               const collapseKey = `department:${department.id}`;
 
               return (
-                <section
-                  key={department.id}
-                  className="border-t border-gray-100 pt-3 first:border-t-0 first:pt-0"
-                >
+                <section key={department.id} className="workspace-sidebar__section">
                   <SidebarSectionHeader
                     label={department.name}
                     count={department.employees.length}
@@ -1094,7 +1099,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
                   />
 
                   {!collapsedSections[collapseKey] ? (
-                    <div className="space-y-1 px-1 pb-1">
+                    <div className="workspace-sidebar__section-items">
                       {department.employees.map(({ agent, employee, pinned, departmentId }) => (
                         <EmployeeRow
                           key={`${department.id}:${employee.id}`}
@@ -1127,7 +1132,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
               );
             })}
 
-            <section className="border-t border-gray-100 pt-3 first:border-t-0 first:pt-0">
+            <section className="workspace-sidebar__section">
               <SidebarSectionHeader
                 label="未分组"
                 count={ungroupedEntries.length}
@@ -1136,7 +1141,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
               />
 
               {!collapsedSections[SECTION_KEYS.ungrouped] ? (
-                <div className="space-y-1 px-1 pb-1">
+                <div className="workspace-sidebar__section-items">
                   {ungroupedEntries.length > 0 ? (
                     ungroupedEntries.map(({ agent, employee, pinned, departmentId }) => (
                       <EmployeeRow
@@ -1172,7 +1177,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
             </section>
 
             {shouldShowGroupArchivesSection ? (
-              <section className="border-t border-gray-100 pt-3 first:border-t-0 first:pt-0">
+              <section className="workspace-sidebar__section">
                 <SidebarSectionHeader
                   label="项目组归档"
                   count={visibleGroupArchives.length}
@@ -1181,7 +1186,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
                 />
 
                 {!collapsedSections[SECTION_KEYS.groupArchives] ? (
-                  <div className="space-y-1 px-1 pb-1">
+                  <div className="workspace-sidebar__section-items">
                     {visibleGroupArchives.map((archive) => (
                       <GroupArchiveRow
                         key={archive.id}
@@ -1196,7 +1201,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
             ) : null}
 
             {shouldShowDirectArchivesSection ? (
-              <section className="border-t border-gray-100 pt-3 first:border-t-0 first:pt-0">
+              <section className="workspace-sidebar__section">
                 <SidebarSectionHeader
                   label="1v1 归档"
                   count={visibleDirectArchives.length}
@@ -1205,7 +1210,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
                 />
 
                 {!collapsedSections[SECTION_KEYS.directArchives] ? (
-                  <div className="space-y-1 px-1 pb-1">
+                  <div className="workspace-sidebar__section-items">
                     {visibleDirectArchives.map((archive) => (
                       <DirectArchiveRow key={archive.id} archive={archive} />
                     ))}
@@ -1216,18 +1221,26 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
           </div>
         </div>
 
-        <div className="border-t border-[var(--color-border)] px-5 py-4">
-          <div
-            className="flex items-center gap-2 text-[12px]"
-            style={{ color: "var(--color-text-secondary)", opacity: 0.86 }}
-          >
-            <span key={status} className={cn("h-2 w-2 rounded-full", connection.dotClassName)} />
-            <span>{connection.label}</span>
+        <div className="workspace-sidebar__footer">
+          <div className="workspace-sidebar__footer-card">
+            <span className="workspace-sidebar__footer-label">网关</span>
+            <span className="workspace-sidebar__footer-status">
+              <span
+                key={status}
+                className="workspace-sidebar__footer-dot"
+                style={{ backgroundColor: connection.dotColor }}
+              />
+              <span>{connection.label}</span>
+            </span>
           </div>
         </div>
       </aside>
 
-      <CreateEmployeeModal open={isCreateEmployeeOpen} onOpenChange={setIsCreateEmployeeOpen} />
+      <CreateEmployeeModal
+        open={isCreateEmployeeOpen}
+        onOpenChange={setIsCreateEmployeeOpen}
+        onCreated={handleCreatedAgent}
+      />
       <DepartmentManageModal
         open={isDepartmentManageOpen}
         onOpenChange={setIsDepartmentManageOpen}
