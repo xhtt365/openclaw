@@ -35,6 +35,12 @@ const STEP_ITEMS = [
   { id: 3, label: "选择群主" },
 ] as const;
 
+const wizardSecondaryButtonClass =
+  "inline-flex h-12 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)] px-5 text-sm font-medium text-[var(--text-strong)] transition-all duration-200 hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)]";
+
+const wizardPrimaryButtonClass =
+  "inline-flex h-12 items-center gap-2 rounded-full px-6 text-sm font-semibold text-[var(--accent-foreground)] transition-all duration-200 hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:scale-100";
+
 function toGroupMember(agent: Agent): AgentInfo {
   return {
     id: agent.id,
@@ -55,13 +61,16 @@ function StepProgress({ step }: { step: Step }) {
       {STEP_ITEMS.map((item) => (
         <div
           key={item.id}
-          className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/8"
+          className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--border)]"
           aria-hidden="true"
         >
           <motion.div
-            className="h-full rounded-full bg-[linear-gradient(90deg,#8b5cf6,#a855f7)]"
+            className="h-full rounded-full"
             animate={{ width: step >= item.id ? "100%" : "0%" }}
             transition={{ duration: 0.28, ease: "easeOut" }}
+            style={{
+              background: "linear-gradient(90deg, var(--accent-2), var(--accent))",
+            }}
           />
         </div>
       ))}
@@ -88,8 +97,8 @@ function AgentRow({ agent, selected, mode, onClick }: AgentRowProps) {
       className={cn(
         "flex w-full items-center gap-3 rounded-[22px] border px-4 py-3 text-left backdrop-blur-xl transition-all duration-200",
         selected
-          ? "border-violet-400/35 bg-violet-500/12 shadow-[0_12px_40px_rgba(139,92,246,0.12)]"
-          : "border-white/[0.08] bg-white/[0.03] hover:border-white/[0.12] hover:bg-white/[0.06]",
+          ? "border-[var(--accent)] bg-[var(--accent-subtle)] shadow-[var(--shadow-md)]"
+          : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)]",
       )}
     >
       <div className="relative shrink-0">
@@ -100,11 +109,16 @@ function AgentRow({ agent, selected, mode, onClick }: AgentRowProps) {
             src={agent.avatarUrl}
           />
         ) : (
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[linear-gradient(135deg,#facc15,#f59e0b)] text-sm font-semibold text-black">
+          <div
+            className="flex h-12 w-12 items-center justify-center rounded-full text-sm font-semibold text-[var(--accent-foreground)] shadow-[var(--shadow-sm)]"
+            style={{
+              background: "linear-gradient(135deg, var(--warn), var(--accent))",
+            }}
+          >
             {resolveAvatarText(agent)}
           </div>
         )}
-        <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border border-[rgba(12,12,16,0.95)] bg-emerald-400" />
+        <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border border-[var(--card)] bg-[var(--ok)]" />
       </div>
 
       <div className="min-w-0 flex-1">
@@ -121,8 +135,8 @@ function AgentRow({ agent, selected, mode, onClick }: AgentRowProps) {
           className={cn(
             "flex h-8 w-8 items-center justify-center rounded-full border",
             selected
-              ? "border-violet-400 bg-violet-500 text-white shadow-[0_10px_24px_rgba(139,92,246,0.35)]"
-              : "border-white/16 bg-transparent text-transparent",
+              ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] shadow-[var(--shadow-glow)]"
+              : "border-[var(--border)] bg-transparent text-transparent",
           )}
         >
           <Check className="h-4 w-4" />
@@ -134,8 +148,8 @@ function AgentRow({ agent, selected, mode, onClick }: AgentRowProps) {
           className={cn(
             "flex h-8 w-8 items-center justify-center rounded-full border",
             selected
-              ? "border-violet-400 bg-violet-500 text-white shadow-[0_10px_24px_rgba(139,92,246,0.35)]"
-              : "border-white/16 bg-transparent text-transparent",
+              ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] shadow-[var(--shadow-glow)]"
+              : "border-[var(--border)] bg-transparent text-transparent",
           )}
         >
           <Crown className="h-4 w-4" />
@@ -252,7 +266,10 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-md"
+          className="fixed inset-0 z-[120] flex items-center justify-center px-4 py-8 backdrop-blur-md"
+          style={{
+            background: "color-mix(in srgb, var(--bg) 58%, transparent)",
+          }}
           onClick={() => {
             if (!isSubmitting) {
               onOpenChange(false);
@@ -267,12 +284,23 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
             onClick={(event) => {
               event.stopPropagation();
             }}
-            className="flex w-full max-w-[680px] flex-col overflow-hidden rounded-[28px] border border-white/[0.08] bg-[rgba(12,12,16,0.96)] shadow-[0_48px_140px_rgba(0,0,0,0.45)]"
+            className="flex w-full max-w-[680px] flex-col overflow-hidden rounded-[28px] border border-[var(--border)] text-[var(--text-strong)]"
+            style={{
+              background:
+                "linear-gradient(180deg, color-mix(in srgb, var(--card) 96%, transparent), color-mix(in srgb, var(--panel-strong) 96%, transparent))",
+              boxShadow: "var(--shadow-xl)",
+            }}
           >
-            <div className="border-b border-white/[0.08] px-8 pb-6 pt-7">
+            <div className="border-b border-[var(--border)] px-8 pb-6 pt-7">
               <div className="flex items-start justify-between gap-6">
                 <div className="flex min-w-0 items-center gap-4">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-[20px] bg-[linear-gradient(135deg,#8b5cf6,#3b82f6)] text-[34px] font-semibold text-white shadow-[0_18px_60px_rgba(139,92,246,0.28)]">
+                  <div
+                    className="flex h-16 w-16 items-center justify-center rounded-[20px] text-[34px] font-semibold text-[var(--accent-foreground)]"
+                    style={{
+                      background: "linear-gradient(135deg, var(--accent-2), var(--accent))",
+                      boxShadow: "var(--shadow-md)",
+                    }}
+                  >
                     #
                   </div>
                   <div className="min-w-0">
@@ -292,7 +320,7 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
                       onOpenChange(false);
                     }
                   }}
-                  className="flex h-10 w-10 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.04] text-[var(--color-text-secondary)] transition-all duration-200 hover:border-white/[0.12] hover:bg-white/[0.08] hover:text-white"
+                  className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card-highlight)] text-[var(--color-text-secondary)] transition-all duration-200 hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-strong)]"
                   aria-label="关闭"
                 >
                   <X className="h-4 w-4" />
@@ -362,10 +390,10 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
                     </div>
 
                     <div className="flex items-center gap-3 text-[15px] text-[var(--color-text-secondary)]">
-                      <Users className="h-5 w-5 text-violet-300" />
+                      <Users className="h-5 w-5 text-[var(--accent-2)]" />
                       <span>
                         已选择{" "}
-                        <span className="font-semibold text-violet-300">
+                        <span className="font-semibold text-[var(--accent-2)]">
                           {wizard.memberIds.length}
                         </span>{" "}
                         个成员
@@ -409,12 +437,12 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
                       </p>
                     </div>
 
-                    <div className="rounded-[24px] border border-amber-300/18 bg-amber-400/8 px-5 py-4 text-left shadow-[0_12px_40px_rgba(245,158,11,0.08)]">
-                      <div className="flex items-center gap-2 text-[17px] font-semibold text-amber-200">
+                    <div className="rounded-[24px] border border-[var(--warn)] bg-[var(--warn-subtle)] px-5 py-4 text-left shadow-[var(--shadow-md)]">
+                      <div className="flex items-center gap-2 text-[17px] font-semibold text-[var(--warn)]">
                         <Crown className="h-5 w-5" />
                         群主的职责
                       </div>
-                      <div className="mt-3 space-y-2 text-[14px] leading-7 text-amber-100/85">
+                      <div className="mt-3 space-y-2 text-[14px] leading-7 text-[var(--text)]">
                         <div>① 默认接收所有消息，确保无遗漏</div>
                         <div>② 协调统筹，分配任务给合适的成员</div>
                       </div>
@@ -441,7 +469,7 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
               </AnimatePresence>
             </div>
 
-            <div className="border-t border-white/[0.08] px-8 py-5">
+            <div className="border-t border-[var(--border)] px-8 py-5">
               <div className="flex items-center justify-between gap-4">
                 <div className="min-h-6 text-sm text-[var(--color-text-secondary)]">
                   {step === 2 && !canNextStep2 ? "至少选择 2 个 Agent 才能继续" : null}
@@ -455,7 +483,7 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
                       onClick={() => {
                         setStep((current) => Math.max(1, current - 1) as Step);
                       }}
-                      className="inline-flex h-12 items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-5 text-sm font-medium text-[var(--color-text-primary)] transition-all duration-200 hover:border-white/[0.12] hover:bg-white/[0.08]"
+                      className={wizardSecondaryButtonClass}
                     >
                       <ChevronLeft className="h-4 w-4" />
                       上一步
@@ -469,7 +497,11 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
                       onClick={() => {
                         setStep((current) => Math.min(3, current + 1) as Step);
                       }}
-                      className="inline-flex h-12 items-center gap-2 rounded-full bg-[linear-gradient(135deg,#8b5cf6,#3b82f6)] px-6 text-sm font-semibold text-white shadow-[0_12px_36px_rgba(139,92,246,0.28)] transition-all duration-200 hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:scale-100"
+                      className={wizardPrimaryButtonClass}
+                      style={{
+                        background: "linear-gradient(135deg, var(--accent-2), var(--accent))",
+                        boxShadow: "var(--shadow-md)",
+                      }}
                     >
                       下一步
                       <ChevronRight className="h-4 w-4" />
@@ -481,7 +513,11 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
                       onClick={() => {
                         void handleCreateGroup();
                       }}
-                      className="inline-flex h-12 items-center gap-2 rounded-full bg-[linear-gradient(135deg,#8b5cf6,#3b82f6)] px-6 text-sm font-semibold text-white shadow-[0_12px_36px_rgba(139,92,246,0.28)] transition-all duration-200 hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:scale-100"
+                      className={wizardPrimaryButtonClass}
+                      style={{
+                        background: "linear-gradient(135deg, var(--accent-2), var(--accent))",
+                        boxShadow: "var(--shadow-md)",
+                      }}
                     >
                       {isSubmitting ? "创建中..." : "创建项目组"}
                     </button>

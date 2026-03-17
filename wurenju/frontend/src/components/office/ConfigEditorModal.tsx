@@ -366,9 +366,16 @@ export function ConfigEditorModal({
   return (
     <>
       <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-        <DialogContent className="h-[min(80vh,760px)] overflow-hidden rounded-[24px] border border-white/10 bg-[rgba(10,10,10,0.9)] p-0 text-[var(--color-text-primary)] shadow-[0_30px_120px_rgba(0,0,0,0.55)] backdrop-blur-2xl sm:max-w-[min(1180px,92vw)]">
+        <DialogContent
+          className="h-[min(80vh,760px)] overflow-hidden rounded-[24px] border border-[var(--border)] p-0 text-[var(--color-text-primary)] backdrop-blur-2xl sm:max-w-[min(1180px,92vw)]"
+          style={{
+            background:
+              "linear-gradient(180deg, color-mix(in srgb, var(--card) 96%, transparent), color-mix(in srgb, var(--panel-strong) 96%, transparent))",
+            boxShadow: "var(--shadow-xl)",
+          }}
+        >
           <div className="flex h-full min-h-0 flex-col">
-            <div className="border-b border-white/10 px-6 py-5">
+            <div className="border-b border-[var(--border)] px-6 py-5">
               <DialogHeader className="gap-2 text-left">
                 <DialogTitle className="text-2xl tracking-tight">
                   ⚙️ 核心配置 — openclaw.json
@@ -382,7 +389,7 @@ export function ConfigEditorModal({
             <div className="flex min-h-0 flex-1">
               <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                 {loadedHistoryVersion ? (
-                  <div className="mx-6 mt-4 rounded-2xl border border-[rgba(255,107,53,0.25)] bg-[rgba(255,107,53,0.12)] px-4 py-3 text-sm text-[var(--color-text-primary)]">
+                  <div className="mx-6 mt-4 rounded-2xl border border-[var(--color-brand)] bg-[var(--accent-subtle)] px-4 py-3 text-sm text-[var(--color-text-primary)]">
                     已加载历史版本（{formatConfigTimestamp(loadedHistoryVersion.timestamp)}
                     ），点击保存以应用
                   </div>
@@ -390,22 +397,22 @@ export function ConfigEditorModal({
 
                 <div className="min-h-0 flex-1 px-6 py-5">
                   {loading ? (
-                    <div className="flex h-full items-center justify-center rounded-[22px] border border-white/10 bg-[var(--color-bg-card)]">
+                    <div className="flex h-full items-center justify-center rounded-[22px] border border-[var(--border)] bg-[var(--color-bg-card)]">
                       <div className="flex items-center gap-3 text-sm text-[var(--color-text-secondary)]">
                         <Loader2 className="h-5 w-5 animate-spin" />
                         正在读取 openclaw.json...
                       </div>
                     </div>
                   ) : loadError ? (
-                    <div className="flex h-full items-center justify-center rounded-[22px] border border-red-500/30 bg-red-500/10 px-6">
+                    <div className="flex h-full items-center justify-center rounded-[22px] border border-[var(--danger)] bg-[var(--danger-subtle)] px-6">
                       <div className="max-w-lg text-center">
-                        <div className="text-base font-semibold text-red-200">读取失败</div>
-                        <p className="mt-2 text-sm leading-7 text-red-100/90">{loadError}</p>
+                        <div className="text-base font-semibold text-[var(--danger)]">读取失败</div>
+                        <p className="mt-2 text-sm leading-7 text-[var(--text)]">{loadError}</p>
                       </div>
                     </div>
                   ) : (
-                    <div className="flex h-full flex-col rounded-[22px] border border-white/10 bg-[var(--color-bg-card)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-                      <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                    <div className="flex h-full flex-col rounded-[22px] border border-[var(--border)] bg-[var(--color-bg-card)]">
+                      <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
                         <div className="text-xs uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">
                           JSON5 编辑器
                         </div>
@@ -424,15 +431,15 @@ export function ConfigEditorModal({
                         onKeyDown={handleEditorKeyDown}
                         spellCheck={false}
                         wrap="off"
-                        className="min-h-0 flex-1 resize-none bg-[#1a1a1a] px-5 py-4 font-mono text-sm leading-7 text-gray-200 outline-none"
+                        className="min-h-0 flex-1 resize-none bg-[var(--bg-accent)] px-5 py-4 font-mono text-sm leading-7 text-[var(--color-text-primary)] outline-none"
                       />
                     </div>
                   )}
                 </div>
 
-                <div className="border-t border-white/10 px-6 py-4">
+                <div className="border-t border-[var(--border)] px-6 py-4">
                   {validationError ? (
-                    <div className="mb-4 flex items-start gap-3 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+                    <div className="mb-4 flex items-start gap-3 rounded-2xl border border-[var(--danger)] bg-[var(--danger-subtle)] px-4 py-3 text-sm text-[var(--text)]">
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-danger)]" />
                       <div>{validationError}</div>
                     </div>
@@ -444,7 +451,7 @@ export function ConfigEditorModal({
                         type="button"
                         onClick={() => setHistoryPanelOpen((current) => !current)}
                         disabled={loading}
-                        className="inline-flex h-11 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-white/20 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex h-11 items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-4 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <FolderClock className="h-4 w-4" />
                         加载历史版本
@@ -460,7 +467,7 @@ export function ConfigEditorModal({
                         type="button"
                         onClick={handleFormat}
                         disabled={loading || saving || Boolean(loadError)}
-                        className="inline-flex h-11 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-white/20 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex h-11 items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-4 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <WandSparkles className="h-4 w-4" />
                         格式优化
@@ -470,7 +477,7 @@ export function ConfigEditorModal({
                         type="button"
                         onClick={attemptClose}
                         disabled={saving}
-                        className="inline-flex h-11 items-center rounded-xl border border-white/10 bg-white/[0.04] px-5 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-white/20 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex h-11 items-center rounded-xl border border-[var(--border)] bg-[var(--card)] px-5 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         取消
                       </button>
@@ -482,11 +489,11 @@ export function ConfigEditorModal({
                         }}
                         disabled={loading || saving || Boolean(loadError) || !hasUnsavedChanges}
                         className={cn(
-                          "inline-flex h-11 items-center gap-2 rounded-xl px-5 text-sm font-semibold text-white transition-all disabled:cursor-not-allowed disabled:opacity-60",
+                          "inline-flex h-11 items-center gap-2 rounded-xl px-5 text-sm font-semibold text-[var(--accent-foreground)] transition-all disabled:cursor-not-allowed disabled:opacity-60",
                           hasUnsavedChanges
-                            ? "bg-[var(--color-brand)] shadow-[0_0_0_1px_rgba(255,107,53,0.35),0_12px_30px_rgba(255,107,53,0.22)] hover:bg-[var(--color-brand-light)]"
-                            : "bg-white/10 hover:bg-white/15",
-                          hasUnsavedChanges ? "ring-2 ring-[rgba(255,107,53,0.35)]" : "",
+                            ? "bg-[var(--color-brand)] shadow-[var(--shadow-md)] hover:bg-[var(--color-brand-light)]"
+                            : "bg-[var(--muted-strong)] hover:brightness-110",
+                          hasUnsavedChanges ? "ring-2 ring-[var(--accent-glow)]" : "",
                         )}
                       >
                         {saving ? (
@@ -521,15 +528,15 @@ export function ConfigEditorModal({
           closeModal();
         }}
         icon="⚠️"
-        iconBgColor="bg-amber-50 dark:bg-amber-500/10"
-        iconTextColor="text-amber-500"
+        iconBgColor="bg-[var(--warn-subtle)]"
+        iconTextColor="text-[var(--warn)]"
         title="未保存的修改"
         subtitle="关闭后当前编辑内容会丢失"
         description="你有未保存的配置修改，关闭后将丢失。"
         cancelText="继续编辑"
-        cancelClassName="border-[var(--color-brand)] bg-[var(--color-brand)] text-white hover:border-[var(--color-brand-light)] hover:bg-[var(--color-brand-light)] dark:border-[var(--color-brand)] dark:bg-[var(--color-brand)] dark:text-white dark:hover:border-[var(--color-brand-light)] dark:hover:bg-[var(--color-brand-light)]"
+        cancelClassName="border-[var(--color-brand)] bg-[var(--color-brand)] text-[var(--accent-foreground)] hover:border-[var(--color-brand-light)] hover:bg-[var(--color-brand-light)]"
         confirmText="放弃修改"
-        confirmColor="bg-zinc-700 hover:bg-zinc-600"
+        confirmColor="bg-[var(--muted-strong)] hover:brightness-110"
       />
     </>
   );

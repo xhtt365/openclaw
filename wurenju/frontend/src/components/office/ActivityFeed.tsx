@@ -1,54 +1,53 @@
-import { memo } from "react"
-import { AnimatePresence, motion } from "framer-motion"
-import type { OfficeActivityItem, OfficeActivityType } from "@/stores/officeStore"
+import { AnimatePresence, motion } from "framer-motion";
+import { memo } from "react";
+import type { OfficeActivityItem, OfficeActivityType } from "@/stores/officeStore";
 
 type ActivityFeedProps = {
-  items: OfficeActivityItem[]
-  connected: boolean
-}
+  items: OfficeActivityItem[];
+  connected: boolean;
+};
 
 function formatClock(time: number) {
   return new Date(time).toLocaleTimeString("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  })
+  });
 }
 
 function resolveColor(type: OfficeActivityType) {
   if (type === "executing") {
-    return "text-amber-400"
+    return "text-[var(--status-working)]";
   }
 
   if (type === "done") {
-    return "text-emerald-400"
+    return "text-[var(--status-online)]";
   }
 
   if (type === "error") {
-    return "text-red-400"
+    return "text-[var(--status-error)]";
   }
 
   if (type === "system") {
-    return "text-sky-400"
+    return "text-[var(--info)]";
   }
 
-  return "text-gray-500"
+  return "text-[var(--color-text-secondary)]";
 }
 
 function ActivityFeedInner({ items, connected }: ActivityFeedProps) {
   return (
-    <section className="flex h-full min-h-0 flex-1 flex-col rounded-[24px] border border-white/[0.06] bg-white/[0.03] backdrop-blur-xl">
-      <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
+    <section className="flex h-full min-h-0 flex-1 flex-col rounded-[24px] border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] backdrop-blur-xl">
+      <div className="flex items-center justify-between border-b border-[var(--divider)] px-5 py-4">
         <h2 className="text-[22px] font-semibold tracking-tight text-[var(--color-text-primary)]">
           ✨ 动态 Activity
         </h2>
         <span
-          className={[
-            "h-3 w-3 rounded-full",
-            connected
-              ? "animate-pulse bg-emerald-400 shadow-[0_0_14px_rgba(16,185,129,0.55)]"
-              : "bg-gray-600",
-          ].join(" ")}
+          className={connected ? "h-3 w-3 animate-pulse rounded-full" : "h-3 w-3 rounded-full"}
+          style={{
+            backgroundColor: connected ? "var(--status-online)" : "var(--status-idle)",
+            boxShadow: connected ? "0 0 14px var(--surface-success-border)" : "none",
+          }}
         />
       </div>
 
@@ -76,14 +75,14 @@ function ActivityFeedInner({ items, connected }: ActivityFeedProps) {
             </div>
           </AnimatePresence>
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-gray-500/80">
+          <div className="flex h-full items-center justify-center text-sm text-[var(--color-text-secondary)]">
             当前暂无动态日志
           </div>
         )}
       </div>
     </section>
-  )
+  );
 }
 
-export const ActivityFeed = memo(ActivityFeedInner)
-ActivityFeed.displayName = "ActivityFeed"
+export const ActivityFeed = memo(ActivityFeedInner);
+ActivityFeed.displayName = "ActivityFeed";

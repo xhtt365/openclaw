@@ -12,7 +12,7 @@ type TopBarProps = {
 };
 
 const ACTION_BUTTON_CLASS_NAME =
-  "inline-flex h-11 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-[var(--color-text-primary)] shadow-[0_12px_30px_rgba(15,23,42,0.12)] transition-all duration-150";
+  "inline-flex h-11 items-center gap-2 rounded-lg border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] px-4 text-sm font-semibold text-[var(--color-text-primary)] shadow-[var(--shadow-sm)] transition-all duration-150";
 
 export function TopBar({
   isFullscreen,
@@ -30,7 +30,7 @@ export function TopBar({
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex h-11 w-11 items-center justify-center rounded-full text-[var(--color-text-secondary)] transition-colors hover:bg-white/6 hover:text-[var(--color-text-primary)]"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-full text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--surface-soft-strong)] hover:text-[var(--color-text-primary)]"
           aria-label="返回主聊天页"
         >
           <ArrowLeft className="h-5 w-5" />
@@ -55,7 +55,7 @@ export function TopBar({
           type="button"
           onClick={onRestart}
           disabled={restartDisabled}
-          className={`${ACTION_BUTTON_CLASS_NAME} ${restartDisabled ? "cursor-not-allowed opacity-70" : "hover:border-white/20 hover:bg-white/[0.08]"}`}
+          className={`${ACTION_BUTTON_CLASS_NAME} ${restartDisabled ? "cursor-not-allowed opacity-70" : "hover:border-[var(--surface-brand-border)] hover:bg-[var(--surface-brand-soft)]"}`}
         >
           <RefreshCw className={`h-4 w-4 ${isRestarting ? "animate-spin" : ""}`} />
           {isRestarting ? "重启中…" : "重启网关"}
@@ -64,7 +64,7 @@ export function TopBar({
           type="button"
           onClick={onOpenConfigEditor}
           disabled={configDisabled}
-          className={`${ACTION_BUTTON_CLASS_NAME} ${configDisabled ? "cursor-not-allowed opacity-70" : "hover:border-white/20 hover:bg-white/[0.08]"}`}
+          className={`${ACTION_BUTTON_CLASS_NAME} ${configDisabled ? "cursor-not-allowed opacity-70" : "hover:border-[var(--surface-brand-border)] hover:bg-[var(--surface-brand-soft)]"}`}
         >
           <Settings2 className="h-4 w-4" />
           核心配置
@@ -77,7 +77,7 @@ export function TopBar({
           <SlidersHorizontal className="h-4 w-4" />
           模型配置
         </button>
-        <div className="mx-1 h-8 w-px bg-white/10" />
+        <div className="mx-1 h-8 w-px bg-[var(--divider)]" />
         <button
           type="button"
           onClick={onToggleFullscreen}

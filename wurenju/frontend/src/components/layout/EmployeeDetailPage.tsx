@@ -553,17 +553,17 @@ export function EmployeeDetailPage() {
         }}
         loading={switchingFile}
         icon="⚠️"
-        iconBgColor="bg-amber-500/20"
-        iconTextColor="text-amber-400"
+        iconBgColor="bg-[var(--warn-subtle)]"
+        iconTextColor="text-[var(--warn)]"
         title="切换文件"
         subtitle="检测到未保存修改"
         description="当前文件还有未保存的内容，继续切换会保留这些修改在编辑区之外，不会自动写入磁盘。确定继续切换吗？"
         confirmText="继续切换"
-        confirmColor="bg-amber-600 hover:bg-amber-500"
+        confirmColor="bg-[var(--warn)] hover:brightness-110"
       />
 
       {showSavedToast ? (
-        <div className="pointer-events-none absolute bottom-6 right-6 rounded-xl border border-emerald-400/20 bg-emerald-500/15 px-4 py-3 text-sm font-medium text-emerald-100 shadow-[0_16px_48px_rgba(16,185,129,0.18)] backdrop-blur-xl">
+        <div className="pointer-events-none absolute bottom-6 right-6 rounded-xl border border-[var(--ok)] bg-[var(--ok-subtle)] px-4 py-3 text-sm font-medium text-[var(--ok)] shadow-[var(--shadow-md)] backdrop-blur-xl">
           ✅ 已保存
         </div>
       ) : null}

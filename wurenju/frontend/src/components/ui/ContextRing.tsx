@@ -29,12 +29,12 @@ function getProgressPercent(currentUsed: number, total: number) {
 
 function getRingStrokeClass(progressPercent: number) {
   if (progressPercent > 80) {
-    return "stroke-red-500";
+    return "stroke-[var(--danger)]";
   }
   if (progressPercent >= 50) {
-    return "stroke-amber-500";
+    return "stroke-[var(--warn)]";
   }
-  return "stroke-slate-500 dark:stroke-slate-300";
+  return "stroke-[var(--muted-strong)]";
 }
 
 export function ContextRing({
@@ -64,7 +64,7 @@ export function ContextRing({
       onMouseLeave={() => setIsTooltipVisible(false)}
     >
       <div
-        className="rounded-full bg-gray-50/80 p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 dark:bg-zinc-800/60 dark:focus-visible:ring-amber-300/40"
+        className="rounded-full bg-[var(--bg-content)] p-0.5 outline-none transition-[background-color,box-shadow] focus-visible:ring-2 focus-visible:ring-[var(--focus)]"
         role="progressbar"
         aria-label="当前上下文用量"
         aria-valuemin={0}
@@ -83,7 +83,7 @@ export function ContextRing({
           width={size}
         >
           <circle
-            className="fill-none stroke-gray-200 dark:stroke-zinc-700"
+            className="fill-none stroke-[var(--border)]"
             cx={size / 2}
             cy={size / 2}
             r={radius}
@@ -92,7 +92,7 @@ export function ContextRing({
           <circle
             className={cn(
               "fill-none transition-[stroke-dashoffset,stroke] duration-300 ease-out",
-              getRingStrokeClass(progressPercent)
+              getRingStrokeClass(progressPercent),
             )}
             cx={size / 2}
             cy={size / 2}
@@ -106,7 +106,7 @@ export function ContextRing({
       </div>
 
       {isTooltipVisible ? (
-        <div className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-3 -translate-x-1/2 rounded-lg border border-white/10 bg-gray-800 px-3 py-2 text-xs text-white shadow-2xl dark:bg-zinc-800">
+        <div className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-3 -translate-x-1/2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-xs text-[var(--text-strong)] shadow-[var(--shadow-lg)]">
           <div className="space-y-1 whitespace-nowrap">
             <div>
               上下文：已用 {formatTokenCount(currentUsed)} / {totalLabel} ({percentLabel}%)

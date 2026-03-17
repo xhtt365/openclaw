@@ -149,8 +149,8 @@ function ModelOptionCard({
       className={cn(
         "flex w-full items-start justify-between gap-4 rounded-2xl border px-4 py-4 text-left transition-all",
         selected
-          ? "border-orange-500 bg-orange-500/12 shadow-[0_0_0_1px_rgba(249,115,22,0.2)]"
-          : "border-transparent bg-[var(--color-bg-card)] hover:border-white/20 hover:bg-[var(--color-bg-hover)]",
+          ? "border-[var(--brand-primary)] bg-[var(--brand-subtle)] shadow-[0_0_0_1px_var(--surface-brand-border)]"
+          : "border-transparent bg-[var(--color-bg-card)] hover:border-[var(--surface-brand-border)] hover:bg-[var(--color-bg-hover)]",
       )}
       aria-pressed={selected}
     >
@@ -158,11 +158,11 @@ function ModelOptionCard({
         <div className="truncate text-base font-semibold text-[var(--color-text-primary)]">
           {model.name}
         </div>
-        <div className="mt-1 truncate text-sm text-gray-400">{provider}</div>
+        <div className="mt-1 truncate text-sm text-[var(--color-text-secondary)]">{provider}</div>
       </div>
 
       {current ? (
-        <span className="shrink-0 rounded-full border border-orange-500/30 bg-orange-500/10 px-2.5 py-1 text-[11px] text-orange-200">
+        <span className="shrink-0 rounded-full border border-[var(--surface-brand-border)] bg-[var(--surface-brand-soft)] px-2.5 py-1 text-[11px] text-[var(--surface-brand-text)]">
           当前使用
         </span>
       ) : null}
@@ -305,7 +305,7 @@ export function ModelSelectModal({
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-      <DialogContent className="overflow-hidden rounded-[20px] border-[var(--color-border)] bg-gray-900/95 p-0 text-[var(--color-text-primary)] shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:max-w-3xl">
+      <DialogContent className="overflow-hidden rounded-[20px] border-[var(--modal-shell-border)] bg-[var(--modal-shell-bg)] p-0 text-[var(--color-text-primary)] shadow-[var(--modal-shell-shadow)] backdrop-blur-xl sm:max-w-3xl">
         <div className="border-b border-border px-6 py-5">
           <DialogHeader className="gap-3 text-left">
             <DialogTitle className="text-xl">🤖 配置模型 — {agentName}</DialogTitle>
@@ -469,12 +469,14 @@ export function ModelSelectModal({
                     value={jsonInput}
                     onChange={(event) => setJsonInput(event.target.value)}
                     spellCheck={false}
-                    className="mt-3 min-h-[320px] w-full resize-y rounded-2xl border border-[var(--color-border)] bg-gray-950 px-4 py-4 font-mono text-sm leading-7 text-gray-100 outline-none transition-[border-color,box-shadow] focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
+                    className="mt-3 min-h-[320px] w-full resize-y rounded-2xl border border-[var(--color-border)] bg-[var(--modal-code-bg)] px-4 py-4 font-mono text-sm leading-7 text-[var(--modal-code-text)] outline-none transition-[border-color,box-shadow] focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-subtle)]"
                   />
                   <div className="mt-3 text-xs text-[var(--color-text-secondary)]">
                     如果该 provider 已存在，将只追加模型，不会覆盖现有的 baseUrl、协议和 API
                     Key。第三方 OpenAI 兼容 responses 中转站如果误写成{" "}
-                    <code className="mx-1 rounded bg-black/30 px-1 py-0.5">openai</code>
+                    <code className="mx-1 rounded bg-[var(--color-bg-code)] px-1 py-0.5">
+                      openai
+                    </code>
                     ，前端会自动改成自定义 provider 名，避免命中 OpenClaw 的固定 OpenAI 路径。
                   </div>
                   {addError ? (

@@ -8,6 +8,7 @@ import { ConfigEditorModal } from "@/components/office/ConfigEditorModal";
 import { ScheduledTasks } from "@/components/office/ScheduledTasks";
 import { TopBar } from "@/components/office/TopBar";
 import { ZoneContainer } from "@/components/office/ZoneContainer";
+import { Toaster } from "@/components/ui/toaster";
 import { toast } from "@/hooks/use-toast";
 import { gateway } from "@/services/gateway";
 import { useAgentStore } from "@/stores/agentStore";
@@ -123,8 +124,14 @@ export function OfficePage() {
 
   return (
     <>
-      <div className="flex h-screen flex-col overflow-hidden bg-[var(--color-bg-primary)]">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,107,53,0.08),transparent_34%)]" />
+      <div className="relative flex h-screen flex-col overflow-hidden bg-[var(--color-bg-primary)]">
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(circle at top, color-mix(in srgb, var(--accent) 8%, transparent), transparent 34%)",
+          }}
+        />
 
         <TopBar
           isFullscreen={isFullscreen}
@@ -233,6 +240,7 @@ export function OfficePage() {
             </div>
           </div>
         </div>
+        <Toaster className="z-[120]" />
       </div>
       <ConfigEditorModal
         open={isConfigEditorOpen}
@@ -252,13 +260,13 @@ export function OfficePage() {
         }}
         loading={isRestartingGateway}
         icon="🦞"
-        iconBgColor="bg-orange-50 dark:bg-orange-500/10"
-        iconTextColor="text-orange-500"
+        iconBgColor="bg-[var(--warn-subtle)]"
+        iconTextColor="text-[var(--warn)]"
         title="重启网关"
         subtitle="网关服务将立即重新加载"
         description="确定要重启网关吗？重启期间连接会短暂断开（约 1-2 秒）。"
         confirmText="确认重启"
-        confirmColor="bg-orange-500 hover:bg-orange-400"
+        confirmColor="bg-[var(--warn)] hover:brightness-110"
       />
     </>
   );

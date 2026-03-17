@@ -55,23 +55,29 @@ export function GroupAnnouncementModal({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="max-w-3xl overflow-hidden rounded-[28px] border border-white/12 bg-[rgba(8,8,12,0.92)] p-0 text-[var(--color-text-primary)] shadow-[0_28px_120px_rgba(0,0,0,0.45)] backdrop-blur-2xl"
+        className="max-w-3xl overflow-hidden rounded-[28px] border border-[var(--modal-shell-border)] bg-[var(--modal-shell-bg)] p-0 text-[var(--color-text-primary)] shadow-[var(--modal-shell-shadow)] backdrop-blur-2xl"
       >
         <div className="relative">
-          <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.22),transparent_58%),radial-gradient(circle_at_top_right,rgba(244,114,182,0.12),transparent_42%)]" />
+          <div
+            className="absolute inset-x-0 top-0 h-24"
+            style={{
+              background:
+                "radial-gradient(circle at top left, var(--surface-brand-soft), transparent 58%), radial-gradient(circle at top right, var(--brand-glow), transparent 42%)",
+            }}
+          />
 
-          <div className="relative flex items-start justify-between gap-4 border-b border-white/8 px-6 pb-5 pt-6">
+          <div className="relative flex items-start justify-between gap-4 border-b border-[var(--divider)] px-6 pb-5 pt-6">
             <div className="flex min-w-0 items-center gap-4">
-              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-amber-300/20 bg-[linear-gradient(135deg,rgba(251,191,36,0.32),rgba(249,115,22,0.22))] text-amber-200 shadow-[0_16px_40px_rgba(249,115,22,0.18)]">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-[var(--surface-brand-border)] bg-[var(--surface-brand-soft)] text-[var(--surface-brand-text)] shadow-[var(--shadow-sm)]">
                 <Megaphone className="h-6 w-6" />
               </div>
 
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-[22px] font-semibold tracking-tight text-white">
+                  <span className="text-[22px] font-semibold tracking-tight text-[var(--color-text-primary)]">
                     群公告
                   </span>
-                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-[var(--color-text-secondary)]">
+                  <span className="rounded-full border border-[var(--modal-shell-border)] bg-[var(--surface-soft-strong)] px-2 py-1 text-[11px] text-[var(--color-text-secondary)]">
                     运行时注入
                   </span>
                 </div>
@@ -84,7 +90,7 @@ export function GroupAnnouncementModal({
             <button
               type="button"
               onClick={onClose}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-[var(--color-text-secondary)] transition-all duration-200 hover:border-white/16 hover:bg-white/[0.08] hover:text-white"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--modal-shell-border)] bg-[var(--surface-soft)] text-[var(--color-text-secondary)] transition-all duration-200 hover:border-[var(--surface-brand-border)] hover:bg-[var(--surface-brand-soft)] hover:text-[var(--color-text-primary)]"
               aria-label="关闭群公告弹窗"
             >
               <X className="h-4 w-4" />
@@ -92,7 +98,7 @@ export function GroupAnnouncementModal({
           </div>
 
           <div className="px-6 py-5">
-            <div className="rounded-[24px] border border-white/10 bg-white/[0.03] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-xl">
+            <div className="rounded-[24px] border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] p-4 shadow-[var(--shadow-sm)] backdrop-blur-xl">
               <textarea
                 ref={textareaRef}
                 value={value}
@@ -112,7 +118,9 @@ export function GroupAnnouncementModal({
               <span
                 className={cn(
                   "shrink-0 text-xs tabular-nums text-[var(--color-text-secondary)]",
-                  value.length >= MAX_ANNOUNCEMENT_LENGTH ? "text-amber-200" : "",
+                  value.length >= MAX_ANNOUNCEMENT_LENGTH
+                    ? "text-[var(--surface-warning-text)]"
+                    : "",
                 )}
               >
                 {value.length}/{MAX_ANNOUNCEMENT_LENGTH}
@@ -120,18 +128,18 @@ export function GroupAnnouncementModal({
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-3 border-t border-white/8 px-6 py-5">
+          <div className="flex items-center justify-end gap-3 border-t border-[var(--divider)] px-6 py-5">
             <button
               type="button"
               onClick={onClose}
-              className="inline-flex h-11 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] px-5 text-sm font-medium text-[var(--color-text-primary)] transition-all duration-200 hover:border-white/16 hover:bg-white/[0.08]"
+              className="inline-flex h-11 items-center justify-center rounded-xl border border-[var(--modal-shell-border)] bg-[var(--surface-soft)] px-5 text-sm font-medium text-[var(--color-text-primary)] transition-all duration-200 hover:border-[var(--surface-brand-border)] hover:bg-[var(--surface-brand-soft)]"
             >
               取消
             </button>
             <button
               type="button"
               onClick={handleSave}
-              className="inline-flex h-11 items-center justify-center rounded-xl bg-[linear-gradient(135deg,#f59e0b,#f97316)] px-5 text-sm font-semibold text-white shadow-[0_18px_40px_rgba(249,115,22,0.32)] transition-all duration-200 hover:brightness-110 active:scale-[0.98]"
+              className="inline-flex h-11 items-center justify-center rounded-xl bg-[var(--brand-primary)] px-5 text-sm font-semibold text-[var(--text-inverse)] shadow-[var(--shadow-sm)] transition-all duration-200 hover:bg-[var(--brand-hover)] active:scale-[0.98]"
             >
               保存公告
             </button>

@@ -1,14 +1,14 @@
-import { memo, type ReactNode } from "react"
+import { memo, type ReactNode } from "react";
 
 type ZoneContainerProps = {
-  title: string
-  count: number
-  emptyText: string
-  hasItems: boolean
-  className?: string
-  contentClassName?: string
-  children: ReactNode
-}
+  title: string;
+  count: number;
+  emptyText: string;
+  hasItems: boolean;
+  className?: string;
+  contentClassName?: string;
+  children: ReactNode;
+};
 
 function ZoneContainerInner({
   title,
@@ -22,7 +22,7 @@ function ZoneContainerInner({
   return (
     <section
       className={[
-        "flex min-h-0 flex-col rounded-[24px] border border-white/[0.06] bg-white/[0.03] p-4 backdrop-blur-xl",
+        "flex min-h-0 flex-col rounded-[24px] border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] p-4 backdrop-blur-xl",
         className,
       ].join(" ")}
     >
@@ -30,7 +30,7 @@ function ZoneContainerInner({
         <h2 className="text-[22px] font-semibold tracking-tight text-[var(--color-text-primary)]">
           {title}
         </h2>
-        <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs text-[var(--color-text-secondary)]">
+        <span className="rounded-full bg-[var(--surface-soft-strong)] px-2 py-0.5 text-xs text-[var(--color-text-secondary)]">
           {count}
         </span>
       </div>
@@ -41,14 +41,14 @@ function ZoneContainerInner({
             {children}
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-gray-500/80">
+          <div className="flex h-full items-center justify-center text-sm text-[var(--color-text-secondary)]">
             {emptyText}
           </div>
         )}
       </div>
     </section>
-  )
+  );
 }
 
-export const ZoneContainer = memo(ZoneContainerInner)
-ZoneContainer.displayName = "ZoneContainer"
+export const ZoneContainer = memo(ZoneContainerInner);
+ZoneContainer.displayName = "ZoneContainer";

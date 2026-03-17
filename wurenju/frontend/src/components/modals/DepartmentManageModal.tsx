@@ -108,8 +108,8 @@ function IconButton({
       className={cn(
         "flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
         danger
-          ? "text-red-500 hover:bg-red-50 hover:text-red-600"
-          : "text-[var(--color-text-secondary)] hover:bg-gray-100 hover:text-[var(--color-text-primary)]",
+          ? "text-[var(--danger)] hover:bg-[var(--danger-subtle)] hover:text-[var(--danger)]"
+          : "text-[var(--color-text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--color-text-primary)]",
       )}
       aria-label={label}
       title={label}
@@ -127,7 +127,7 @@ function EmojiPicker({
   selectedIcon: string;
 }) {
   return (
-    <div className="absolute left-0 top-full z-20 mt-2 w-[220px] rounded-2xl border border-gray-200 bg-white p-3 shadow-[0_20px_60px_rgba(15,23,42,0.14)]">
+    <div className="absolute left-0 top-full z-20 mt-2 w-[220px] rounded-2xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-[var(--shadow-lg)]">
       <div className="grid grid-cols-7 gap-2">
         {DEPARTMENT_EMOJIS.map((icon) => (
           <button
@@ -135,8 +135,8 @@ function EmojiPicker({
             type="button"
             onClick={() => onSelect(icon)}
             className={cn(
-              "flex h-9 w-9 items-center justify-center rounded-xl text-lg transition-colors hover:bg-gray-100",
-              selectedIcon === icon && "bg-orange-50 ring-1 ring-orange-300",
+              "flex h-9 w-9 items-center justify-center rounded-xl text-lg transition-colors hover:bg-[var(--bg-hover)]",
+              selectedIcon === icon && "bg-[var(--accent-subtle)] ring-1 ring-[var(--accent)]",
             )}
             aria-label={`选择图标 ${icon}`}
           >
@@ -181,8 +181,8 @@ function DraftRow({
   }
 
   return (
-    <div className="group relative flex items-center gap-3 rounded-2xl border border-orange-200 bg-orange-50/60 px-3 py-3">
-      <div className="flex h-9 w-9 items-center justify-center rounded-xl text-gray-300">
+    <div className="group relative flex items-center gap-3 rounded-2xl border border-[var(--accent)] bg-[var(--accent-subtle)] px-3 py-3">
+      <div className="flex h-9 w-9 items-center justify-center rounded-xl text-[var(--muted)]">
         <GripVertical className="h-4 w-4" />
       </div>
 
@@ -190,7 +190,7 @@ function DraftRow({
         <button
           type="button"
           onClick={onTogglePicker}
-          className="flex h-10 w-10 items-center justify-center rounded-2xl border border-gray-200 bg-white text-[20px] transition-colors hover:border-orange-300 hover:bg-orange-50"
+          className="flex h-10 w-10 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--card)] text-[20px] transition-colors hover:border-[var(--accent)] hover:bg-[var(--bg-hover)]"
           aria-label="选择部门图标"
         >
           <span aria-hidden="true">{draft.icon}</span>
@@ -221,7 +221,7 @@ function DraftRow({
         onKeyDown={handleInputKeyDown}
         placeholder="输入部门名称"
         autoFocus
-        className="h-10 min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 text-sm text-[var(--color-text-primary)] outline-none transition-[border-color,box-shadow] focus:border-orange-300 focus:shadow-[0_0_0_1px_rgba(251,146,60,0.25)]"
+        className="h-10 min-w-0 flex-1 rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm text-[var(--color-text-primary)] outline-none transition-[border-color,box-shadow] focus:border-[var(--accent)] focus:shadow-[0_0_0_1px_var(--accent-glow)]"
       />
 
       <div className="flex items-center gap-1">
@@ -229,7 +229,7 @@ function DraftRow({
         <button
           type="button"
           onClick={onCancel}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors hover:bg-gray-100 hover:text-[var(--color-text-primary)]"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--color-text-primary)]"
           aria-label="取消编辑"
           title="取消编辑"
         >
@@ -399,17 +399,17 @@ export function DepartmentManageModal({
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent
           showCloseButton={false}
-          className="w-[min(480px,calc(100vw-2rem))] max-w-[480px] gap-0 overflow-hidden rounded-[28px] border border-gray-200 bg-white p-0 text-gray-900 shadow-[0_32px_100px_rgba(15,23,42,0.2)]"
+          className="w-[min(480px,calc(100vw-2rem))] max-w-[480px] gap-0 overflow-hidden rounded-[28px] border border-[var(--border)] bg-[var(--card)] p-0 text-[var(--text-strong)] shadow-[var(--shadow-xl)]"
         >
           <div className="flex max-h-[70vh] flex-col">
-            <div className="flex items-center justify-between border-b border-gray-100 px-6 py-5">
+            <div className="flex items-center justify-between border-b border-[var(--border)] px-6 py-5">
               <DialogTitle className="text-[22px] font-semibold tracking-tight">
                 部门管理
               </DialogTitle>
               <button
                 type="button"
                 onClick={closeModal}
-                className="flex h-9 w-9 items-center justify-center rounded-xl text-[var(--color-text-secondary)] transition-colors hover:bg-gray-100 hover:text-[var(--color-text-primary)]"
+                className="flex h-9 w-9 items-center justify-center rounded-xl text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--color-text-primary)]"
                 aria-label="关闭部门管理"
               >
                 <X className="h-5 w-5" />
@@ -433,9 +433,9 @@ export function DepartmentManageModal({
                         onDragOver={(event) => handleDragOver(event, department.id)}
                         onDrop={(event) => handleDrop(event, department.id)}
                         className={cn(
-                          "rounded-2xl border border-gray-200 bg-white transition-[border-color,box-shadow,opacity]",
+                          "rounded-2xl border border-[var(--border)] bg-[var(--card)] transition-[border-color,box-shadow,opacity]",
                           isDropTarget &&
-                            "border-orange-300 shadow-[0_0_0_1px_rgba(251,146,60,0.16)]",
+                            "border-[var(--accent)] shadow-[0_0_0_1px_var(--accent-glow)]",
                           draggingDepartmentId === department.id && "opacity-60",
                         )}
                       >
@@ -465,14 +465,14 @@ export function DepartmentManageModal({
                                 setDraggingDepartmentId(null);
                                 setDropTargetDepartmentId(null);
                               }}
-                              className="flex h-9 w-9 shrink-0 cursor-grab items-center justify-center rounded-xl text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-500 active:cursor-grabbing"
+                              className="flex h-9 w-9 shrink-0 cursor-grab items-center justify-center rounded-xl text-[var(--muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)] active:cursor-grabbing"
                               aria-label={`拖拽排序 ${department.name}`}
                               title="拖拽排序"
                             >
                               <GripVertical className="h-4 w-4" />
                             </div>
 
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gray-100 text-[20px]">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--bg-hover)] text-[20px]">
                               <span aria-hidden="true">{department.icon}</span>
                             </div>
 
@@ -480,7 +480,9 @@ export function DepartmentManageModal({
                               <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
                                 {department.name}
                               </div>
-                              <div className="mt-0.5 text-xs text-gray-400">{memberCount}人</div>
+                              <div className="mt-0.5 text-xs text-[var(--muted)]">
+                                {memberCount}人
+                              </div>
                             </div>
 
                             <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
@@ -504,7 +506,7 @@ export function DepartmentManageModal({
                     );
                   })
                 ) : (
-                  <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-5 py-10 text-center">
+                  <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--bg-accent)] px-5 py-10 text-center">
                     <div className="text-sm font-medium text-[var(--color-text-primary)]">
                       还没有部门
                     </div>
@@ -532,7 +534,7 @@ export function DepartmentManageModal({
                 <button
                   type="button"
                   onClick={startCreateDepartment}
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-orange-300 hover:bg-orange-50"
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-[var(--border-strong)] bg-[var(--bg-accent)] px-4 py-3 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-subtle)]"
                 >
                   <Plus className="h-4 w-4" />
                   新建部门
@@ -548,13 +550,13 @@ export function DepartmentManageModal({
         onClose={() => setPendingDeleteDepartment(null)}
         onConfirm={handleDeleteDepartment}
         icon="⚠️"
-        iconBgColor="bg-amber-500/20"
-        iconTextColor="text-amber-500"
+        iconBgColor="bg-[var(--warn-subtle)]"
+        iconTextColor="text-[var(--warn)]"
         title="删除部门"
         subtitle={pendingDeleteDepartment?.name ?? ""}
         description={`删除后，该部门下 ${pendingDeleteCount} 名员工将移至"未分组"`}
         confirmText="确认删除"
-        confirmColor="bg-red-500 hover:bg-red-400"
+        confirmColor="bg-[var(--danger)] hover:brightness-110"
       />
     </>
   );

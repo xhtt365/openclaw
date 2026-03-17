@@ -56,12 +56,18 @@ function MemberAvatar({
 
   return (
     <div
-      className={cn(
-        "flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-sm font-semibold",
+      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
+      style={
         human
-          ? "bg-[linear-gradient(135deg,#22c55e,#14b8a6)] text-white"
-          : "bg-[linear-gradient(135deg,#facc15,#f59e0b)] text-black",
-      )}
+          ? {
+              background: "var(--surface-success-soft)",
+              color: "var(--surface-success-text)",
+            }
+          : {
+              background: "var(--brand-primary)",
+              color: "var(--text-inverse)",
+            }
+      }
     >
       {human ? <UserRound className="h-5 w-5" /> : resolveAvatarText(name, emoji)}
     </div>
@@ -73,7 +79,7 @@ function AddAgentOption({ agent, onSelect }: { agent: Agent; onSelect: () => voi
     <button
       type="button"
       onClick={onSelect}
-      className="flex w-full items-center gap-3 rounded-[20px] border border-white/[0.06] bg-white/[0.03] px-4 py-3 text-left transition-all duration-200 hover:border-violet-400/30 hover:bg-violet-500/10"
+      className="flex w-full items-center gap-3 rounded-[20px] border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] px-4 py-3 text-left transition-all duration-200 hover:border-[var(--surface-brand-border)] hover:bg-[var(--surface-brand-soft)]"
     >
       <MemberAvatar name={agent.name} avatarUrl={agent.avatarUrl} emoji={agent.emoji} />
       <div className="min-w-0 flex-1">
@@ -84,7 +90,7 @@ function AddAgentOption({ agent, onSelect }: { agent: Agent; onSelect: () => voi
           {agent.role?.trim() || "未设置职位"}
         </div>
       </div>
-      <span className="shrink-0 text-xs font-medium text-violet-200">添加</span>
+      <span className="shrink-0 text-xs font-medium text-[var(--surface-brand-text)]">添加</span>
     </button>
   );
 }
@@ -99,7 +105,7 @@ function AgentMemberRow({
   onRemove: () => void;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-[22px] border border-white/[0.08] bg-white/[0.03] px-4 py-4 shadow-[0_14px_44px_rgba(0,0,0,0.14)] backdrop-blur-xl">
+    <div className="flex items-center gap-3 rounded-[22px] border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] px-4 py-4 shadow-[var(--shadow-sm)] backdrop-blur-xl">
       <MemberAvatar name={member.name} avatarUrl={member.avatarUrl} emoji={member.emoji} />
 
       <div className="min-w-0 flex-1">
@@ -108,7 +114,7 @@ function AgentMemberRow({
             {member.name}
           </span>
           {isLeader ? (
-            <span className="shrink-0 text-sm text-amber-300" title="群主">
+            <span className="shrink-0 text-sm text-[var(--surface-warning-text)]" title="群主">
               👑
             </span>
           ) : null}
@@ -126,8 +132,8 @@ function AgentMemberRow({
         className={cn(
           "inline-flex h-10 shrink-0 items-center justify-center rounded-full border px-3.5 text-sm font-medium transition-all duration-200",
           isLeader
-            ? "cursor-not-allowed border-white/[0.06] bg-white/[0.02] text-[var(--color-text-secondary)] opacity-50"
-            : "border-rose-400/20 bg-rose-500/10 text-rose-100 hover:border-rose-400/35 hover:bg-rose-500/16",
+            ? "cursor-not-allowed border-[var(--modal-shell-border)] bg-[var(--surface-soft)] text-[var(--color-text-secondary)] opacity-50"
+            : "border-[var(--surface-danger-border)] bg-[var(--surface-danger-soft)] text-[var(--surface-danger-text)] hover:border-[var(--surface-danger-border)] hover:bg-[var(--surface-danger-soft)]",
         )}
       >
         <UserMinus className="h-4 w-4" />
@@ -152,15 +158,15 @@ function PickerPanel({
   }
 
   return (
-    <div className="absolute inset-x-0 top-[calc(100%+12px)] z-30 rounded-[24px] border border-white/[0.08] bg-[rgba(10,10,14,0.98)] p-3 shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
+    <div className="absolute inset-x-0 top-[calc(100%+12px)] z-30 rounded-[24px] border border-[var(--modal-shell-border)] bg-[var(--modal-shell-bg)] p-3 shadow-[var(--modal-shell-shadow)] backdrop-blur-2xl">
       {isLoading ? (
-        <div className="flex h-24 items-center justify-center rounded-[20px] border border-white/[0.06] bg-white/[0.03] text-sm text-[var(--color-text-secondary)]">
+        <div className="flex h-24 items-center justify-center rounded-[20px] border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] text-sm text-[var(--color-text-secondary)]">
           正在加载可添加成员...
         </div>
       ) : null}
 
       {!isLoading && agents.length === 0 ? (
-        <div className="flex h-24 items-center justify-center rounded-[20px] border border-white/[0.06] bg-white/[0.03] text-sm text-[var(--color-text-secondary)]">
+        <div className="flex h-24 items-center justify-center rounded-[20px] border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] text-sm text-[var(--color-text-secondary)]">
           当前没有可添加的 Agent
         </div>
       ) : null}
@@ -293,17 +299,25 @@ export function GroupMemberManageModal({ open, group, onClose }: GroupMemberMana
         showCloseButton={false}
         className="max-w-3xl border-none bg-transparent p-0 text-[var(--color-text-primary)] shadow-none"
       >
-        <div className="relative rounded-[30px] border border-white/12 bg-[rgba(8,8,12,0.94)] shadow-[0_36px_140px_rgba(0,0,0,0.5)] backdrop-blur-2xl">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-28 rounded-t-[30px] bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.2),transparent_54%),radial-gradient(circle_at_top_right,rgba(139,92,246,0.2),transparent_46%)]" />
+        <div className="relative rounded-[30px] border border-[var(--modal-shell-border)] bg-[var(--modal-shell-bg)] shadow-[var(--modal-shell-shadow)] backdrop-blur-2xl">
+          <div
+            className="pointer-events-none absolute inset-x-0 top-0 h-28 rounded-t-[30px]"
+            style={{
+              background:
+                "radial-gradient(circle at top left, var(--surface-brand-soft), transparent 54%), radial-gradient(circle at top right, var(--brand-glow), transparent 46%)",
+            }}
+          />
 
-          <div className="relative flex items-start justify-between gap-4 border-b border-white/8 px-6 pb-5 pt-6">
+          <div className="relative flex items-start justify-between gap-4 border-b border-[var(--divider)] px-6 pb-5 pt-6">
             <div className="flex min-w-0 items-center gap-4">
-              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#3b82f6,#8b5cf6)] text-white shadow-[0_16px_40px_rgba(59,130,246,0.24)]">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[var(--brand-primary)] text-[var(--text-inverse)] shadow-[var(--shadow-sm)]">
                 <UsersRound className="h-7 w-7" />
               </div>
 
               <div className="min-w-0">
-                <div className="text-[24px] font-semibold tracking-tight text-white">成员管理</div>
+                <div className="text-[24px] font-semibold tracking-tight text-[var(--color-text-primary)]">
+                  成员管理
+                </div>
                 <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
                   {totalMembers} 位成员
                 </p>
@@ -313,7 +327,7 @@ export function GroupMemberManageModal({ open, group, onClose }: GroupMemberMana
             <button
               type="button"
               onClick={onClose}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-[var(--color-text-secondary)] transition-all duration-200 hover:border-white/16 hover:bg-white/[0.08] hover:text-white"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--modal-shell-border)] bg-[var(--surface-soft)] text-[var(--color-text-secondary)] transition-all duration-200 hover:border-[var(--surface-brand-border)] hover:bg-[var(--surface-brand-soft)] hover:text-[var(--color-text-primary)]"
               aria-label="关闭成员管理弹窗"
             >
               <X className="h-4 w-4" />
@@ -335,8 +349,8 @@ export function GroupMemberManageModal({ open, group, onClose }: GroupMemberMana
                 className={cn(
                   "flex h-13 w-full items-center justify-center gap-2 rounded-[20px] border px-4 text-sm font-semibold transition-all duration-200",
                   canTogglePicker
-                    ? "border-white/[0.08] bg-white/[0.04] text-white hover:border-violet-400/35 hover:bg-violet-500/10"
-                    : "cursor-not-allowed border-white/[0.06] bg-white/[0.03] text-[var(--color-text-secondary)] opacity-70",
+                    ? "border-[var(--surface-brand-border)] bg-[var(--brand-primary)] text-[var(--text-inverse)] hover:bg-[var(--brand-hover)]"
+                    : "cursor-not-allowed border-[var(--modal-shell-border)] bg-[var(--surface-soft)] text-[var(--color-text-secondary)] opacity-70",
                 )}
               >
                 <Plus className="h-4 w-4" />
@@ -363,10 +377,10 @@ export function GroupMemberManageModal({ open, group, onClose }: GroupMemberMana
               <div className="mt-4">
                 <span
                   className={cn(
-                    "inline-flex rounded-full border px-3 py-1 text-xs font-medium shadow-[0_12px_30px_rgba(0,0,0,0.2)]",
+                    "inline-flex rounded-full border px-3 py-1 text-xs font-medium shadow-[var(--shadow-sm)]",
                     feedback.tone === "success"
-                      ? "border-emerald-400/20 bg-emerald-500/12 text-emerald-100"
-                      : "border-rose-400/20 bg-rose-500/12 text-rose-100",
+                      ? "border-[var(--surface-success-border)] bg-[var(--surface-success-soft)] text-[var(--surface-success-text)]"
+                      : "border-[var(--surface-danger-border)] bg-[var(--surface-danger-soft)] text-[var(--surface-danger-text)]",
                   )}
                 >
                   {feedback.message}
@@ -381,7 +395,7 @@ export function GroupMemberManageModal({ open, group, onClose }: GroupMemberMana
                   <span>人类用户</span>
                 </div>
 
-                <div className="flex items-center gap-3 rounded-[22px] border border-white/[0.08] bg-white/[0.03] px-4 py-4 shadow-[0_14px_44px_rgba(0,0,0,0.14)] backdrop-blur-xl">
+                <div className="flex items-center gap-3 rounded-[22px] border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] px-4 py-4 shadow-[var(--shadow-sm)] backdrop-blur-xl">
                   <MemberAvatar
                     name={HUMAN_MEMBER_LABEL}
                     avatarUrl={userAvatar ?? undefined}
@@ -395,7 +409,7 @@ export function GroupMemberManageModal({ open, group, onClose }: GroupMemberMana
                     <div className="mt-1 text-sm text-[var(--color-text-secondary)]">创建者</div>
                   </div>
 
-                  <span className="inline-flex h-10 items-center rounded-full border border-white/[0.08] bg-white/[0.03] px-4 text-sm text-[var(--color-text-secondary)]">
+                  <span className="inline-flex h-10 items-center rounded-full border border-[var(--modal-shell-border)] bg-[var(--surface-soft)] px-4 text-sm text-[var(--color-text-secondary)]">
                     不可移除
                   </span>
                 </div>
