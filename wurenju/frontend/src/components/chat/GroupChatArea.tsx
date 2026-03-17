@@ -9,21 +9,14 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import {
-  memo,
-  type ChangeEvent,
-  type WheelEvent,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, type WheelEvent, useEffect, useMemo, useRef, useState } from "react";
 import { GroupChatHeader } from "@/components/chat/GroupChatHeader";
 import { GroupMentionPopover } from "@/components/chat/GroupMentionPopover";
 import { GroupThinkingStatus } from "@/components/chat/GroupThinkingStatus";
 import { GroupWelcomeView } from "@/components/chat/GroupWelcomeView";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { matchesMessageSearch } from "@/components/chat/messageSearch";
+import { UserProfilePopover } from "@/components/chat/UserProfilePopover";
 import { ConfirmModal } from "@/components/modals/ConfirmModal";
 import { EditGroupModal } from "@/components/modals/EditGroupModal";
 import { GroupAnnouncementModal } from "@/components/modals/GroupAnnouncementModal";
@@ -53,6 +46,7 @@ import {
   type GroupMentionMatch,
 } from "@/utils/groupMention";
 import { buildGroupExportFilename, formatGroupTranscript } from "@/utils/groupTranscript";
+import { getUserProfile, subscribeToUserProfile } from "@/utils/userProfile";
 
 const EMPTY_GROUP_MESSAGES: GroupChatMessage[] = [];
 const EMPTY_THINKING_AGENTS: Map<string, ThinkingAgent> = new Map();
@@ -86,15 +80,6 @@ function getAvatarColor(value: string) {
   ] as const;
 
   return colors[hashText(value) % colors.length];
-}
-
-function readStoredAvatar() {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const value = window.localStorage.getItem("userAvatar");
-  return value && value.trim() ? value : null;
 }
 
 function resolveAgentName(message: GroupChatMessage, group: Group) {
@@ -171,11 +156,7 @@ function showGroupDesktopNotification(group: Group, message: GroupChatMessage) {
 
 function MentionChip({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="inline-flex h-7 items-center rounded-md border border-gray-200/80 bg-white px-2.5 text-[12px] font-medium text-gray-500 transition-all duration-150 hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:border-orange-400/30 dark:hover:bg-orange-500/10 dark:hover:text-orange-200"
-    >
+    <button type="button" onClick={onClick} className="group-mention-chip">
       <span>@{label}</span>
     </button>
   );
@@ -220,7 +201,8 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
   const [isUrgeModalOpen, setIsUrgeModalOpen] = useState(false);
   const [announcementDraft, setAnnouncementDraft] = useState("");
   const [urgeIntervalDraft, setUrgeIntervalDraft] = useState(group.urgeIntervalMinutes ?? 10);
-  const [userAvatar, setUserAvatar] = useState<string | null>(() => readStoredAvatar());
+  const [userProfile, setUserProfile] = useState(() => getUserProfile());
+  const [popoverAnchorRect, setPopoverAnchorRect] = useState<DOMRect | null>(null);
   const [caretPosition, setCaretPosition] = useState(0);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
@@ -228,7 +210,6 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const avatarInputRef = useRef<HTMLInputElement>(null);
   const messageViewportRef = useRef<HTMLDivElement>(null);
   const messageContentRef = useRef<HTMLDivElement>(null);
   const messageElementRefs = useRef(new Map<string, HTMLDivElement>());
@@ -507,38 +488,6 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
     console.log(`[Group] 刷新消息占位: ${message.id}`);
   }
 
-  function handleAvatarTrigger() {
-    avatarInputRef.current?.click();
-  }
-
-  function handleAvatarChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      if (typeof reader.result !== "string" || !reader.result.trim()) {
-        console.error("[Group] 用户头像读取失败: empty result");
-        return;
-      }
-
-      try {
-        window.localStorage.setItem("userAvatar", reader.result);
-        setUserAvatar(reader.result);
-        console.log("[Group] 用户头像已更新");
-      } catch (error) {
-        console.error("[Group] 保存用户头像失败:", error);
-      }
-    });
-    reader.addEventListener("error", () => {
-      console.error("[Group] 用户头像读取失败:", reader.error);
-    });
-    reader.readAsDataURL(file);
-    event.target.value = "";
-  }
-
   function handleExportHistory() {
     if (!hasMessages) {
       return;
@@ -658,6 +607,8 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
     shouldStickToBottomRef.current = true;
     hasAutoScrolledRef.current = false;
   }, [group.id]);
+
+  useEffect(() => subscribeToUserProfile(setUserProfile), []);
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
@@ -783,366 +734,362 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
   }, [group, messages]);
 
   return (
-    <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg-primary)]">
-      <GroupChatHeader
-        group={group}
-        hasAnnouncement={hasAnnouncement}
-        isUrging={isUrging}
-        isUrgePaused={isUrgePaused}
-        isSearchOpen={isSearchOpen}
-        onAnnouncementClick={handleOpenAnnouncementModal}
-        onEditGroupClick={handleOpenEditGroupModal}
-        onManageMembersClick={handleOpenMemberManageModal}
-        onResetConversationClick={() => {
-          console.log(`[Group] 打开重置对话确认弹窗: ${group.name}`);
-          setIsResetConfirmOpen(true);
-        }}
-        onSearchClick={handleToggleSearch}
-        onToggleNotifications={handleToggleNotifications}
-        onToggleSound={handleToggleSound}
-        onUrgeClick={handleOpenUrgeModal}
-      />
+    <section className="group-chat-shell">
+      <div className="group-chat-card">
+        <GroupChatHeader
+          group={group}
+          hasAnnouncement={hasAnnouncement}
+          isUrging={isUrging}
+          isUrgePaused={isUrgePaused}
+          isSearchOpen={isSearchOpen}
+          onAnnouncementClick={handleOpenAnnouncementModal}
+          onEditGroupClick={handleOpenEditGroupModal}
+          onManageMembersClick={handleOpenMemberManageModal}
+          onResetConversationClick={() => {
+            console.log(`[Group] 打开重置对话确认弹窗: ${group.name}`);
+            setIsResetConfirmOpen(true);
+          }}
+          onSearchClick={handleToggleSearch}
+          onToggleNotifications={handleToggleNotifications}
+          onToggleSound={handleToggleSound}
+          onUrgeClick={handleOpenUrgeModal}
+        />
 
-      {isSearchOpen ? (
-        <div className="border-b border-white/[0.08] bg-[rgba(10,10,14,0.86)] px-6 py-4 backdrop-blur-2xl">
-          <div className="flex items-center gap-3 rounded-[20px] border border-white/[0.08] bg-white/[0.04] px-4 py-3 shadow-[0_18px_50px_rgba(0,0,0,0.22)]">
-            <Search className="h-4 w-4 shrink-0 text-amber-200" />
-            <input
-              ref={searchInputRef}
-              value={searchQuery}
-              onChange={(event) => {
-                setSearchQuery(event.target.value);
-              }}
-              placeholder="搜索群聊历史消息"
-              className="min-w-0 flex-1 bg-transparent text-sm text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-secondary)]"
-            />
+        {isSearchOpen ? (
+          <div className="group-chat-search">
+            <div className="chat-search">
+              <Search className="chat-search__icon shrink-0" />
+              <input
+                ref={searchInputRef}
+                value={searchQuery}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                }}
+                placeholder="搜索群聊历史消息"
+                className="chat-search__input"
+              />
 
-            <span className="shrink-0 text-xs tabular-nums text-[var(--color-text-secondary)]">
+              <span className="chat-search__count">
+                {trimmedSearchQuery
+                  ? matchedMessageIds.length > 0
+                    ? `${normalizedSearchIndex + 1}/${matchedMessageIds.length}`
+                    : "0/0"
+                  : `${messages.length} 条消息`}
+              </span>
+
+              <div className="chat-search__nav">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSearchStep("prev");
+                  }}
+                  disabled={matchedMessageIds.length === 0}
+                  className="topbar-icon-btn"
+                  aria-label="上一条搜索结果"
+                >
+                  <ChevronUp className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSearchStep("next");
+                  }}
+                  disabled={matchedMessageIds.length === 0}
+                  className="topbar-icon-btn"
+                  aria-label="下一条搜索结果"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={closeSearchPanel}
+                  className="topbar-icon-btn"
+                  aria-label="关闭搜索"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            <p className="mt-2 text-xs text-[var(--muted)]">
               {trimmedSearchQuery
                 ? matchedMessageIds.length > 0
-                  ? `${normalizedSearchIndex + 1}/${matchedMessageIds.length}`
-                  : "0/0"
-                : `${messages.length} 条消息`}
-            </span>
-
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => {
-                  handleSearchStep("prev");
-                }}
-                disabled={matchedMessageIds.length === 0}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.04] text-[var(--color-text-secondary)] transition-all duration-200 hover:border-white/[0.14] hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
-                aria-label="上一条搜索结果"
-              >
-                <ChevronUp className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  handleSearchStep("next");
-                }}
-                disabled={matchedMessageIds.length === 0}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.04] text-[var(--color-text-secondary)] transition-all duration-200 hover:border-white/[0.14] hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
-                aria-label="下一条搜索结果"
-              >
-                <ChevronDown className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={closeSearchPanel}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.04] text-[var(--color-text-secondary)] transition-all duration-200 hover:border-white/[0.14] hover:bg-white/[0.08] hover:text-white"
-                aria-label="关闭搜索"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+                  ? `找到 ${matchedMessageIds.length} 条匹配消息，已自动高亮`
+                  : "没有找到匹配消息"
+                : "输入关键词后会高亮命中消息"}
+            </p>
           </div>
+        ) : null}
 
-          <p className="mt-2 text-xs text-[var(--color-text-secondary)]">
-            {trimmedSearchQuery
-              ? matchedMessageIds.length > 0
-                ? `找到 ${matchedMessageIds.length} 条匹配消息，已自动高亮`
-                : "没有找到匹配消息"
-              : "输入关键词后会高亮命中消息"}
-          </p>
-        </div>
-      ) : null}
-
-      <div
-        ref={messageViewportRef}
-        onWheelCapture={handleMessageViewportWheel}
-        onScroll={handleMessageViewportScroll}
-        className="im-scroll min-h-0 flex-1 overflow-y-auto px-6 py-8"
-      >
         <div
-          ref={messageContentRef}
-          className={cn("flex w-full flex-col gap-6", hasMessages ? "" : "min-h-full")}
+          ref={messageViewportRef}
+          onWheelCapture={handleMessageViewportWheel}
+          onScroll={handleMessageViewportScroll}
+          className="chat-thread im-scroll"
         >
-          {hasMessages ? (
-            <>
-              {messages.map((message) => {
-                const isSearchHit =
-                  trimmedSearchQuery.length > 0 &&
-                  matchesMessageSearch(
-                    [message.content, message.thinking ?? ""].filter(Boolean).join("\n"),
-                    trimmedSearchQuery,
-                  );
-                const isSearchActive = activeMatchedMessageId === message.id;
+          <div
+            ref={messageContentRef}
+            className={cn("flex w-full flex-col gap-6", hasMessages ? "" : "min-h-full")}
+          >
+            {hasMessages ? (
+              <>
+                {messages.map((message) => {
+                  const isSearchHit =
+                    trimmedSearchQuery.length > 0 &&
+                    matchesMessageSearch(
+                      [message.content, message.thinking ?? ""].filter(Boolean).join("\n"),
+                      trimmedSearchQuery,
+                    );
+                  const isSearchActive = activeMatchedMessageId === message.id;
 
-                return (
-                  <div
-                    key={message.id}
-                    ref={(node) => {
-                      if (node) {
-                        messageElementRefs.current.set(message.id, node);
-                        return;
-                      }
-
-                      messageElementRefs.current.delete(message.id);
-                    }}
-                    className={cn(
-                      "rounded-[22px] transition-all duration-200 scroll-mt-28",
-                      isSearchHit ? "ring-1 ring-amber-300/22" : "",
-                      isSearchActive ? "bg-amber-400/[0.06] ring-2 ring-amber-300/50" : "",
-                    )}
-                  >
-                    <MessageBubble
+                  return (
+                    <div
                       key={message.id}
-                      message={message}
-                      agentName={resolveAgentName(message, group)}
-                      agentAvatarText={resolveAgentAvatarText(message, group)}
-                      agentAvatarColor={getAvatarColor(
-                        message.senderId ?? resolveAgentName(message, group),
+                      ref={(node) => {
+                        if (node) {
+                          messageElementRefs.current.set(message.id, node);
+                          return;
+                        }
+
+                        messageElementRefs.current.delete(message.id);
+                      }}
+                      className={cn(
+                        "rounded-[22px] transition-all duration-200 scroll-mt-28",
+                        isSearchHit ? "chat-bubble--matched" : "",
+                        isSearchActive ? "chat-bubble--active" : "",
                       )}
-                      agentAvatarUrl={message.senderAvatarUrl}
-                      userAvatar={userAvatar}
-                      isCopied={copiedMessageId === message.id}
-                      isTyping={false}
-                      onTypingComplete={() => {}}
-                      onUserAvatarClick={handleAvatarTrigger}
-                      onCopy={handleCopyMessage}
-                      onDownload={handleDownloadMessage}
-                      onRefresh={handleRefreshMessage}
-                      searchQuery={trimmedSearchQuery}
-                    />
-                  </div>
-                );
-              })}
+                    >
+                      <MessageBubble
+                        key={message.id}
+                        message={message}
+                        agentId={message.senderId ?? undefined}
+                        agentName={resolveAgentName(message, group)}
+                        agentAvatarText={resolveAgentAvatarText(message, group)}
+                        agentAvatarColor={getAvatarColor(
+                          message.senderId ?? resolveAgentName(message, group),
+                        )}
+                        agentAvatarUrl={message.senderAvatarUrl}
+                        userAvatar={userProfile.avatar}
+                        userProfile={userProfile}
+                        isCopied={copiedMessageId === message.id}
+                        isTyping={false}
+                        onTypingComplete={() => {}}
+                        onUserAvatarClick={(target) => {
+                          setPopoverAnchorRect(target.getBoundingClientRect());
+                        }}
+                        onCopy={handleCopyMessage}
+                        onDownload={handleDownloadMessage}
+                        onRefresh={handleRefreshMessage}
+                        searchQuery={trimmedSearchQuery}
+                      />
+                    </div>
+                  );
+                })}
 
-              <GroupThinkingStatus members={group.members} thinkingAgents={thinkingAgents} />
+                <GroupThinkingStatus members={group.members} thinkingAgents={thinkingAgents} />
 
-              <div ref={bottomRef} />
-            </>
-          ) : (
-            <GroupWelcomeView group={group} onMention={insertMention} />
-          )}
+                <div ref={bottomRef} />
+              </>
+            ) : (
+              <GroupWelcomeView group={group} onMention={insertMention} />
+            )}
+          </div>
         </div>
-      </div>
 
-      <div className="shrink-0 border-t border-gray-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
-        <div className="relative px-4 pb-4 pt-4">
-          {actionFeedback ? (
-            <div className="pointer-events-none absolute right-4 top-1 z-10">
-              <span
+        <div className="group-chat-compose">
+          <div className="relative">
+            {actionFeedback ? (
+              <div
                 className={cn(
-                  "inline-flex rounded-full border px-3 py-1 text-[11px] font-medium shadow-[0_12px_32px_rgba(0,0,0,0.26)] backdrop-blur-sm",
-                  actionFeedback.tone === "success"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/20 dark:bg-emerald-500/15 dark:text-emerald-100"
-                    : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/20 dark:bg-rose-500/15 dark:text-rose-100",
+                  "chat-toast",
+                  actionFeedback.tone === "error" ? "chat-toast--error" : "",
                 )}
               >
                 {actionFeedback.message}
-              </span>
-            </div>
-          ) : null}
+              </div>
+            ) : null}
 
-          <div className="flex items-center gap-3 overflow-x-auto pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <div className="flex shrink-0 items-center gap-3">
-              <button
-                type="button"
-                onClick={handleExportHistory}
-                className="inline-flex h-11 items-center gap-2 rounded-lg bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(15,23,42,0.18)] transition-all duration-150 hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:brightness-100"
-                disabled={!hasMessages || isArchiveLoading || isResetLoading}
-              >
-                <Download className="h-4 w-4 text-white" />
-                导出
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  console.log(`[Group] 打开归档确认弹窗: ${group.name}`);
-                  setIsArchiveConfirmOpen(true);
-                }}
-                className="inline-flex h-11 items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(15,23,42,0.18)] transition-all duration-150 hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:brightness-100"
-                disabled={!hasMessages || isArchiveLoading || isResetLoading}
-              >
-                <Archive className="h-4 w-4 text-white" />
-                归档
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  console.log(`[Group] 打开重置对话确认弹窗: ${group.name}`);
-                  setIsResetConfirmOpen(true);
-                }}
-                className="inline-flex h-11 items-center gap-2 rounded-lg bg-purple-600 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(15,23,42,0.18)] transition-all duration-150 hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:brightness-100"
-                disabled={!hasMessages || isArchiveLoading || isResetLoading}
-              >
-                <RotateCcw className="h-4 w-4 text-white" />
-                重置
-              </button>
-            </div>
-
-            <div className="flex shrink-0 items-center gap-2">
-              <ContextRing
-                currentUsed={metrics.currentUsed}
-                total={metrics.total}
-                inputTokens={metrics.inputTokens}
-                outputTokens={metrics.outputTokens}
-                cacheHitTokens={metrics.cacheHitTokens}
-                totalConsumed={metrics.totalConsumed}
-              />
-              <span className="text-xs font-medium tabular-nums text-gray-600 dark:text-zinc-300">
-                {contextIndicatorLabel}
-              </span>
-            </div>
-          </div>
-
-          <input
-            ref={avatarInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handleAvatarChange}
-          />
-
-          <div className="relative">
-            <GroupMentionPopover
-              open={isMentionPopoverOpen}
-              members={mentionCandidates}
-              activeIndex={normalizedMentionIndex}
-              query={activeMention?.query ?? ""}
-              onSelect={(member) => {
-                insertMention(member.name, activeMention);
-              }}
-              onActiveIndexChange={setActiveMentionIndex}
-            />
-
-            <div className="rounded-[10px] border border-gray-200 bg-gray-50 px-4 py-2 transition-[border-color,box-shadow] duration-[250ms] focus-within:border-amber-400 focus-within:ring-1 focus-within:ring-amber-300/60 dark:border-zinc-700 dark:bg-zinc-800 dark:focus-within:border-amber-300 dark:focus-within:ring-amber-300/30">
-              <div className="flex items-end gap-3">
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={(event) => {
-                    setInput(event.target.value);
-                    syncCaretPosition(event.target.selectionStart ?? event.target.value.length);
-                    setDismissedMentionSignature(null);
-                    autoResize();
-                  }}
-                  onFocus={() => {
-                    setIsInputFocused(true);
-                    syncCaretPosition();
-                  }}
-                  onBlur={() => {
-                    setIsInputFocused(false);
-                  }}
-                  onSelect={() => {
-                    syncCaretPosition();
-                  }}
-                  onClick={() => {
-                    syncCaretPosition();
-                  }}
-                  onKeyUp={() => {
-                    syncCaretPosition();
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.nativeEvent.isComposing) {
-                      return;
-                    }
-
-                    if (isMentionPopoverOpen && event.key === "Escape") {
-                      event.preventDefault();
-                      closeMentionPopover();
-                      return;
-                    }
-
-                    if (isMentionPopoverOpen && mentionCandidates.length > 0) {
-                      if (event.key === "ArrowDown") {
-                        event.preventDefault();
-                        setActiveMentionIndex(
-                          (current) => (current + 1) % mentionCandidates.length,
-                        );
-                        return;
-                      }
-
-                      if (event.key === "ArrowUp") {
-                        event.preventDefault();
-                        setActiveMentionIndex((current) =>
-                          current <= 0 ? mentionCandidates.length - 1 : current - 1,
-                        );
-                        return;
-                      }
-
-                      if (
-                        event.key === "Enter" &&
-                        !event.shiftKey &&
-                        highlightedMention &&
-                        activeMention
-                      ) {
-                        event.preventDefault();
-                        insertMention(highlightedMention.name, activeMention);
-                        return;
-                      }
-                    }
-
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      handleSend();
-                    }
-                  }}
-                  placeholder="输入消息... 使用 @ 提及成员"
-                  rows={1}
-                  className="min-h-7 max-h-24 flex-1 resize-none bg-transparent py-1 text-sm leading-6 text-gray-800 outline-none placeholder:text-gray-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
-                />
-
+            <div className="chat-controls overflow-x-auto pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="flex shrink-0 items-center gap-3">
                 <button
                   type="button"
-                  onClick={handleSend}
-                  disabled={!input.trim() || isSending}
-                  className={cn(
-                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-orange-400 text-white transition-all duration-200 hover:bg-orange-500 dark:bg-orange-500 dark:hover:bg-orange-400",
-                    isSending
-                      ? "animate-[spin_1s_linear_infinite]"
-                      : "hover:scale-110 hover:shadow-[0_0_20px_var(--color-brand-glow)] active:scale-90",
-                    input.trim() ? "" : "cursor-not-allowed opacity-50",
-                  )}
-                  aria-label="发送群消息"
+                  onClick={handleExportHistory}
+                  className="chat-action-btn chat-action-btn--compact"
+                  disabled={!hasMessages || isArchiveLoading || isResetLoading}
                 >
-                  {isSending ? <Zap className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+                  <Download className="h-4 w-4" />
+                  导出
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    console.log(`[Group] 打开归档确认弹窗: ${group.name}`);
+                    setIsArchiveConfirmOpen(true);
+                  }}
+                  className="chat-action-btn chat-action-btn--archive"
+                  disabled={!hasMessages || isArchiveLoading || isResetLoading}
+                >
+                  <Archive className="h-4 w-4" />
+                  归档
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    console.log(`[Group] 打开重置对话确认弹窗: ${group.name}`);
+                    setIsResetConfirmOpen(true);
+                  }}
+                  className="chat-action-btn chat-action-btn--reset"
+                  disabled={!hasMessages || isArchiveLoading || isResetLoading}
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  重置
                 </button>
               </div>
 
-              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-200/80 pt-3 text-[11px] text-gray-400 dark:border-zinc-700 dark:text-zinc-500">
-                <span className="font-medium">提及:</span>
-                {agentMembers.map((member) => (
-                  <MemoMentionChip
-                    key={member.id}
-                    label={member.name}
-                    onClick={() => {
-                      insertMention(member.name);
-                    }}
-                  />
-                ))}
+              <div className="chat-controls__thinking shrink-0">
+                <ContextRing
+                  currentUsed={metrics.currentUsed}
+                  total={metrics.total}
+                  inputTokens={metrics.inputTokens}
+                  outputTokens={metrics.outputTokens}
+                  cacheHitTokens={metrics.cacheHitTokens}
+                  totalConsumed={metrics.totalConsumed}
+                />
+                <span>{contextIndicatorLabel}</span>
               </div>
             </div>
-          </div>
 
-          <p className="mt-2 text-center text-[10px] text-gray-500 dark:text-zinc-400">
-            按 Enter 发送，Shift + Enter 换行
-          </p>
+            <div className="relative">
+              <GroupMentionPopover
+                open={isMentionPopoverOpen}
+                members={mentionCandidates}
+                activeIndex={normalizedMentionIndex}
+                query={activeMention?.query ?? ""}
+                onSelect={(member) => {
+                  insertMention(member.name, activeMention);
+                }}
+                onActiveIndexChange={setActiveMentionIndex}
+              />
+
+              <div className="agent-chat__input">
+                <div className="flex items-end gap-3 px-4 pt-2">
+                  <textarea
+                    ref={textareaRef}
+                    value={input}
+                    onChange={(event) => {
+                      setInput(event.target.value);
+                      syncCaretPosition(event.target.selectionStart ?? event.target.value.length);
+                      setDismissedMentionSignature(null);
+                      autoResize();
+                    }}
+                    onFocus={() => {
+                      setIsInputFocused(true);
+                      syncCaretPosition();
+                    }}
+                    onBlur={() => {
+                      setIsInputFocused(false);
+                    }}
+                    onSelect={() => {
+                      syncCaretPosition();
+                    }}
+                    onClick={() => {
+                      syncCaretPosition();
+                    }}
+                    onKeyUp={() => {
+                      syncCaretPosition();
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.nativeEvent.isComposing) {
+                        return;
+                      }
+
+                      if (isMentionPopoverOpen && event.key === "Escape") {
+                        event.preventDefault();
+                        closeMentionPopover();
+                        return;
+                      }
+
+                      if (isMentionPopoverOpen && mentionCandidates.length > 0) {
+                        if (event.key === "ArrowDown") {
+                          event.preventDefault();
+                          setActiveMentionIndex(
+                            (current) => (current + 1) % mentionCandidates.length,
+                          );
+                          return;
+                        }
+
+                        if (event.key === "ArrowUp") {
+                          event.preventDefault();
+                          setActiveMentionIndex((current) =>
+                            current <= 0 ? mentionCandidates.length - 1 : current - 1,
+                          );
+                          return;
+                        }
+
+                        if (
+                          event.key === "Enter" &&
+                          !event.shiftKey &&
+                          highlightedMention &&
+                          activeMention
+                        ) {
+                          event.preventDefault();
+                          insertMention(highlightedMention.name, activeMention);
+                          return;
+                        }
+                      }
+
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        handleSend();
+                      }
+                    }}
+                    placeholder="输入消息... 使用 @ 提及成员"
+                    rows={1}
+                    className="min-h-7 max-h-24 flex-1 resize-none bg-transparent py-1 text-sm leading-6 outline-none"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={handleSend}
+                    disabled={!input.trim() || isSending}
+                    className={cn(
+                      "chat-send-btn mb-2",
+                      isSending ? "animate-[spin_1s_linear_infinite]" : "",
+                      input.trim() ? "" : "cursor-not-allowed opacity-50",
+                    )}
+                    aria-label="发送群消息"
+                  >
+                    {isSending ? <Zap className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+                  </button>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--border)] px-4 pb-3 pt-3 text-[11px] text-[var(--muted)]">
+                  <span className="font-medium text-[var(--muted)]">提及:</span>
+                  {agentMembers.map((member) => (
+                    <MemoMentionChip
+                      key={member.id}
+                      label={member.name}
+                      onClick={() => {
+                        insertMention(member.name);
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <p className="group-chat-help">按 Enter 发送，Shift + Enter 换行</p>
+          </div>
         </div>
       </div>
+
+      <UserProfilePopover
+        open={popoverAnchorRect !== null}
+        anchorRect={popoverAnchorRect}
+        onClose={() => {
+          setPopoverAnchorRect(null);
+        }}
+      />
 
       <GroupAnnouncementModal
         open={isAnnouncementModalOpen}
@@ -1192,13 +1139,13 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
         }}
         loading={isArchiveLoading}
         icon="📦"
-        iconBgColor="bg-blue-500/20"
-        iconTextColor="text-blue-300"
+        iconBgColor="bg-[var(--accent-2-subtle)]"
+        iconTextColor="text-[var(--info)]"
         title="归档群聊对话"
         subtitle="保存聊天记录并重置当前 session"
         description="确认后会保存当前项目组的完整聊天记录到本地归档，并重置全部成员在该群里的 session。完成后消息流会回到欢迎页。"
         confirmText="确认归档"
-        confirmColor="bg-blue-600 hover:bg-blue-500"
+        confirmColor="bg-[var(--info)] hover:brightness-110"
       />
       <ConfirmModal
         open={isResetConfirmOpen}
@@ -1212,13 +1159,13 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
         }}
         loading={isResetLoading}
         icon="🔄"
-        iconBgColor="bg-purple-500/20"
-        iconTextColor="text-purple-300"
+        iconBgColor="bg-[var(--danger-subtle)]"
+        iconTextColor="text-[var(--danger)]"
         title="重置群聊对话"
         subtitle="清空消息并重置全部成员 session"
         description="确认后会清空当前项目组的全部聊天记录，并依次重置所有成员在该群里的会话上下文。完成后界面会回到欢迎页。"
         confirmText="确认重置"
-        confirmColor="bg-purple-600 hover:bg-purple-500"
+        confirmColor="bg-[var(--danger)] hover:brightness-110"
       />
     </section>
   );

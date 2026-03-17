@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { gateway } from "@/services/gateway";
+import { gateway, type GatewayChatAttachmentInput } from "@/services/gateway";
 import { useAgentStore, type Agent } from "@/stores/agentStore";
 import {
   buildGroupAgentRequestMessage,
@@ -13,6 +13,7 @@ import {
   resolveAssistantRelayTargets,
   type RelayIntentInspection,
 } from "@/utils/groupRelay";
+import { resolveAvatarImage } from "@/utils/groupSurface";
 import { buildUrgeMessage, resolveUrgeNextDelayMs, resolveUrgeTargets } from "@/utils/groupUrge";
 import { adaptHistoryMessages, type ChatMessage, type ChatUsage } from "@/utils/messageAdapter";
 import { sanitizeAssistantText } from "@/utils/messageSanitizer";
@@ -125,7 +126,11 @@ type GroupState = GroupPersistence & {
   updateGroupAnnouncement: (groupId: string, announcement: string) => void;
   setGroupNotificationsEnabled: (groupId: string, enabled: boolean) => void;
   setGroupSoundEnabled: (groupId: string, enabled: boolean) => void;
-  sendGroupMessage: (groupId: string, text: string) => Promise<void>;
+  sendGroupMessage: (
+    groupId: string,
+    text: string,
+    attachments?: GatewayChatAttachmentInput[],
+  ) => Promise<void>;
   startGroupUrging: (groupId: string, intervalMinutes: number) => void;
   pauseGroupUrging: (groupId: string) => void;
   resumeGroupUrging: (groupId: string) => void;
@@ -165,6 +170,7 @@ type GroupDispatchRequest = {
   member: AgentInfo;
   members: AgentInfo[];
   text: string;
+  attachments?: GatewayChatAttachmentInput[];
   userSpecifiedTargets: boolean;
   epoch: number;
   source: GroupDispatchSource;
@@ -282,7 +288,7 @@ function normalizeMembers(members: AgentInfo[]) {
       id: member.id,
       name: member.name.trim() || member.id,
       emoji: member.emoji?.trim() || undefined,
-      avatarUrl: member.avatarUrl?.trim() || undefined,
+      avatarUrl: resolveAvatarImage(member) ?? undefined,
       role: member.role?.trim() || undefined,
     });
   });
@@ -418,7 +424,13 @@ function normalizeMessage(item: unknown): GroupChatMessage | null {
     senderEmoji:
       typeof maybeMessage.senderEmoji === "string" ? maybeMessage.senderEmoji : undefined,
     senderAvatarUrl:
-      typeof maybeMessage.senderAvatarUrl === "string" ? maybeMessage.senderAvatarUrl : undefined,
+      resolveAvatarImage({
+        avatarUrl: maybeMessage.senderAvatarUrl,
+        avatar: (maybeMessage as { senderAvatar?: unknown }).senderAvatar,
+        image: (maybeMessage as { senderImage?: unknown }).senderImage,
+      }) ??
+      resolveAvatarImage(maybeMessage) ??
+      undefined,
   };
 }
 
@@ -1910,10 +1922,11 @@ export const useGroupStore = create<GroupState>((set, get) => {
     groupId: string;
     text: string;
     displayMessage: GroupChatMessage;
+    attachments?: GatewayChatAttachmentInput[];
     source: GroupDispatchSource;
   }) {
     const cleanText = params.text.trim();
-    if (!cleanText) {
+    if (!cleanText && (params.attachments?.length ?? 0) === 0) {
       return;
     }
 
@@ -1980,6 +1993,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
         member,
         members,
         text: cleanText,
+        attachments: params.attachments,
         userSpecifiedTargets,
         epoch,
         source: params.source,
@@ -2132,6 +2146,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
           member: request.member,
           members: request.members,
           text: request.text,
+          attachments: request.attachments,
           userSpecifiedTargets: request.userSpecifiedTargets,
           epoch: request.epoch,
           source: request.source,
@@ -2146,11 +2161,22 @@ export const useGroupStore = create<GroupState>((set, get) => {
     member: AgentInfo;
     members: AgentInfo[];
     text: string;
+    attachments?: GatewayChatAttachmentInput[];
     userSpecifiedTargets: boolean;
     epoch: number;
     source: GroupDispatchSource;
   }) {
-    const { groupId, group, member, members, text, userSpecifiedTargets, epoch, source } = params;
+    const {
+      groupId,
+      group,
+      member,
+      members,
+      text,
+      attachments = [],
+      userSpecifiedTargets,
+      epoch,
+      source,
+    } = params;
 
     try {
       const agentStore = useAgentStore.getState();
@@ -2208,22 +2234,29 @@ export const useGroupStore = create<GroupState>((set, get) => {
       console.log(
         `[Group] 注入群聊上下文 → Agent: ${targetMember.name}, 群: ${group.name}, sessionKey=${sessionKey}`,
       );
-      const accepted = await gateway.sendAgentTurn({
-        agentId: targetMember.id,
-        sessionKey,
-        message: outboundMessage,
-        deliver: false,
-      });
-      const runId = accepted.runId?.trim();
-      if (!runId) {
-        throw new Error("未获取到 Agent runId");
-      }
+      if (attachments.length > 0) {
+        const result = await gateway.sendChat(outboundMessage, sessionKey, attachments);
+        if (!result.ok) {
+          throw new Error(result.error?.message || "群聊附件消息发送失败");
+        }
+      } else {
+        const accepted = await gateway.sendAgentTurn({
+          agentId: targetMember.id,
+          sessionKey,
+          message: outboundMessage,
+          deliver: false,
+        });
+        const runId = accepted.runId?.trim();
+        if (!runId) {
+          throw new Error("未获取到 Agent runId");
+        }
 
-      const waitResult = await gateway.waitForAgentRun(runId, 120000);
-      if (waitResult.status !== "ok") {
-        throw new Error(
-          waitResult.error?.trim() || `Agent 执行未完成，状态：${waitResult.status ?? "unknown"}`,
-        );
+        const waitResult = await gateway.waitForAgentRun(runId, 120000);
+        if (waitResult.status !== "ok") {
+          throw new Error(
+            waitResult.error?.trim() || `Agent 执行未完成，状态：${waitResult.status ?? "unknown"}`,
+          );
+        }
       }
 
       // 群聊不复用 1v1 的活跃回复桶，直接回拉目标 Agent 的历史拿最终结果。
@@ -2862,11 +2895,13 @@ export const useGroupStore = create<GroupState>((set, get) => {
 
     cleanupGroupState: cleanupGroupStateInternal,
 
-    sendGroupMessage: async (groupId, text) => {
+    sendGroupMessage: async (groupId, text, attachments = []) => {
       const cleanText = text.trim();
-      if (!cleanText) {
+      if (!cleanText && attachments.length === 0) {
         return;
       }
+      const outboundText =
+        cleanText || (attachments.length > 0 ? "请查看我刚上传的附件并继续回复。" : "");
 
       const group = get().groups.find((item) => item.id === groupId);
       if (!group) {
@@ -2876,14 +2911,15 @@ export const useGroupStore = create<GroupState>((set, get) => {
       const userMessage: GroupChatMessage = {
         id: crypto.randomUUID(),
         role: "user",
-        content: cleanText,
+        content: cleanText || `发送了 ${attachments.length} 个附件`,
         timestamp: Date.now(),
         isNew: true,
         isHistorical: false,
       };
       await dispatchGroupInput({
         groupId,
-        text: cleanText,
+        text: outboundText,
+        attachments,
         displayMessage: userMessage,
         source: {
           senderName: "用户",

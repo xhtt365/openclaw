@@ -88,7 +88,7 @@ export function TypewriterText({
           ),
           pre: ({ children, ...props }) => (
             <pre
-              className="my-2 overflow-x-auto rounded-md bg-black/20 p-2 text-[0.9em]"
+              className="my-2 overflow-x-auto rounded-md bg-[var(--color-bg-code-block)] p-2 text-[0.9em]"
               {...props}
             >
               {highlightReactChildren(children, highlightQuery)}
@@ -98,7 +98,7 @@ export function TypewriterText({
             <code
               className={cn(
                 "rounded px-1 py-0.5 text-[0.9em]",
-                codeClassName ? "bg-transparent px-0 py-0" : "bg-black/20",
+                codeClassName ? "bg-transparent px-0 py-0" : "bg-[var(--color-bg-code)]",
               )}
               {...props}
             >

@@ -1,7 +1,6 @@
 import { Fragment, cloneElement, isValidElement, type ReactNode } from "react";
 
-const SEARCH_MARK_CLASSNAME =
-  "rounded bg-amber-300/22 px-0.5 text-amber-100 shadow-[0_0_0_1px_rgba(252,211,77,0.18)]";
+const SEARCH_MARK_CLASSNAME = "chat-search-mark";
 
 function splitHighlightedText(text: string, query: string) {
   const normalizedQuery = query.trim();

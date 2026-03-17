@@ -1,20 +1,20 @@
-import { AnimatePresence, motion } from "framer-motion"
-import { memo, useMemo } from "react"
-import { useAgentStore } from "@/stores/agentStore"
-import type { AgentInfo, ThinkingAgent } from "@/stores/groupStore"
+import { AnimatePresence, motion } from "framer-motion";
+import { memo, useMemo } from "react";
+import { useAgentStore } from "@/stores/agentStore";
+import type { AgentInfo, ThinkingAgent } from "@/stores/groupStore";
 
 type GroupThinkingStatusProps = {
-  members: AgentInfo[]
-  thinkingAgents: ThinkingAgent[]
-}
+  members: AgentInfo[];
+  thinkingAgents: ThinkingAgent[];
+};
 
 type ThinkingAgentDisplay = {
-  id: string
-  name: string
-  avatarUrl?: string
-  avatarText: string
-  avatarColor: string
-}
+  id: string;
+  name: string;
+  avatarUrl?: string;
+  avatarText: string;
+  avatarColor: string;
+};
 
 const AVATAR_COLORS = [
   "var(--color-avatar-1)",
@@ -23,33 +23,33 @@ const AVATAR_COLORS = [
   "var(--color-avatar-4)",
   "var(--color-avatar-5)",
   "var(--color-avatar-6)",
-] as const
+] as const;
 
 function hashText(value: string) {
-  return Array.from(value).reduce((total, char) => total + char.charCodeAt(0), 0)
+  return Array.from(value).reduce((total, char) => total + char.charCodeAt(0), 0);
 }
 
 function getAvatarColor(value: string) {
-  return AVATAR_COLORS[hashText(value) % AVATAR_COLORS.length]
+  return AVATAR_COLORS[hashText(value) % AVATAR_COLORS.length];
 }
 
 function resolveAvatarText(name: string, emoji?: string) {
-  return emoji?.trim() || name.trim().charAt(0).toUpperCase() || "#"
+  return emoji?.trim() || name.trim().charAt(0).toUpperCase() || "#";
 }
 
 function GroupThinkingStatusInner({ members, thinkingAgents }: GroupThinkingStatusProps) {
-  const agents = useAgentStore((state) => state.agents)
+  const agents = useAgentStore((state) => state.agents);
 
   const displayAgents = useMemo<ThinkingAgentDisplay[]>(() => {
-    const agentMap = new Map(agents.map((agent) => [agent.id, agent]))
-    const memberMap = new Map(members.map((member) => [member.id, member]))
+    const agentMap = new Map(agents.map((agent) => [agent.id, agent]));
+    const memberMap = new Map(members.map((member) => [member.id, member]));
 
     return thinkingAgents.map((thinkingAgent) => {
-      const liveAgent = agentMap.get(thinkingAgent.id)
-      const member = memberMap.get(thinkingAgent.id)
-      const name = liveAgent?.name?.trim() || member?.name?.trim() || thinkingAgent.name
-      const avatarUrl = liveAgent?.avatarUrl?.trim() || member?.avatarUrl?.trim() || undefined
-      const emoji = liveAgent?.emoji?.trim() || member?.emoji?.trim() || undefined
+      const liveAgent = agentMap.get(thinkingAgent.id);
+      const member = memberMap.get(thinkingAgent.id);
+      const name = liveAgent?.name?.trim() || member?.name?.trim() || thinkingAgent.name;
+      const avatarUrl = liveAgent?.avatarUrl?.trim() || member?.avatarUrl?.trim() || undefined;
+      const emoji = liveAgent?.emoji?.trim() || member?.emoji?.trim() || undefined;
 
       return {
         id: thinkingAgent.id,
@@ -57,9 +57,9 @@ function GroupThinkingStatusInner({ members, thinkingAgents }: GroupThinkingStat
         avatarUrl,
         avatarText: resolveAvatarText(name, emoji),
         avatarColor: getAvatarColor(thinkingAgent.id || name),
-      }
-    })
-  }, [agents, members, thinkingAgents])
+      };
+    });
+  }, [agents, members, thinkingAgents]);
 
   const nameFragments = useMemo(
     () =>
@@ -68,7 +68,7 @@ function GroupThinkingStatusInner({ members, thinkingAgents }: GroupThinkingStat
         label: `${index > 0 ? "、" : ""}${agent.name}`,
       })),
     [displayAgents],
-  )
+  );
 
   return (
     <AnimatePresence initial={false}>
@@ -80,7 +80,7 @@ function GroupThinkingStatusInner({ members, thinkingAgents }: GroupThinkingStat
           exit={{ opacity: 0, y: 4, transition: { duration: 0.2 } }}
           className="flex justify-start"
         >
-          <div className="inline-flex items-center gap-2 rounded-full bg-[var(--color-bg-card)] px-3 py-1.5 text-xs text-violet-300 shadow-[0_10px_24px_rgba(0,0,0,0.18)]">
+          <div className="group-thinking-pill text-xs">
             <div className="flex items-center -space-x-1">
               <AnimatePresence initial={false}>
                 {displayAgents.map((agent) => (
@@ -96,11 +96,11 @@ function GroupThinkingStatusInner({ members, thinkingAgents }: GroupThinkingStat
                       <img
                         src={agent.avatarUrl}
                         alt={agent.name}
-                        className="h-5 w-5 rounded-full border border-[rgba(10,10,10,0.92)] object-cover"
+                        className="h-5 w-5 rounded-full border border-[var(--border)] object-cover"
                       />
                     ) : (
                       <span
-                        className="flex h-5 w-5 items-center justify-center rounded-full border border-[rgba(10,10,10,0.92)] text-[10px] font-semibold text-white"
+                        className="flex h-5 w-5 items-center justify-center rounded-full border border-[var(--border)] text-[10px] font-semibold text-[var(--accent-foreground)]"
                         style={{ backgroundColor: agent.avatarColor }}
                       >
                         {agent.avatarText}
@@ -111,7 +111,7 @@ function GroupThinkingStatusInner({ members, thinkingAgents }: GroupThinkingStat
               </AnimatePresence>
             </div>
 
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-400" />
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
 
             <span className="inline-flex items-center whitespace-pre-wrap">
               <AnimatePresence initial={false}>
@@ -133,8 +133,8 @@ function GroupThinkingStatusInner({ members, thinkingAgents }: GroupThinkingStat
         </motion.div>
       ) : null}
     </AnimatePresence>
-  )
+  );
 }
 
-export const GroupThinkingStatus = memo(GroupThinkingStatusInner)
-GroupThinkingStatus.displayName = "GroupThinkingStatus"
+export const GroupThinkingStatus = memo(GroupThinkingStatusInner);
+GroupThinkingStatus.displayName = "GroupThinkingStatus";

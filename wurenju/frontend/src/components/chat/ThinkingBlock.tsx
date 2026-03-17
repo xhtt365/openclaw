@@ -30,9 +30,9 @@ export function ThinkingBlock({ thinking }: ThinkingBlockProps) {
         <div
           className="mt-2 rounded-xl px-3 py-2 text-xs leading-6 whitespace-pre-wrap"
           style={{
-            backgroundColor: "rgba(148,163,184,0.12)",
-            color: "var(--text-secondary)",
-            border: "1px solid rgba(148,163,184,0.2)",
+            backgroundColor: "var(--card-highlight)",
+            color: "var(--muted)",
+            border: "1px solid var(--border)",
           }}
         >
           {thinking}

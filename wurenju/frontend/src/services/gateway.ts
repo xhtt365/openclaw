@@ -104,6 +104,7 @@ export type GatewayAgentIdentity = {
   agentId: string;
   name?: string;
   avatar?: string;
+  avatarUrl?: string;
   emoji?: string;
 };
 
@@ -156,6 +157,7 @@ export type GatewayAgentUpdateResult = {
 
 type PendingRequest = {
   method: string;
+  waitForChatFinal?: boolean;
   resolve: (data: GatewayResponseFrame) => void;
   reject: (error: Error) => void;
 };
@@ -222,6 +224,11 @@ export interface GatewayAgentTurnParams {
   deliver?: boolean;
   timeout?: number;
   extraSystemPrompt?: string;
+}
+
+export interface GatewayChatAttachmentInput {
+  dataUrl: string;
+  mimeType: string;
 }
 
 export interface GatewayAgentTurnAcceptedPayload {
@@ -330,6 +337,18 @@ function summarizeTextFieldForLog(label: string, value: unknown) {
   }
 
   return `[${label} ${value.length} chars]`;
+}
+
+function dataUrlToBase64(dataUrl: string) {
+  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    mimeType: match[1],
+    content: match[2],
+  };
 }
 
 function resolveRequestLogPrefix(method: string, params: Record<string, unknown>) {
@@ -741,6 +760,7 @@ class GatewayService {
         const runId = typeof data.payload?.runId === "string" ? data.payload.runId : null;
         if (
           resolver.method === "chat.send" &&
+          resolver.waitForChatFinal === true &&
           runId &&
           !Array.isArray(data.payload?.messages) &&
           (payloadStatus === "accepted" ||
@@ -806,13 +826,33 @@ class GatewayService {
   }
 
   // 发送聊天消息
-  async sendChat(text: string, sessionKey = "agent:main:main"): Promise<GatewayResponseFrame> {
+  async sendChat(
+    text: string,
+    sessionKey = "agent:main:main",
+    attachments: GatewayChatAttachmentInput[] = [],
+  ): Promise<GatewayResponseFrame> {
     await this.ensureConnected();
 
     const id = crypto.randomUUID();
+    const apiAttachments = attachments
+      .map((attachment) => {
+        const parsed = dataUrlToBase64(attachment.dataUrl);
+        if (!parsed) {
+          return null;
+        }
+
+        return {
+          type: "image",
+          mimeType: attachment.mimeType || parsed.mimeType,
+          content: parsed.content,
+        };
+      })
+      .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null);
     return new Promise((resolve) => {
       this.pendingRequests.set(id, {
         method: "chat.send",
+        // Fix: 问题11 - 仅 sendChat 辅助方法等待最终 chat 事件，通用 sendRequest("chat.send") 仍按原版只等 accepted 回执。
+        waitForChatFinal: true,
         resolve,
         reject: (error) =>
           resolve({
@@ -833,6 +873,7 @@ class GatewayService {
           message: text,
           idempotencyKey: id,
           deliver: false,
+          ...(apiAttachments.length > 0 ? { attachments: apiAttachments } : {}),
         },
       });
       if (!sent) {
