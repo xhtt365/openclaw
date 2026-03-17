@@ -58,8 +58,19 @@ void test("openclaw-chat.css 的群聊三点菜单使用细点触发器和 180px
   assert.match(css, /\.surface-group-more__item-icon\s*\{/);
 });
 
-void test("openclaw-chat.css 的群聊 @成员名 使用品牌红色", () => {
-  assert.match(css, /\.group-message-mention\s*\{[\s\S]*color:\s*var\(--brand-primary\);/);
+void test("openclaw-chat.css 的群聊 @成员名 在浅色和深色主题里都保持高对比高亮", () => {
+  assert.match(
+    css,
+    /\.group-message-mention\s*\{[\s\S]*background:\s*color-mix\(in srgb,\s*var\(--accent\)\s*22%,\s*transparent\);/,
+  );
+  assert.match(
+    css,
+    /\.group-message-mention\s*\{[\s\S]*color:\s*color-mix\(in srgb,\s*var\(--accent\)\s*70%,\s*var\(--text-strong\)\s*30%\);/,
+  );
+  assert.match(
+    css,
+    /\.group-message-mention\s*\{[\s\S]*box-shadow:\s*inset 0 0 0 1px color-mix\(in srgb,\s*var\(--accent\)\s*28%,\s*transparent\);/,
+  );
 });
 
 void test("openclaw-chat.css 为删除确认浮层补齐原版样式", () => {

@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { memo, type WheelEvent, useEffect, useMemo, useRef, useState } from "react";
 import { GroupChatHeader } from "@/components/chat/GroupChatHeader";
-import { GroupMentionPopover } from "@/components/chat/GroupMentionPopover";
 import { GroupThinkingStatus } from "@/components/chat/GroupThinkingStatus";
 import { GroupWelcomeView } from "@/components/chat/GroupWelcomeView";
 import { MessageBubble } from "@/components/chat/MessageBubble";
@@ -28,7 +27,6 @@ import { useAgentStore } from "@/stores/agentStore";
 import {
   getGroupContextMetrics,
   useGroupStore,
-  type AgentInfo,
   type Group,
   type GroupChatMessage,
   type ThinkingAgent,
@@ -39,12 +37,7 @@ import {
   isScrollNearBottom,
 } from "@/utils/chatScroll";
 import { resolveDisplayAgentMembers } from "@/utils/groupMembers";
-import {
-  findActiveGroupMention,
-  insertGroupMention,
-  matchesGroupMentionQuery,
-  type GroupMentionMatch,
-} from "@/utils/groupMention";
+import { findActiveGroupMention, insertGroupMention } from "@/utils/groupMention";
 import { buildGroupExportFilename, formatGroupTranscript } from "@/utils/groupTranscript";
 import { getUserProfile, subscribeToUserProfile } from "@/utils/userProfile";
 
@@ -204,9 +197,6 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
   const [userProfile, setUserProfile] = useState(() => getUserProfile());
   const [popoverAnchorRect, setPopoverAnchorRect] = useState<DOMRect | null>(null);
   const [caretPosition, setCaretPosition] = useState(0);
-  const [isInputFocused, setIsInputFocused] = useState(false);
-  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
-  const [dismissedMentionSignature, setDismissedMentionSignature] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -233,26 +223,6 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
     group.members[0]?.name ??
     "群主";
   const contextIndicatorLabel = `${formatCompactTokens(metrics.currentUsed)}/${formatCompactTokens(metrics.total)}`;
-  const activeMention = useMemo(
-    () => findActiveGroupMention(input, caretPosition),
-    [caretPosition, input],
-  );
-  const activeMentionSignature = activeMention
-    ? `${activeMention.start}:${activeMention.end}:${activeMention.query}`
-    : null;
-  const mentionCandidates = useMemo(() => {
-    if (!activeMention) {
-      return [] as AgentInfo[];
-    }
-
-    return agentMembers.filter((member) =>
-      matchesGroupMentionQuery(member.name, activeMention.query),
-    );
-  }, [activeMention, agentMembers]);
-  const normalizedMentionIndex =
-    mentionCandidates.length > 0 ? Math.min(activeMentionIndex, mentionCandidates.length - 1) : -1;
-  const highlightedMention =
-    normalizedMentionIndex >= 0 ? mentionCandidates[normalizedMentionIndex] : null;
   const trimmedSearchQuery = searchQuery.trim();
   const matchedMessageIds = useMemo(() => {
     if (!trimmedSearchQuery) {
@@ -272,11 +242,6 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
     matchedMessageIds.length > 0 ? Math.min(activeSearchIndex, matchedMessageIds.length - 1) : 0;
   const activeMatchedMessageId =
     matchedMessageIds.length > 0 ? (matchedMessageIds[normalizedSearchIndex] ?? null) : null;
-  // Esc 关闭后，只有当用户继续编辑成新的 @ 片段时，浮层才会再次出现。
-  const isMentionPopoverOpen =
-    isInputFocused &&
-    activeMention !== null &&
-    dismissedMentionSignature !== activeMentionSignature;
 
   function autoResize() {
     const textarea = textareaRef.current;
@@ -298,15 +263,14 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
     setCaretPosition(textarea?.selectionStart ?? input.length);
   }
 
-  function insertMention(name: string, mentionMatch: GroupMentionMatch | null = null) {
+  function insertMention(name: string) {
     const textarea = textareaRef.current;
     const fallbackCaret = textarea?.selectionStart ?? caretPosition;
-    const nextMention = insertGroupMention(input, name, mentionMatch, fallbackCaret);
+    const activeMention = findActiveGroupMention(input, fallbackCaret);
+    const nextMention = insertGroupMention(input, name, activeMention, fallbackCaret);
 
     setInput(nextMention.value);
     setCaretPosition(nextMention.caret);
-    setDismissedMentionSignature(null);
-    setActiveMentionIndex(0);
 
     window.requestAnimationFrame(() => {
       textarea?.focus();
@@ -317,16 +281,6 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
     });
 
     console.log(`[Group] 插入成员提及: @${name}`);
-  }
-
-  function closeMentionPopover() {
-    if (!activeMentionSignature) {
-      return;
-    }
-
-    setDismissedMentionSignature(activeMentionSignature);
-    setActiveMentionIndex(0);
-    console.log("[Group] 已关闭 @ 成员浮层");
   }
 
   function showActionFeedback(tone: ActionFeedback["tone"], message: string) {
@@ -416,8 +370,6 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
     void sendGroupMessage(group.id, text);
     setInput("");
     setCaretPosition(0);
-    setActiveMentionIndex(0);
-    setDismissedMentionSignature(null);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
@@ -959,18 +911,7 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
               </div>
             </div>
 
-            <div className="relative">
-              <GroupMentionPopover
-                open={isMentionPopoverOpen}
-                members={mentionCandidates}
-                activeIndex={normalizedMentionIndex}
-                query={activeMention?.query ?? ""}
-                onSelect={(member) => {
-                  insertMention(member.name, activeMention);
-                }}
-                onActiveIndexChange={setActiveMentionIndex}
-              />
-
+            <div>
               <div className="agent-chat__input">
                 <div className="flex items-end gap-3 px-4 pt-2">
                   <textarea
@@ -979,15 +920,10 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
                     onChange={(event) => {
                       setInput(event.target.value);
                       syncCaretPosition(event.target.selectionStart ?? event.target.value.length);
-                      setDismissedMentionSignature(null);
                       autoResize();
                     }}
                     onFocus={() => {
-                      setIsInputFocused(true);
                       syncCaretPosition();
-                    }}
-                    onBlur={() => {
-                      setIsInputFocused(false);
                     }}
                     onSelect={() => {
                       syncCaretPosition();
@@ -1003,47 +939,12 @@ function GroupChatAreaInner({ group }: GroupChatAreaProps) {
                         return;
                       }
 
-                      if (isMentionPopoverOpen && event.key === "Escape") {
-                        event.preventDefault();
-                        closeMentionPopover();
-                        return;
-                      }
-
-                      if (isMentionPopoverOpen && mentionCandidates.length > 0) {
-                        if (event.key === "ArrowDown") {
-                          event.preventDefault();
-                          setActiveMentionIndex(
-                            (current) => (current + 1) % mentionCandidates.length,
-                          );
-                          return;
-                        }
-
-                        if (event.key === "ArrowUp") {
-                          event.preventDefault();
-                          setActiveMentionIndex((current) =>
-                            current <= 0 ? mentionCandidates.length - 1 : current - 1,
-                          );
-                          return;
-                        }
-
-                        if (
-                          event.key === "Enter" &&
-                          !event.shiftKey &&
-                          highlightedMention &&
-                          activeMention
-                        ) {
-                          event.preventDefault();
-                          insertMention(highlightedMention.name, activeMention);
-                          return;
-                        }
-                      }
-
                       if (event.key === "Enter" && !event.shiftKey) {
                         event.preventDefault();
                         handleSend();
                       }
                     }}
-                    placeholder="输入消息... 使用 @ 提及成员"
+                    placeholder="输入消息..."
                     rows={1}
                     className="min-h-7 max-h-24 flex-1 resize-none bg-transparent py-1 text-sm leading-6 outline-none"
                   />

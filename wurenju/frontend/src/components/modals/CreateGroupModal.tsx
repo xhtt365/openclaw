@@ -6,6 +6,8 @@ import { GroupBasicInfoFields } from "@/components/modals/GroupBasicInfoFields";
 import { cn } from "@/lib/utils";
 import { useAgentStore, type Agent } from "@/stores/agentStore";
 import { useGroupStore, type AgentInfo, type Group } from "@/stores/groupStore";
+import { getAgentAvatarInfo } from "@/utils/agentAvatar";
+import { toManagedGroupMember } from "@/utils/groupMembers";
 
 type CreateGroupModalProps = {
   open: boolean;
@@ -41,18 +43,8 @@ const wizardSecondaryButtonClass =
 const wizardPrimaryButtonClass =
   "inline-flex h-12 items-center gap-2 rounded-full px-6 text-sm font-semibold text-[var(--accent-foreground)] transition-all duration-200 hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:scale-100";
 
-function toGroupMember(agent: Agent): AgentInfo {
-  return {
-    id: agent.id,
-    name: agent.name,
-    emoji: agent.emoji,
-    avatarUrl: agent.avatarUrl,
-    role: agent.role,
-  };
-}
-
-function resolveAvatarText(agent: Agent) {
-  return agent.emoji?.trim() || agent.name.trim().charAt(0).toUpperCase() || "#";
+function resolveAgentAvatarInfo(agent: Agent) {
+  return getAgentAvatarInfo(agent.id, agent.avatarUrl ?? agent.emoji, agent.name);
 }
 
 function StepProgress({ step }: { step: Step }) {
@@ -89,6 +81,8 @@ type AgentRowProps = {
 };
 
 function AgentRow({ agent, selected, mode, onClick }: AgentRowProps) {
+  const avatarInfo = resolveAgentAvatarInfo(agent);
+
   return (
     <motion.button
       type="button"
@@ -102,11 +96,11 @@ function AgentRow({ agent, selected, mode, onClick }: AgentRowProps) {
       )}
     >
       <div className="relative shrink-0">
-        {agent.avatarUrl ? (
+        {avatarInfo.type === "image" ? (
           <img
             alt={agent.name}
             className="h-12 w-12 rounded-full object-cover"
-            src={agent.avatarUrl}
+            src={avatarInfo.value}
           />
         ) : (
           <div
@@ -115,7 +109,7 @@ function AgentRow({ agent, selected, mode, onClick }: AgentRowProps) {
               background: "linear-gradient(135deg, var(--warn), var(--accent))",
             }}
           >
-            {resolveAvatarText(agent)}
+            {avatarInfo.value}
           </div>
         )}
         <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border border-[var(--card)] bg-[var(--ok)]" />
@@ -234,7 +228,7 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
       return;
     }
 
-    const members = selectedMembers.map((agent) => toGroupMember(agent));
+    const members: AgentInfo[] = selectedMembers.map((agent) => toManagedGroupMember(agent));
     setIsSubmitting(true);
 
     try {

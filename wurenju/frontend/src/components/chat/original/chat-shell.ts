@@ -79,6 +79,7 @@ type ChatShellProps = {
   onToggleSound?: () => void;
   onEditGroupClick?: () => void;
   onManageMembersClick?: () => void;
+  onArchiveConversationClick?: () => void;
   onResetConversationClick?: () => void;
   onRefresh: () => void;
   onToggleThinking: () => void;
@@ -693,6 +694,22 @@ function renderChatControls(props: ChatShellProps) {
       <circle cx="12" cy="12" r="3"></circle>
     </svg>
   `;
+  const archiveIcon = html`
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="M21 8v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"></path>
+      <path d="M23 3H1v5h22z"></path>
+      <path d="M10 12h4"></path>
+    </svg>
+  `;
 
   if (props.isGroupMode) {
     const announcementIcon = html`
@@ -814,6 +831,16 @@ function renderChatControls(props: ChatShellProps) {
         @click=${props.onRefresh}
       >
         ${refreshIcon}
+      </button>
+      <button
+        class="btn btn--sm btn--icon"
+        type="button"
+        ?disabled=${props.loading || props.sending || props.busy || !props.connected}
+        title="归档当前会话"
+        aria-label="归档当前会话"
+        @click=${props.onArchiveConversationClick}
+      >
+        ${archiveIcon}
       </button>
       <span class="chat-controls__separator">|</span>
       <button

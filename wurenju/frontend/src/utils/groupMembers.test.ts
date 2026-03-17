@@ -3,11 +3,14 @@ import { after, afterEach, before } from "node:test";
 import test from "node:test";
 import type { Agent } from "../stores/agentStore";
 import { useGroupStore, type Group, type GroupChatMessage } from "../stores/groupStore";
+import { AGENT_AVATAR_STORAGE_KEY } from "./agentAvatar";
 import {
   addAgentToGroup,
   getAvailableGroupAgents,
   getGroupDisplayMemberCount,
   removeAgentFromGroup,
+  resolveDisplayAgentMembers,
+  toManagedGroupMember,
 } from "./groupMembers";
 
 class MemoryStorage implements Storage {
@@ -173,6 +176,41 @@ void test("addAgentToGroup 会同步更新 store 和 localStorage", () => {
   assert.deepEqual(
     persisted.groups[0].members.map((member: { id: string }) => member.id),
     ["dev", "qa"],
+  );
+});
+
+void test("toManagedGroupMember 和 resolveDisplayAgentMembers 会复用左栏的本地头像映射", () => {
+  memoryStorage.setItem(
+    AGENT_AVATAR_STORAGE_KEY,
+    JSON.stringify({
+      qa: "/avatars/preset/male_01.jpg",
+    }),
+  );
+
+  const managedMember = toManagedGroupMember(QA_AGENT);
+  assert.equal(managedMember.avatarUrl, "/avatars/preset/male_01.jpg");
+
+  const resolvedMembers = resolveDisplayAgentMembers(
+    createGroup([
+      {
+        id: DEV_AGENT.id,
+        name: DEV_AGENT.name,
+        emoji: DEV_AGENT.emoji,
+        role: DEV_AGENT.role,
+      },
+      {
+        id: QA_AGENT.id,
+        name: QA_AGENT.name,
+        emoji: QA_AGENT.emoji,
+        role: QA_AGENT.role,
+      },
+    ]),
+    [DEV_AGENT, QA_AGENT],
+  );
+
+  assert.equal(
+    resolvedMembers.find((member) => member.id === QA_AGENT.id)?.avatarUrl,
+    "/avatars/preset/male_01.jpg",
   );
 });
 

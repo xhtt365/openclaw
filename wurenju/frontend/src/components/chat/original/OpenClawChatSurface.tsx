@@ -46,6 +46,7 @@ import { EditGroupModal } from "@/components/modals/EditGroupModal";
 import { GroupAnnouncementModal } from "@/components/modals/GroupAnnouncementModal";
 import { GroupMemberManageModal } from "@/components/modals/GroupMemberManageModal";
 import { GroupUrgeModal } from "@/components/modals/GroupUrgeModal";
+import { toast } from "@/components/ui/use-toast";
 import { gateway, type GatewayChatEventPayload } from "@/services/gateway";
 import { useAgentStore, type Agent } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
@@ -73,7 +74,7 @@ import {
   resolveInitialAvatarText,
   resolveGroupMembersForSurface,
 } from "@/utils/groupSurface";
-import { adaptHistoryMessages } from "@/utils/messageAdapter";
+import { adaptSidebarSyncMessages } from "@/utils/messageAdapter";
 import { getUserProfile, subscribeToUserProfile, type UserProfile } from "@/utils/userProfile";
 import "@/styles/openclaw-chat.css";
 
@@ -100,6 +101,8 @@ type ChatRuntimeState = ChatState & {
 type PendingNewSessionState = {
   sessionKey: string;
 };
+
+type QuickActionKind = "compact" | "archive" | "reset";
 
 type OpenClawChatSurfaceProps = {
   employee: Employee;
@@ -281,9 +284,7 @@ function hasRenderableAssistantStream(runtime: Pick<ChatRuntimeState, "chatStrea
 }
 
 function syncSidebarPreview(agentId: string, rawMessages: unknown[]) {
-  const mappedMessages = adaptHistoryMessages({
-    messages: rawMessages,
-  });
+  const mappedMessages = adaptSidebarSyncMessages(rawMessages);
 
   useChatStore.setState((state) => {
     const nextMessagesByAgentId = new Map(state.messagesByAgentId);
@@ -460,8 +461,8 @@ function OpenClawChatSurfaceInner({
   const [urgeIntervalDraft, setUrgeIntervalDraft] = useState(group?.urgeIntervalMinutes ?? 10);
   const [isEditGroupModalOpen, setIsEditGroupModalOpen] = useState(false);
   const [isMemberManageModalOpen, setIsMemberManageModalOpen] = useState(false);
-  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
-  const [isResetLoading, setIsResetLoading] = useState(false);
+  const [pendingQuickAction, setPendingQuickAction] = useState<QuickActionKind | null>(null);
+  const [isQuickActionLoading, setIsQuickActionLoading] = useState(false);
   const [groupCaretPosition, setGroupCaretPosition] = useState(0);
   const [isGroupInputFocused, setIsGroupInputFocused] = useState(false);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
@@ -470,6 +471,9 @@ function OpenClawChatSurfaceInner({
   const [agentAvatarVersion, setAgentAvatarVersion] = useState(0);
   const gatewayStatus = useChatStore((state) => state.status);
   const switchAgent = useChatStore((state) => state.switchAgent);
+  const compactCurrentSession = useChatStore((state) => state.compactCurrentSession);
+  const resetCurrentSession = useChatStore((state) => state.resetCurrentSession);
+  const archiveCurrentSession = useChatStore((state) => state.archiveCurrentSession);
   const agents = useAgentStore((state) => state.agents);
   const mainKey = useAgentStore((state) => state.mainKey);
   const closeDetail = useAgentStore((state) => state.closeDetail);
@@ -482,6 +486,7 @@ function OpenClawChatSurfaceInner({
   );
   const isGroupSending = useGroupStore((state) => state.isSendingByGroupId[groupId]);
   const sendGroupMessage = useGroupStore((state) => state.sendGroupMessage);
+  const archiveGroupSession = useGroupStore((state) => state.archiveGroupSession);
   const resetGroupMessages = useGroupStore((state) => state.resetGroupMessages);
   const selectGroup = useGroupStore((state) => state.selectGroup);
   const updateGroupAnnouncement = useGroupStore((state) => state.updateGroupAnnouncement);
@@ -922,33 +927,150 @@ function OpenClawChatSurfaceInner({
     setIsMemberManageModalOpen(true);
   }
 
-  function handleOpenResetConversationConfirm() {
-    if (!group) {
+  function openQuickActionConfirm(action: QuickActionKind) {
+    if (action === "compact" && isGroupMode) {
       return;
     }
 
-    setIsResetConfirmOpen(true);
+    setPendingQuickAction(action);
   }
 
-  async function handleResetHistoryConfirm() {
-    if (!group) {
+  function closeQuickActionConfirm() {
+    if (isQuickActionLoading) {
       return;
     }
 
-    setIsResetLoading(true);
-    const result = await resetGroupMessages(group.id);
-    setIsResetLoading(false);
+    setPendingQuickAction(null);
+  }
 
-    if (!result.success) {
-      const runtime = runtimeRef.current;
+  function handleOpenResetConversationConfirm() {
+    openQuickActionConfirm("reset");
+  }
+
+  function handleOpenArchiveConversationConfirm() {
+    openQuickActionConfirm("archive");
+  }
+
+  async function handleConfirmQuickAction() {
+    if (!pendingQuickAction) {
+      return;
+    }
+
+    const action = pendingQuickAction;
+    const runtime = runtimeRef.current;
+    setIsQuickActionLoading(true);
+
+    try {
       if (runtime) {
-        runtime.lastError = result.error || "重置群聊失败";
+        runtime.lastError = null;
       }
-      requestRender();
-      return;
-    }
 
-    setIsResetConfirmOpen(false);
+      if (action === "compact") {
+        if (isGroupMode || !sessionKey) {
+          return;
+        }
+
+        const result = await compactCurrentSession();
+        if (!result.success) {
+          throw new Error(result.error || "压缩 1v1 对话失败");
+        }
+
+        await refreshCurrentSession(sessionKey);
+        toast({
+          title: "已压缩当前 1v1 对话",
+          description:
+            typeof result.releasedTokens === "number" && result.releasedTokens > 0
+              ? `约释放了 ${result.releasedTokens} 个 Token 上下文。`
+              : "已精简历史上下文，后续对话会更轻量。",
+        });
+      } else if (action === "archive") {
+        if (isGroupMode) {
+          if (!group) {
+            return;
+          }
+
+          const result = await archiveGroupSession(group.id);
+          if (!result.success) {
+            throw new Error(result.error || "归档项目组对话失败");
+          }
+
+          toast({
+            title: "已归档当前项目组对话",
+            description: "可在左侧项目组归档中随时回看。",
+          });
+        } else {
+          if (!sessionKey) {
+            return;
+          }
+
+          const result = await archiveCurrentSession();
+          if (!result.success) {
+            throw new Error(result.error || "归档 1v1 会话失败");
+          }
+
+          await refreshCurrentSession(sessionKey);
+          toast({
+            title: "已归档当前 1v1 会话",
+            description: "可在左侧“1v1 归档”中随时回看。",
+          });
+        }
+      } else if (isGroupMode) {
+        if (!group) {
+          return;
+        }
+
+        const result = await resetGroupMessages(group.id);
+        if (!result.success) {
+          throw new Error(result.error || "重置项目组对话失败");
+        }
+
+        toast({
+          title: "已重置当前项目组对话",
+          description: "当前消息已清空，全部成员会话上下文已重新开始。",
+        });
+      } else {
+        if (!sessionKey) {
+          return;
+        }
+
+        const result = await resetCurrentSession();
+        if (!result.success) {
+          throw new Error(result.error || "重置 1v1 对话失败");
+        }
+
+        await refreshCurrentSession(sessionKey);
+        toast({
+          title: "已重置当前 1v1 对话",
+          description: "当前消息已清空，后续将从新的上下文继续。",
+        });
+      }
+
+      setPendingQuickAction(null);
+      pendingContentChangeRef.current = true;
+      requestRender();
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim()
+          ? error.message.trim()
+          : action === "compact"
+            ? "压缩会话失败"
+            : action === "archive"
+              ? "归档会话失败"
+              : "重置会话失败";
+
+      if (runtime) {
+        runtime.lastError = message;
+      }
+
+      toast({
+        title: action === "compact" ? "压缩失败" : action === "archive" ? "归档失败" : "重置失败",
+        description: message,
+        variant: "destructive",
+      });
+      requestRender();
+    } finally {
+      setIsQuickActionLoading(false);
+    }
   }
 
   function handleInsertMention(memberId: string) {
@@ -1462,6 +1584,9 @@ function OpenClawChatSurfaceInner({
         onManageMembersClick: () => {
           handleOpenMemberManageModal();
         },
+        onArchiveConversationClick: () => {
+          handleOpenArchiveConversationConfirm();
+        },
         onResetConversationClick: () => {
           handleOpenResetConversationConfirm();
         },
@@ -1479,6 +1604,7 @@ function OpenClawChatSurfaceInner({
         },
         body: renderChat({
           sessionKey,
+          conversationMode: isGroupMode ? "group" : "direct",
           onSessionKeyChange: (nextSessionKey) => {
             if (nextSessionKey !== sessionKey) {
               setSessionKey(nextSessionKey);
@@ -1511,7 +1637,7 @@ function OpenClawChatSurfaceInner({
           queue,
           connected,
           canSend: connected,
-          disabledReason: connected ? null : "Connect to the gateway to start chatting...",
+          disabledReason: connected ? null : "连接 Gateway 后即可开始聊天…",
           error: runtime.lastError,
           sessions,
           focusMode: isChatFullscreen,
@@ -1694,6 +1820,16 @@ function OpenClawChatSurfaceInner({
             queueRef.current = queueRef.current.filter((item) => item.id !== id);
             setQueue(queueRef.current);
           },
+          onCompactSession: () => {
+            openQuickActionConfirm("compact");
+          },
+          onArchiveSession: () => {
+            openQuickActionConfirm("archive");
+          },
+          onResetSession: () => {
+            openQuickActionConfirm("reset");
+          },
+          quickActionDisabled: isQuickActionLoading,
           onNewSession: () => {
             if (runtime.newSessionLoading || isChatBusy(runtime)) {
               queueRef.current = [...queueRef.current, createQueuedItem("/new", [], "/new")];
@@ -1857,6 +1993,7 @@ function OpenClawChatSurfaceInner({
     hiddenCronCount,
     hideCronSessions,
     isGroupMentionOpen,
+    isQuickActionLoading,
     memberOptions,
     normalizedMentionIndex,
     queue,
@@ -1911,6 +2048,76 @@ function OpenClawChatSurfaceInner({
       }
     };
   }, []);
+
+  const quickActionModalConfig = useMemo(() => {
+    if (!pendingQuickAction) {
+      return null;
+    }
+
+    if (pendingQuickAction === "compact") {
+      return {
+        icon: "🗜️",
+        iconBgColor: "bg-[var(--color-bg-brand-soft)]",
+        iconTextColor: "text-[var(--color-brand)]",
+        title: "压缩上下文",
+        subtitle: "精简对话历史",
+        description:
+          "AI 会总结当前对话的核心内容，压缩冗余信息，保留关键上下文，让后续对话更高效。",
+        confirmText: "开始压缩",
+        confirmColor: "bg-[var(--color-brand)] hover:brightness-110",
+      };
+    }
+
+    if (pendingQuickAction === "archive") {
+      return group
+        ? {
+            icon: "🗂️",
+            iconBgColor: "bg-[var(--color-bg-brand-soft)]",
+            iconTextColor: "text-[var(--color-brand)]",
+            title: "归档项目组对话",
+            subtitle: "保存历史，释放空间",
+            description:
+              "当前项目组对话会被归档保存，方便之后回看，同时释放上下文空间，降低后续对话成本。",
+            confirmText: "确认归档",
+            confirmColor: "bg-[var(--color-brand)] hover:brightness-110",
+          }
+        : {
+            icon: "🗄️",
+            iconBgColor: "bg-[var(--color-bg-brand-soft)]",
+            iconTextColor: "text-[var(--color-brand)]",
+            title: "归档 1v1 对话",
+            subtitle: "保存历史，释放空间",
+            description:
+              "当前 1v1 对话会被归档保存，方便之后回看，同时释放上下文空间，降低后续对话成本。",
+            confirmText: "确认归档",
+            confirmColor: "bg-[var(--color-brand)] hover:brightness-110",
+          };
+    }
+
+    return group
+      ? {
+          icon: "🔄",
+          iconBgColor: "bg-[var(--danger-subtle)]",
+          iconTextColor: "text-[var(--danger)]",
+          title: "重置项目组对话",
+          subtitle: "清空消息，释放上下文",
+          description:
+            "将清空当前项目组的所有消息，并重置全部成员的上下文记忆。这样能释放 Token 空间，但 AI 不会再记得之前的内容。",
+          confirmText: "确认重置",
+          confirmColor: "bg-[var(--danger)] hover:brightness-110",
+        }
+      : {
+          icon: "🔄",
+          iconBgColor: "bg-[var(--danger-subtle)]",
+          iconTextColor: "text-[var(--danger)]",
+          title: "重置 1v1 对话",
+          subtitle: "清空消息，释放上下文",
+          description:
+            "将清空当前 1v1 对话的所有消息，并重置 AI 的上下文记忆。这样能释放 Token 空间，但 AI 不会再记得之前的内容。",
+          confirmText: "确认重置",
+          confirmColor: "bg-[var(--danger)] hover:brightness-110",
+        };
+  }, [group, pendingQuickAction]);
 
   if (!sessionKey) {
     return (
@@ -1985,27 +2192,26 @@ function OpenClawChatSurfaceInner({
               setIsUrgeModalOpen(false);
             }}
           />
-          <ConfirmModal
-            open={isResetConfirmOpen}
-            onClose={() => {
-              if (!isResetLoading) {
-                setIsResetConfirmOpen(false);
-              }
-            }}
-            onConfirm={() => {
-              void handleResetHistoryConfirm();
-            }}
-            loading={isResetLoading}
-            icon="🔄"
-            iconBgColor="bg-[var(--danger-subtle)]"
-            iconTextColor="text-[var(--danger)]"
-            title="重置群聊对话"
-            subtitle="清空消息并重置全部成员会话"
-            description="确认后会清空当前项目组的全部聊天记录，并依次重置所有成员在该群里的会话上下文。完成后界面会回到欢迎页。"
-            confirmText="确认重置"
-            confirmColor="bg-[var(--danger)] hover:brightness-110"
-          />
         </>
+      ) : null}
+
+      {quickActionModalConfig ? (
+        <ConfirmModal
+          open={Boolean(pendingQuickAction)}
+          onClose={closeQuickActionConfirm}
+          onConfirm={() => {
+            void handleConfirmQuickAction();
+          }}
+          loading={isQuickActionLoading}
+          icon={quickActionModalConfig.icon}
+          iconBgColor={quickActionModalConfig.iconBgColor}
+          iconTextColor={quickActionModalConfig.iconTextColor}
+          title={quickActionModalConfig.title}
+          subtitle={quickActionModalConfig.subtitle}
+          description={quickActionModalConfig.description}
+          confirmText={quickActionModalConfig.confirmText}
+          confirmColor={quickActionModalConfig.confirmColor}
+        />
       ) : null}
     </>
   );

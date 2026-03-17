@@ -68,7 +68,12 @@ type GatewayDeviceIdentity = {
   privateKey: CryptoKey;
 };
 
-type MessageHandler = (messages: GatewayMessage[]) => void;
+export interface GatewayMessageMeta {
+  sessionKey?: string;
+  runId?: string;
+}
+
+type MessageHandler = (messages: GatewayMessage[], meta?: GatewayMessageMeta) => void;
 type StatusHandler = (status: "connecting" | "connected" | "disconnected") => void;
 type GatewayEventHandler = (eventName: string, payload: Record<string, unknown>) => void;
 type GatewayResponseFrame = {
@@ -751,7 +756,11 @@ class GatewayService {
         const msgs: GatewayMessage[] = data.payload.messages
           .map((message: unknown) => this.toGatewayMessage(message))
           .filter((message: GatewayMessage | null): message is GatewayMessage => message !== null);
-        this.onMessage?.(msgs);
+        this.onMessage?.(msgs, {
+          sessionKey:
+            typeof data.payload?.sessionKey === "string" ? data.payload.sessionKey : undefined,
+          runId: typeof data.payload?.runId === "string" ? data.payload.runId : undefined,
+        });
       }
 
       // 通用 pending request 回调
@@ -1632,7 +1641,10 @@ class GatewayService {
 
       if (this.hasRenderableMessage(message)) {
         console.log("[GW] chat reply:", 1, "msgs");
-        this.onMessage?.([message]);
+        this.onMessage?.([message], {
+          sessionKey: params.sessionKey,
+          runId: params.runId ?? undefined,
+        });
       } else {
         const error = new Error("chat final missing assistant message");
         console.error("[GW] error:", error);

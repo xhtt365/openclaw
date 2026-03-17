@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { gateway, type GatewayChatAttachmentInput } from "@/services/gateway";
 import { useAgentStore, type Agent } from "@/stores/agentStore";
+import { useDirectArchiveStore } from "@/stores/directArchiveStore";
 import {
   buildGroupAgentRequestMessage,
   normalizeGroupAnnouncement,
@@ -17,6 +18,10 @@ import { resolveAvatarImage } from "@/utils/groupSurface";
 import { buildUrgeMessage, resolveUrgeNextDelayMs, resolveUrgeTargets } from "@/utils/groupUrge";
 import { adaptHistoryMessages, type ChatMessage, type ChatUsage } from "@/utils/messageAdapter";
 import { sanitizeAssistantText } from "@/utils/messageSanitizer";
+import {
+  clearSidebarGroupUnreadCount,
+  incrementSidebarGroupUnreadCount,
+} from "@/utils/sidebarPersistence";
 
 const DEFAULT_GROUP_CONTEXT_WINDOW = 8192;
 const GROUP_HISTORY_PULL_LIMIT = 24;
@@ -1651,6 +1656,21 @@ export const useGroupStore = create<GroupState>((set, get) => {
         [groupId]: [...(state.messagesByGroupId[groupId] ?? []), sanitizedMessage],
       },
     }));
+
+    const hasRenderableContent =
+      sanitizedMessage.content.trim().length > 0 || Boolean(sanitizedMessage.thinking?.trim());
+    const { selectedGroupId, selectedArchiveId } = get();
+    const { showDetailFor } = useAgentStore.getState();
+    const { selectedDirectArchiveId } = useDirectArchiveStore.getState();
+    const isVisible =
+      selectedGroupId === groupId &&
+      selectedArchiveId === null &&
+      selectedDirectArchiveId === null &&
+      showDetailFor === null;
+
+    if (sanitizedMessage.senderId !== "system" && hasRenderableContent && !isVisible) {
+      incrementSidebarGroupUnreadCount(groupId);
+    }
   }
 
   function appendGroupVisibleMessage(groupId: string, message: GroupChatMessage) {
@@ -2521,6 +2541,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
         },
         selectedArchiveId: null,
       }));
+      clearSidebarGroupUnreadCount(groupId);
 
       console.log(`[Group] 已完成项目组状态清理: ${group.name}，归档=${archive ? "是" : "否"}`);
       return {
@@ -2617,6 +2638,8 @@ export const useGroupStore = create<GroupState>((set, get) => {
         selectedGroupId: groupId,
         selectedArchiveId: null,
       }));
+      useDirectArchiveStore.getState().clearSelectedDirectArchive();
+      clearSidebarGroupUnreadCount(groupId);
     },
 
     clearSelectedGroup: () => {
@@ -2632,6 +2655,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
         selectedGroupId: null,
         selectedArchiveId: archiveId,
       }));
+      useDirectArchiveStore.getState().clearSelectedDirectArchive();
     },
 
     clearSelectedArchive: () => {

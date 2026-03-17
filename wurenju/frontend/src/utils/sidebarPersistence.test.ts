@@ -6,12 +6,21 @@ import {
   PINNED_EMPLOYEES_STORAGE_KEY,
   SIDEBAR_AGENT_META_STORAGE_KEY,
   SIDEBAR_DEPARTMENTS_STORAGE_KEY,
+  SIDEBAR_DIRECT_ARCHIVES_STORAGE_KEY,
+  SIDEBAR_UNREAD_STORAGE_KEY,
   clearSidebarDepartmentAssignments,
+  clearSidebarDirectUnreadCount,
+  clearSidebarGroupUnreadCount,
+  incrementSidebarDirectUnreadCount,
+  incrementSidebarGroupUnreadCount,
   readSidebarAgentMetaMap,
   readSidebarDepartments,
+  readSidebarDirectArchives,
+  readSidebarUnreadState,
   subscribeSidebarStorage,
   writeSidebarAgentMetaMap,
   writeSidebarDepartments,
+  writeSidebarDirectArchives,
 } from "./sidebarPersistence";
 
 class MemoryStorage implements Storage {
@@ -239,6 +248,105 @@ void test("readSidebarAgentMetaMap 会兼容旧版合并存储结构", () => {
     agentB: {
       departmentId: undefined,
       pinned: true,
+    },
+  });
+});
+
+void test("writeSidebarDirectArchives 会保留 1v1 归档完整消息并按最新时间排序", () => {
+  writeSidebarDirectArchives([
+    {
+      id: "archive-older",
+      agentId: "agent-1",
+      agentName: "小红",
+      agentRole: "产品经理",
+      agentAvatarText: "红",
+      preview: "旧消息",
+      archivedAt: "2026-03-16T10:00:00.000Z",
+      messages: [
+        {
+          id: "message-1",
+          role: "assistant",
+          content: "这是一条旧归档消息",
+          timestamp: 1_742_117_200_000,
+          isNew: true,
+          isHistorical: false,
+        },
+      ],
+    },
+    {
+      id: "archive-newer",
+      agentId: "agent-2",
+      agentName: "小蓝",
+      preview: "新消息",
+      archivedAt: "2026-03-17T10:00:00.000Z",
+      messages: [
+        {
+          id: "message-2",
+          role: "user",
+          content: "这是最新归档",
+          timestamp: 1_742_203_600_000,
+          isNew: true,
+          isHistorical: false,
+        },
+      ],
+    },
+  ]);
+
+  const archives = readSidebarDirectArchives();
+  assert.equal(archives[0]?.id, "archive-newer");
+  assert.equal(archives[1]?.id, "archive-older");
+  assert.deepEqual(archives[0]?.messages, [
+    {
+      id: "message-2",
+      role: "user",
+      content: "这是最新归档",
+      thinking: undefined,
+      model: undefined,
+      usage: undefined,
+      timestamp: 1_742_203_600_000,
+      timestampLabel: undefined,
+      isLoading: false,
+      isNew: false,
+      isHistorical: true,
+    },
+  ]);
+
+  const persisted = JSON.parse(memoryStorage.getItem(SIDEBAR_DIRECT_ARCHIVES_STORAGE_KEY) ?? "[]");
+  assert.equal(persisted[0].agentName, "小蓝");
+  assert.equal(persisted[0].messages[0].isHistorical, true);
+});
+
+void test("sidebar unread 状态支持累加与清零", () => {
+  incrementSidebarDirectUnreadCount("agent-1");
+  incrementSidebarDirectUnreadCount("agent-1", 2);
+  incrementSidebarGroupUnreadCount("group-1");
+  incrementSidebarGroupUnreadCount("group-2", 3);
+
+  assert.deepEqual(readSidebarUnreadState(), {
+    directByAgentId: {
+      "agent-1": 3,
+    },
+    groupById: {
+      "group-1": 1,
+      "group-2": 3,
+    },
+  });
+
+  clearSidebarDirectUnreadCount("agent-1");
+  clearSidebarGroupUnreadCount("group-1");
+
+  assert.deepEqual(readSidebarUnreadState(), {
+    directByAgentId: {},
+    groupById: {
+      "group-2": 3,
+    },
+  });
+
+  const persisted = JSON.parse(memoryStorage.getItem(SIDEBAR_UNREAD_STORAGE_KEY) ?? "{}");
+  assert.deepEqual(persisted, {
+    directByAgentId: {},
+    groupById: {
+      "group-2": 3,
     },
   });
 });

@@ -155,7 +155,7 @@ body.light,
   --duration-fast: 100ms;
   --duration-normal: 180ms;
   --duration-slow: 300ms;
-  --sidebar-w: 300px;
+  --sidebar-w: 288px;
 
   --color-brand: var(--accent);
   --color-brand-light: var(--accent-hover);
@@ -645,7 +645,9 @@ body.dark,
 
 /* Fix: 问题5 - 聊天全屏通过布局 class 隐藏左侧栏，让右侧聊天区域覆盖整个页面。 */
 .app-layout__sidebar {
+  flex: 0 0 var(--sidebar-w);
   width: var(--sidebar-w);
+  max-width: var(--sidebar-w);
   min-width: var(--sidebar-w);
   overflow: hidden;
   border-right: 1px solid var(--color-border);

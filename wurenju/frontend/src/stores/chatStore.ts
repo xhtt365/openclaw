@@ -1,6 +1,8 @@
 import { create } from "zustand";
-import { gateway, type GatewayMessage } from "@/services/gateway";
+import { gateway, type GatewayMessage, type GatewayMessageMeta } from "@/services/gateway";
 import { useAgentStore } from "@/stores/agentStore";
+import { useDirectArchiveStore } from "@/stores/directArchiveStore";
+import { useGroupStore } from "@/stores/groupStore";
 import {
   adaptHistoryMessages,
   adaptRealtimeMessage,
@@ -8,6 +10,13 @@ import {
   type ChatUsage,
 } from "@/utils/messageAdapter";
 import type { SessionRuntimeState } from "@/utils/sessionRuntime";
+import {
+  clearSidebarDirectUnreadCount,
+  incrementSidebarDirectUnreadCount,
+  readSidebarDirectArchives,
+  writeSidebarDirectArchives,
+  type SidebarDirectArchive,
+} from "@/utils/sidebarPersistence";
 import { deriveCurrentContextUsed } from "@/utils/usage";
 
 type MessageBuckets = Map<string, ChatMessage[]>;
@@ -69,6 +78,69 @@ function isTrue(map: BooleanBuckets, agentId: string) {
   return map.get(agentId) === true;
 }
 
+function cloneArchivedMessages(messages: ChatMessage[]) {
+  return messages
+    .filter((message) => !message.isLoading)
+    .map((message) => ({
+      ...message,
+      usage: message.usage
+        ? {
+            ...message.usage,
+            cost: message.usage.cost ? { ...message.usage.cost } : undefined,
+          }
+        : undefined,
+      isLoading: false,
+      isNew: false,
+      isHistorical: true,
+    }));
+}
+
+function buildDirectArchivePreview(messages: ChatMessage[]) {
+  const latestVisibleMessage = [...messages]
+    .toReversed()
+    .find((message) => message.content.trim().length > 0);
+
+  if (!latestVisibleMessage) {
+    return "已归档，可稍后回看";
+  }
+
+  const previewText = latestVisibleMessage.content.replace(/\s+/g, " ").trim();
+  return latestVisibleMessage.role === "user" ? `你：${previewText}` : previewText;
+}
+
+function createSidebarDirectArchive(agentId: string, messages: ChatMessage[]) {
+  const agent = useAgentStore.getState().agents.find((entry) => entry.id === agentId);
+  const agentName = agent?.name?.trim() || agentId;
+  const archivedMessages = cloneArchivedMessages(messages);
+
+  return {
+    id: crypto.randomUUID(),
+    agentId,
+    agentName,
+    agentRole: agent?.role?.trim() || undefined,
+    agentAvatarUrl: agent?.avatarUrl?.trim() || undefined,
+    agentAvatarText: agentName.charAt(0).toUpperCase() || "A",
+    agentEmoji: agent?.emoji?.trim() || undefined,
+    preview: buildDirectArchivePreview(archivedMessages),
+    archivedAt: new Date().toISOString(),
+    messages: archivedMessages,
+  } satisfies SidebarDirectArchive;
+}
+
+function isDirectConversationVisible(agentId: string) {
+  const { currentAgentId, showDetailFor } = useAgentStore.getState();
+  const { selectedGroupId, selectedArchiveId } = useGroupStore.getState();
+  const { selectedDirectArchiveId } = useDirectArchiveStore.getState();
+
+  return (
+    currentAgentId === agentId &&
+    showDetailFor === null &&
+    selectedGroupId === null &&
+    selectedArchiveId === null &&
+    selectedDirectArchiveId === null
+  );
+}
+
 function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]) {
   const baseMessages = current.filter((message) => !message.isLoading);
   return [...baseMessages, ...incoming];
@@ -110,6 +182,20 @@ function resetMessages(map: MessageBuckets, agentId: string) {
 
 function buildSessionKey(agentId: string, mainKey: string) {
   return `agent:${agentId}:${mainKey}`;
+}
+
+function resolveAgentIdFromSessionKey(sessionKey: string | null | undefined) {
+  if (typeof sessionKey !== "string" || !sessionKey.startsWith("agent:")) {
+    return null;
+  }
+
+  const parts = sessionKey.split(":");
+  if (parts.length < 3) {
+    return null;
+  }
+
+  const agentId = parts[1]?.trim() || "";
+  return agentId || null;
 }
 
 function summarizeUsage(messages: ChatMessage[]): ChatUsage {
@@ -288,10 +374,11 @@ export const useChatStore = create<ChatState>((set, get) => {
 
   // 注册 Gateway 回调，将最终回复落到当前待回复的 Agent 会话桶。
   gateway.setHandlers(
-    (msgs: GatewayMessage[]) => {
-      const replyAgentId = get().activeReplyAgentId;
+    (msgs: GatewayMessage[], meta?: GatewayMessageMeta) => {
+      const replyAgentId =
+        resolveAgentIdFromSessionKey(meta?.sessionKey) ?? get().activeReplyAgentId;
       if (!replyAgentId) {
-        console.log("[Store] AI reply received, but no active agent is waiting");
+        console.log("[Store] AI reply received, but no agent could be resolved");
         return;
       }
 
@@ -299,6 +386,9 @@ export const useChatStore = create<ChatState>((set, get) => {
       const latestAssistantMessage = [...newMessages]
         .toReversed()
         .find((message) => message.role === "assistant");
+      const unreadAssistantCount = newMessages.filter(
+        (message) => message.role === "assistant" && message.content.trim().length > 0,
+      ).length;
       if (latestAssistantMessage?.usage) {
         const currentContextUsed = deriveCurrentContextUsed(latestAssistantMessage.usage) ?? 0;
         console.log(
@@ -314,16 +404,27 @@ export const useChatStore = create<ChatState>((set, get) => {
           replyAgentId,
           (current) => mergeMessages(current, newMessages),
         ),
-        activeReplyAgentId: null,
+        activeReplyAgentId:
+          state.activeReplyAgentId === replyAgentId ? null : state.activeReplyAgentId,
       }));
 
       console.log(
-        `[Store] AI reply received: agent=${replyAgentId}, total=${get().getMessagesForAgent(replyAgentId).length}`,
+        `[Store] AI reply received: agent=${replyAgentId}, sessionKey=${meta?.sessionKey || "unknown"}, total=${get().getMessagesForAgent(replyAgentId).length}`,
       );
 
+      if (unreadAssistantCount > 0 && !isDirectConversationVisible(replyAgentId)) {
+        incrementSidebarDirectUnreadCount(replyAgentId, unreadAssistantCount);
+      }
+
       const mainKey = useAgentStore.getState().mainKey;
-      if (mainKey) {
-        void syncSessionRuntimeState(replyAgentId, buildSessionKey(replyAgentId, mainKey));
+      const runtimeSessionKey =
+        resolveAgentIdFromSessionKey(meta?.sessionKey) === replyAgentId
+          ? meta?.sessionKey
+          : mainKey
+            ? buildSessionKey(replyAgentId, mainKey)
+            : null;
+      if (runtimeSessionKey) {
+        void syncSessionRuntimeState(replyAgentId, runtimeSessionKey);
       }
     },
     (status) => {
@@ -475,6 +576,8 @@ export const useChatStore = create<ChatState>((set, get) => {
       console.log(
         `[Store] switchAgent: agent=${agentId}, previous=${previousAgentId || "none"}, sessionKey=${sessionKey}`,
       );
+      useDirectArchiveStore.getState().clearSelectedDirectArchive();
+      clearSidebarDirectUnreadCount(agentId);
       await reloadSessionHistory(agentId, sessionKey);
     },
 
@@ -690,6 +793,7 @@ export const useChatStore = create<ChatState>((set, get) => {
           activeReplyAgentId:
             state.activeReplyAgentId === target.agentId ? null : state.activeReplyAgentId,
         }));
+        clearSidebarDirectUnreadCount(target.agentId);
         console.log(`[Store] resetCurrentSession: messages cleared for ${target.agentId}`);
         return { success: true };
       } catch (error) {
@@ -717,7 +821,25 @@ export const useChatStore = create<ChatState>((set, get) => {
       }
 
       try {
-        await gateway.deleteSession(target.sessionKey);
+        const currentMessages = get().getMessagesForAgent(target.agentId);
+        if (currentMessages.filter((message) => !message.isLoading).length === 0) {
+          return {
+            success: false,
+            error: "当前没有可归档的 1v1 记录",
+          };
+        }
+
+        const archive = createSidebarDirectArchive(target.agentId, currentMessages);
+        const previousArchives = readSidebarDirectArchives();
+        writeSidebarDirectArchives([archive, ...previousArchives]);
+
+        try {
+          await gateway.deleteSession(target.sessionKey);
+        } catch (error) {
+          writeSidebarDirectArchives(previousArchives);
+          throw error;
+        }
+
         set((state) => ({
           messagesByAgentId: resetMessages(state.messagesByAgentId, target.agentId),
           usageByAgentId: withUsage(state.usageByAgentId, target.agentId, { ...EMPTY_USAGE }),
@@ -735,6 +857,7 @@ export const useChatStore = create<ChatState>((set, get) => {
           activeReplyAgentId:
             state.activeReplyAgentId === target.agentId ? null : state.activeReplyAgentId,
         }));
+        clearSidebarDirectUnreadCount(target.agentId);
         console.log(
           `[Store] archiveCurrentSession: archived ${target.sessionKey}, next chat.send will create a new session`,
         );

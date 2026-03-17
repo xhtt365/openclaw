@@ -10,6 +10,7 @@ import { DepartmentManageModal } from "@/components/modals/DepartmentManageModal
 import { cn } from "@/lib/utils";
 import { useAgentStore, type Agent } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
+import { useDirectArchiveStore } from "@/stores/directArchiveStore";
 import { useGroupStore, type GroupArchive, type GroupChatMessage } from "@/stores/groupStore";
 import "@/styles/openclaw-sidebar.css";
 import { AGENT_AVATAR_STORAGE_KEY, getAgentAvatarInfo } from "@/utils/agentAvatar";
@@ -20,6 +21,7 @@ import {
   readSidebarCollapsedSections,
   readSidebarDepartments,
   readSidebarDirectArchives,
+  readSidebarUnreadState,
   subscribeSidebarStorage,
   writeSidebarAgentMetaMap,
   writeSidebarCollapsedSections,
@@ -57,6 +59,7 @@ type EmployeeRowProps = {
   onSelect: () => void;
   onOpenDetail: () => void;
   onTogglePinned: () => void;
+  unreadCount: number;
 };
 
 type ProjectGroupRowProps = {
@@ -65,6 +68,7 @@ type ProjectGroupRowProps = {
   memberCount: number;
   preview: GroupPreview;
   selected: boolean;
+  unreadCount: number;
   onClick: () => void;
 };
 
@@ -76,6 +80,8 @@ type GroupArchiveRowProps = {
 
 type DirectArchiveRowProps = {
   archive: SidebarDirectArchive;
+  selected: boolean;
+  onClick: () => void;
 };
 
 export interface Employee {
@@ -316,11 +322,27 @@ function SidebarSectionHeader({
           collapsed ? "-rotate-90" : "rotate-0",
         )}
       />
-      <span className="truncate leading-5">{label}</span>
-      {typeof count === "number" ? (
-        <span className="ml-auto shrink-0 leading-5">{count}</span>
-      ) : null}
+      <span className="workspace-sidebar__section-labels">
+        <span className="truncate leading-5">{label}</span>
+        {typeof count === "number" ? (
+          <span className="workspace-sidebar__section-count">{count}</span>
+        ) : null}
+      </span>
     </button>
+  );
+}
+
+function SidebarUnreadBadge({ count }: { count: number }) {
+  const label = count > 99 ? "99+" : String(count);
+
+  return (
+    <span
+      className="workspace-sidebar__unread-badge"
+      aria-label={`${count} 条未读消息`}
+      title={`${count} 条未读消息`}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -382,6 +404,7 @@ function EmployeeRow({
   onSelect,
   onOpenDetail,
   onTogglePinned,
+  unreadCount,
 }: EmployeeRowProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -431,27 +454,25 @@ function EmployeeRow({
     <div className={cn("group relative", isMenuOpen && "z-40")}>
       <div
         className={cn(
-          "workspace-sidebar__row",
+          "workspace-sidebar__row workspace-sidebar__row--with-menu",
           isSelected ? "workspace-sidebar__row--selected" : "",
         )}
       >
-        {isSelected ? <span className="workspace-sidebar__row-accent" /> : null}
-
         <button
           type="button"
           onClick={onSelect}
-          className="flex min-h-16 w-full min-w-0 items-center gap-3 text-left"
+          className="workspace-sidebar__row-main flex min-w-0 items-center gap-2.5 overflow-hidden text-left"
         >
           <div className="workspace-sidebar__row-avatar">
             {avatarInfo.type === "image" ? (
               <img
                 alt={employee.name}
-                className="h-10 w-10 rounded-full object-cover"
+                className="h-full w-full rounded-[inherit] object-cover"
                 src={avatarInfo.value}
               />
             ) : (
               <div
-                className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold text-[var(--color-text-on-brand)]"
+                className="flex h-full w-full items-center justify-center rounded-[inherit] text-[13px] font-semibold text-[var(--color-text-on-brand)]"
                 style={{ backgroundColor: employee.avatarColor }}
               >
                 {avatarInfo.value}
@@ -464,83 +485,92 @@ function EmployeeRow({
           </div>
 
           <div className="workspace-sidebar__row-body">
-            <div className="workspace-sidebar__row-title">
-              <span className="workspace-sidebar__row-name">{employee.name}</span>
-              {employee.role ? (
-                <span className="workspace-sidebar__row-meta">{employee.role}</span>
-              ) : null}
+            <div className="workspace-sidebar__row-title workspace-sidebar__row-title--employee">
+              <div className="workspace-sidebar__row-labels">
+                <span className="workspace-sidebar__row-name">{employee.name}</span>
+                {employee.role ? (
+                  <span className="workspace-sidebar__row-meta workspace-sidebar__row-meta--inline">
+                    {employee.role}
+                  </span>
+                ) : null}
+              </div>
             </div>
-            <div className="workspace-sidebar__row-preview">
-              {employee.lastMessage || "暂无消息"}
+            <div className="workspace-sidebar__row-preview-line">
+              <div className="workspace-sidebar__row-preview workspace-sidebar__row-preview-text">
+                {employee.lastMessage || "暂无消息"}
+              </div>
+              {unreadCount > 0 ? <SidebarUnreadBadge count={unreadCount} /> : null}
             </div>
           </div>
         </button>
 
-        <div ref={menuRef} className={cn("workspace-sidebar__row-menu", isMenuOpen && "z-50")}>
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              setIsMenuOpen((current) => !current);
-            }}
-            className="workspace-sidebar__row-menu-button"
-            data-open={isActionActive ? "true" : "false"}
-            aria-label={`打开 ${employee.name} 操作菜单`}
-            aria-expanded={isMenuOpen}
-            aria-haspopup="menu"
-          >
-            <Settings className="h-4 w-4" />
-          </button>
+        <div className="workspace-sidebar__row-actions">
+          <div ref={menuRef} className={cn("workspace-sidebar__row-menu", isMenuOpen && "z-50")}>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setIsMenuOpen((current) => !current);
+              }}
+              className="workspace-sidebar__row-menu-button"
+              data-open={isActionActive ? "true" : "false"}
+              aria-label={`打开 ${employee.name} 操作菜单`}
+              aria-expanded={isMenuOpen}
+              aria-haspopup="menu"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
 
-          {isMenuOpen ? (
-            <div role="menu" className="workspace-sidebar__row-menu-panel z-30">
-              <EmployeeMenuAction
-                leading="✏️"
-                label="编辑资料"
-                onClick={() => {
-                  handleMenuAction(onOpenDetail);
-                }}
-              />
-              <EmployeeMenuAction
-                leading="📌"
-                label={pinned ? "取消置顶" : "置顶"}
-                onClick={() => {
-                  handleMenuAction(onTogglePinned);
-                }}
-              />
-
-              <div className="my-1 h-px bg-[var(--color-border)]" />
-              <div className="workspace-sidebar__row-menu-section-title">移动到分组</div>
-
-              {hasDepartments ? (
-                departments.map((department) => (
-                  <EmployeeMenuAction
-                    key={department.id}
-                    leading={department.icon}
-                    label={department.name}
-                    trailing={departmentId === department.id ? "✓" : undefined}
-                    onClick={() => {
-                      handleMenuAction(() => {
-                        onMoveToDepartment(department.id);
-                      });
-                    }}
-                  />
-                ))
-              ) : (
-                <EmployeeMenuAction disabled leading="🗂️" label="还没有已创建的分组" />
-              )}
-
-              {showUngroupAction ? (
+            {isMenuOpen ? (
+              <div role="menu" className="workspace-sidebar__row-menu-panel z-30">
                 <EmployeeMenuAction
-                  leading="↩️"
-                  label="移出分组"
+                  leading="✏️"
+                  label="编辑资料"
                   onClick={() => {
-                    handleMenuAction(onClearDepartment);
+                    handleMenuAction(onOpenDetail);
                   }}
                 />
-              ) : null}
-            </div>
-          ) : null}
+                <EmployeeMenuAction
+                  leading="📌"
+                  label={pinned ? "取消置顶" : "置顶"}
+                  onClick={() => {
+                    handleMenuAction(onTogglePinned);
+                  }}
+                />
+
+                <div className="my-1 h-px bg-[var(--color-border)]" />
+                <div className="workspace-sidebar__row-menu-section-title">移动到分组</div>
+
+                {hasDepartments ? (
+                  departments.map((department) => (
+                    <EmployeeMenuAction
+                      key={department.id}
+                      leading={department.icon}
+                      label={department.name}
+                      trailing={departmentId === department.id ? "✓" : undefined}
+                      onClick={() => {
+                        handleMenuAction(() => {
+                          onMoveToDepartment(department.id);
+                        });
+                      }}
+                    />
+                  ))
+                ) : (
+                  <EmployeeMenuAction disabled leading="🗂️" label="还没有已创建的分组" />
+                )}
+
+                {showUngroupAction ? (
+                  <EmployeeMenuAction
+                    leading="↩️"
+                    label="移出分组"
+                    onClick={() => {
+                      handleMenuAction(onClearDepartment);
+                    }}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>
@@ -553,6 +583,7 @@ function ProjectGroupRow({
   memberCount,
   preview,
   selected,
+  unreadCount,
   onClick,
 }: ProjectGroupRowProps) {
   return (
@@ -560,12 +591,10 @@ function ProjectGroupRow({
       type="button"
       onClick={onClick}
       className={cn(
-        "workspace-sidebar__row group overflow-hidden",
+        "workspace-sidebar__row group overflow-hidden text-left",
         selected ? "workspace-sidebar__row--selected" : "",
       )}
     >
-      {selected ? <span className="workspace-sidebar__row-accent" /> : null}
-
       <div
         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--accent-foreground)]"
         style={{ background: getGroupIconBackground(groupId) }}
@@ -575,10 +604,17 @@ function ProjectGroupRow({
 
       <div className="workspace-sidebar__row-body">
         <div className="workspace-sidebar__row-title">
-          <span className="workspace-sidebar__row-name">{name}</span>
-          <span className="workspace-sidebar__row-meta">{memberCount} 人</span>
+          <div className="workspace-sidebar__row-labels">
+            <span className="workspace-sidebar__row-name">{name}</span>
+            <span className="workspace-sidebar__row-meta">{memberCount} 人</span>
+          </div>
         </div>
-        <div className="workspace-sidebar__row-preview">{preview.preview || "暂无消息"}</div>
+        <div className="workspace-sidebar__row-preview-line">
+          <div className="workspace-sidebar__row-preview workspace-sidebar__row-preview-text">
+            {preview.preview || "暂无消息"}
+          </div>
+          {unreadCount > 0 ? <SidebarUnreadBadge count={unreadCount} /> : null}
+        </div>
       </div>
     </button>
   );
@@ -592,12 +628,10 @@ function GroupArchiveRow({ archive, selected, onClick }: GroupArchiveRowProps) {
       type="button"
       onClick={onClick}
       className={cn(
-        "workspace-sidebar__row group overflow-hidden",
+        "workspace-sidebar__row group overflow-hidden text-left",
         selected ? "workspace-sidebar__row--selected" : "",
       )}
     >
-      {selected ? <span className="workspace-sidebar__row-accent" /> : null}
-
       <div
         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--accent-foreground)]"
         style={{ background: "linear-gradient(135deg, var(--muted-strong), var(--muted))" }}
@@ -616,16 +650,17 @@ function GroupArchiveRow({ archive, selected, onClick }: GroupArchiveRowProps) {
   );
 }
 
-function DirectArchiveRow({ archive }: DirectArchiveRowProps) {
+function DirectArchiveRow({ archive, selected, onClick }: DirectArchiveRowProps) {
   const preview = getDirectArchivePreview(archive);
 
   return (
     <button
       type="button"
-      onClick={() => {
-        console.log("[Archive] 1v1 归档回看暂未实现:", archive.id);
-      }}
-      className="workspace-sidebar__row group overflow-hidden"
+      onClick={onClick}
+      className={cn(
+        "workspace-sidebar__row group overflow-hidden text-left",
+        selected ? "workspace-sidebar__row--selected" : "",
+      )}
     >
       <div
         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--accent-foreground)]"
@@ -662,6 +697,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
   );
   const [agentMetaById, setAgentMetaById] = useState(() => readSidebarAgentMetaMap());
   const [directArchives, setDirectArchives] = useState(() => readSidebarDirectArchives());
+  const [unreadState, setUnreadState] = useState(() => readSidebarUnreadState());
   const [isCreateEmployeeOpen, setIsCreateEmployeeOpen] = useState(false);
   const [isDepartmentManageOpen, setIsDepartmentManageOpen] = useState(false);
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
@@ -685,12 +721,21 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
   const switchAgent = useChatStore((state) => state.switchAgent);
   const status = useChatStore((state) => state.status);
   const messagesByAgentId = useChatStore((state) => state.messagesByAgentId);
+  const selectedDirectArchiveId = useDirectArchiveStore((state) => state.selectedDirectArchiveId);
+  const selectDirectArchive = useDirectArchiveStore((state) => state.selectDirectArchive);
+  const clearSelectedDirectArchive = useDirectArchiveStore(
+    (state) => state.clearSelectedDirectArchive,
+  );
   const onSelectEmployeeRef = useRef(onSelectEmployee);
 
   const activeAgentId = currentAgentId || selectedEmployeeId;
   const keyword = search.trim().toLowerCase();
   const connection = getConnectionStyle(status);
   const departmentsById = new Map(departments.map((department) => [department.id, department]));
+  const directUnreadByAgentId = unreadState.directByAgentId;
+  const groupUnreadById = unreadState.groupById;
+  const isDirectConversationActive =
+    selectedGroupId === null && selectedArchiveId === null && selectedDirectArchiveId === null;
 
   const agentEntries = agents.map((agent) => {
     const preview = getPreview(messagesByAgentId.get(agent.id) ?? []);
@@ -799,6 +844,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
       setDepartments(readSidebarDepartments());
       setAgentMetaById(readSidebarAgentMetaMap());
       setDirectArchives(readSidebarDirectArchives());
+      setUnreadState(readSidebarUnreadState());
     });
   }, []);
 
@@ -868,6 +914,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
   async function handleSelectAgent(agent: Agent) {
     clearSelectedGroup();
     clearSelectedArchive();
+    clearSelectedDirectArchive();
     closeDetail();
     onSelectEmployee(buildInitialEmployee(agent));
     await switchAgent(agent.id);
@@ -881,19 +928,29 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
 
     clearSelectedGroup();
     clearSelectedArchive();
+    clearSelectedDirectArchive();
     closeDetail();
     onSelectEmployee(buildInitialEmployee(nextAgent));
     await switchAgent(nextAgent.id);
   }
 
   function handleSelectGroup(groupId: string) {
+    clearSelectedDirectArchive();
     closeDetail();
     selectGroup(groupId);
   }
 
   function handleSelectArchive(archiveId: string) {
+    clearSelectedDirectArchive();
     closeDetail();
     selectArchive(archiveId);
+  }
+
+  function handleSelectDirectArchive(archiveId: string) {
+    clearSelectedGroup();
+    clearSelectedArchive();
+    closeDetail();
+    selectDirectArchive(archiveId);
   }
 
   function toggleSection(key: string) {
@@ -1031,9 +1088,10 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
                         departmentId={departmentId}
                         departments={departments}
                         employee={employee}
-                        isSelected={employee.id === activeAgentId}
+                        isSelected={isDirectConversationActive && employee.id === activeAgentId}
                         isDetailActive={showDetailFor === employee.id}
                         pinned={pinned}
+                        unreadCount={directUnreadByAgentId[employee.id] ?? 0}
                         onClearDepartment={() => {
                           handleMoveToDepartment(employee.id, undefined);
                         }}
@@ -1078,6 +1136,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
                           group.createdAt,
                         )}
                         selected={selectedGroupId === group.id}
+                        unreadCount={groupUnreadById[group.id] ?? 0}
                         onClick={() => handleSelectGroup(group.id)}
                       />
                     ))}
@@ -1106,9 +1165,10 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
                           departmentId={departmentId}
                           departments={departments}
                           employee={employee}
-                          isSelected={employee.id === activeAgentId}
+                          isSelected={isDirectConversationActive && employee.id === activeAgentId}
                           isDetailActive={showDetailFor === employee.id}
                           pinned={pinned}
+                          unreadCount={directUnreadByAgentId[employee.id] ?? 0}
                           onClearDepartment={() => {
                             handleMoveToDepartment(employee.id, undefined);
                           }}
@@ -1149,9 +1209,10 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
                         departmentId={departmentId}
                         departments={departments}
                         employee={employee}
-                        isSelected={employee.id === activeAgentId}
+                        isSelected={isDirectConversationActive && employee.id === activeAgentId}
                         isDetailActive={showDetailFor === employee.id}
                         pinned={pinned}
+                        unreadCount={directUnreadByAgentId[employee.id] ?? 0}
                         onClearDepartment={() => {
                           handleMoveToDepartment(employee.id, undefined);
                         }}
@@ -1212,7 +1273,12 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
                 {!collapsedSections[SECTION_KEYS.directArchives] ? (
                   <div className="workspace-sidebar__section-items">
                     {visibleDirectArchives.map((archive) => (
-                      <DirectArchiveRow key={archive.id} archive={archive} />
+                      <DirectArchiveRow
+                        key={archive.id}
+                        archive={archive}
+                        selected={selectedDirectArchiveId === archive.id}
+                        onClick={() => handleSelectDirectArchive(archive.id)}
+                      />
                     ))}
                   </div>
                 ) : null}

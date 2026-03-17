@@ -60,6 +60,7 @@ export type FallbackIndicatorStatus = {
 
 export type ChatProps = {
   sessionKey: string;
+  conversationMode?: "direct" | "group";
   onSessionKeyChange: (next: string) => void;
   thinkingLevel: string | null;
   showThinking: boolean;
@@ -133,8 +134,12 @@ export type ChatProps = {
   onAbort?: () => void;
   onQueueRemove: (id: string) => void;
   onNewSession: () => void;
+  onCompactSession?: () => void;
+  onArchiveSession?: () => void;
+  onResetSession?: () => void;
   onClearHistory?: () => void;
   onUserAvatarClick?: (target: HTMLElement) => void;
+  quickActionDisabled?: boolean;
   agentsList: {
     agents: Array<{ id: string; name?: string; identity?: { name?: string; avatarUrl?: string } }>;
     defaultId?: string;
@@ -181,6 +186,9 @@ function getDeletedMessages(sessionKey: string): DeletedMessages {
 interface ChatEphemeralState {
   sttRecording: boolean;
   sttInterimText: string;
+  commandPaletteOpen: boolean;
+  commandPaletteQuery: string;
+  commandPaletteIndex: number;
   slashMenuOpen: boolean;
   slashMenuItems: SlashCommandDef[];
   slashMenuIndex: number;
@@ -196,6 +204,9 @@ function createChatEphemeralState(): ChatEphemeralState {
   return {
     sttRecording: false,
     sttInterimText: "",
+    commandPaletteOpen: false,
+    commandPaletteQuery: "",
+    commandPaletteIndex: 0,
     slashMenuOpen: false,
     slashMenuItems: [],
     slashMenuIndex: 0,
@@ -239,6 +250,16 @@ export function toggleChatSearch(forceOpen?: boolean) {
     vs.searchQuery = "";
   }
   return vs.searchOpen;
+}
+
+function focusComposerTextarea() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    document.querySelector<HTMLTextAreaElement>(".agent-chat__textarea")?.focus();
+  });
 }
 
 function adjustTextareaHeight(el: HTMLTextAreaElement) {
@@ -608,6 +629,43 @@ function tokenEstimate(draft: string): string | null {
   return `~${Math.ceil(draft.length / 4)} tokens`;
 }
 
+function openCommandPalette(requestUpdate: () => void): void {
+  vs.commandPaletteOpen = true;
+  vs.commandPaletteQuery = "";
+  vs.commandPaletteIndex = 0;
+  vs.slashMenuOpen = false;
+  resetSlashMenuState();
+  requestUpdate();
+}
+
+function closeCommandPalette(requestUpdate: () => void): void {
+  vs.commandPaletteOpen = false;
+  vs.commandPaletteQuery = "";
+  vs.commandPaletteIndex = 0;
+  requestUpdate();
+  focusComposerTextarea();
+}
+
+function selectCommandPaletteItem(
+  cmd: SlashCommandDef,
+  props: ChatProps,
+  requestUpdate: () => void,
+): void {
+  const nextDraft = `/${cmd.name} `;
+  props.onDraftChange(nextDraft, nextDraft.length);
+  closeCommandPalette(requestUpdate);
+}
+
+function scrollActivePaletteItemIntoView() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    document.querySelector(".cmd-palette__item--active")?.scrollIntoView({ block: "nearest" });
+  });
+}
+
 /**
  * Export chat markdown - delegates to shared utility.
  */
@@ -690,6 +748,261 @@ function renderSearchBar(requestUpdate: () => void): TemplateResult | typeof not
       }}>
         ${icons.x}
       </button>
+    </div>
+  `;
+}
+
+function renderQuickActions(
+  props: ChatProps,
+  requestUpdate: () => void,
+): TemplateResult | typeof nothing {
+  const isGroupConversation = props.conversationMode === "group";
+  const hasMessages = Array.isArray(props.messages) && props.messages.length > 0;
+  const actionsDisabled = Boolean(props.quickActionDisabled);
+
+  const actions = isGroupConversation
+    ? [
+        {
+          key: "command",
+          label: "命令",
+          icon: icons.terminal,
+          tone: "neutral",
+          disabled: false,
+          onClick: () => {
+            openCommandPalette(requestUpdate);
+          },
+        },
+        {
+          key: "export",
+          label: "导出",
+          icon: icons.download,
+          tone: "neutral",
+          disabled: !hasMessages || actionsDisabled,
+          onClick: () => {
+            exportMarkdown(props);
+          },
+        },
+        {
+          key: "archive",
+          label: "归档",
+          icon: icons.folder,
+          tone: "neutral",
+          disabled: !hasMessages || actionsDisabled || !props.onArchiveSession,
+          onClick: () => {
+            props.onArchiveSession?.();
+          },
+        },
+        {
+          key: "reset",
+          label: "重置",
+          icon: icons.refresh,
+          tone: "danger",
+          disabled: !hasMessages || actionsDisabled || !props.onResetSession,
+          onClick: () => {
+            props.onResetSession?.();
+          },
+        },
+      ]
+    : [
+        {
+          key: "command",
+          label: "命令",
+          icon: icons.terminal,
+          tone: "neutral",
+          disabled: false,
+          onClick: () => {
+            openCommandPalette(requestUpdate);
+          },
+        },
+        {
+          key: "compact",
+          label: "压缩",
+          icon: icons.loader,
+          tone: "neutral",
+          disabled: !hasMessages || actionsDisabled || !props.onCompactSession,
+          onClick: () => {
+            props.onCompactSession?.();
+          },
+        },
+        {
+          key: "archive",
+          label: "归档",
+          icon: icons.folder,
+          tone: "neutral",
+          disabled: !hasMessages || actionsDisabled || !props.onArchiveSession,
+          onClick: () => {
+            props.onArchiveSession?.();
+          },
+        },
+        {
+          key: "reset",
+          label: "重置",
+          icon: icons.refresh,
+          tone: "danger",
+          disabled: !hasMessages || actionsDisabled || !props.onResetSession,
+          onClick: () => {
+            props.onResetSession?.();
+          },
+        },
+      ];
+
+  return html`
+    <div class="agent-chat__quick-actions" aria-label="聊天快捷操作">
+      ${actions.map(
+        (action) => html`
+          <button
+            type="button"
+            class="agent-chat__quick-action agent-chat__quick-action--${action.tone}"
+            ?disabled=${action.disabled}
+            @click=${action.onClick}
+          >
+            <span class="agent-chat__quick-action-icon">${action.icon}</span>
+            <span>${action.label}</span>
+          </button>
+        `,
+      )}
+    </div>
+  `;
+}
+
+function renderCommandPalette(
+  requestUpdate: () => void,
+  props: ChatProps,
+): TemplateResult | typeof nothing {
+  if (!vs.commandPaletteOpen) {
+    return nothing;
+  }
+
+  const items = getSlashCommandCompletions(vs.commandPaletteQuery);
+  const activeIndex =
+    items.length > 0 ? Math.min(vs.commandPaletteIndex, items.length - 1) : vs.commandPaletteIndex;
+  const grouped = new Map<
+    SlashCommandCategory,
+    Array<{ cmd: SlashCommandDef; globalIndex: number }>
+  >();
+
+  items.forEach((cmd, globalIndex) => {
+    const category = cmd.category ?? "session";
+    const current = grouped.get(category) ?? [];
+    current.push({ cmd, globalIndex });
+    grouped.set(category, current);
+  });
+
+  const handleKeydown = (event: KeyboardEvent) => {
+    if (items.length === 0) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeCommandPalette(requestUpdate);
+      }
+      return;
+    }
+
+    switch (event.key) {
+      case "ArrowDown":
+        event.preventDefault();
+        vs.commandPaletteIndex = (activeIndex + 1) % items.length;
+        requestUpdate();
+        scrollActivePaletteItemIntoView();
+        return;
+      case "ArrowUp":
+        event.preventDefault();
+        vs.commandPaletteIndex = (activeIndex - 1 + items.length) % items.length;
+        requestUpdate();
+        scrollActivePaletteItemIntoView();
+        return;
+      case "Enter":
+        event.preventDefault();
+        selectCommandPaletteItem(items[activeIndex], props, requestUpdate);
+        return;
+      case "Escape":
+        event.preventDefault();
+        closeCommandPalette(requestUpdate);
+        return;
+    }
+  };
+
+  return html`
+    <div
+      class="cmd-palette-overlay"
+      @click=${() => {
+        closeCommandPalette(requestUpdate);
+      }}
+    >
+      <div
+        class="cmd-palette"
+        @click=${(event: Event) => {
+          event.stopPropagation();
+        }}
+        @keydown=${handleKeydown}
+      >
+        <input
+          ${ref((element) => {
+            if (element) {
+              window.requestAnimationFrame(() => {
+                (element as HTMLInputElement).focus();
+              });
+            }
+          })}
+          class="cmd-palette__input"
+          type="text"
+          placeholder="搜索命令，或直接输入 /"
+          .value=${vs.commandPaletteQuery}
+          @input=${(event: Event) => {
+            vs.commandPaletteQuery = (event.target as HTMLInputElement).value;
+            vs.commandPaletteIndex = 0;
+            requestUpdate();
+          }}
+        />
+
+        <div class="cmd-palette__results">
+          ${
+            grouped.size === 0
+              ? html`
+                  <div class="cmd-palette__empty">
+                    <span class="cmd-palette__empty-icon">${icons.search}</span>
+                    <span>没有找到匹配命令</span>
+                  </div>
+                `
+              : Array.from(grouped.entries()).map(
+                  ([category, commands]) => html`
+                    <div class="cmd-palette__group-label">${CATEGORY_LABELS[category]}</div>
+                    ${commands.map(
+                      ({ cmd, globalIndex }) => html`
+                        <button
+                          type="button"
+                          class="cmd-palette__item ${globalIndex === activeIndex ? "cmd-palette__item--active" : ""}"
+                          @click=${() => {
+                            selectCommandPaletteItem(cmd, props, requestUpdate);
+                          }}
+                          @mouseenter=${() => {
+                            vs.commandPaletteIndex = globalIndex;
+                            requestUpdate();
+                          }}
+                        >
+                          <span class="cmd-palette__item-icon">
+                            ${cmd.icon ? icons[cmd.icon] : icons.terminal}
+                          </span>
+                          <span class="cmd-palette__item-body">
+                            <span class="cmd-palette__item-title">${cmd.title}</span>
+                            <span class="cmd-palette__item-desc">${cmd.description}</span>
+                          </span>
+                          <span class="cmd-palette__item-command"
+                            >/${cmd.name}${cmd.args ? ` ${cmd.args}` : ""}</span
+                          >
+                        </button>
+                      `,
+                    )}
+                  `,
+                )
+          }
+        </div>
+
+        <div class="cmd-palette__footer">
+          <span><kbd>↑↓</kbd> 选择</span>
+          <span><kbd>Enter</kbd> 填入命令</span>
+          <span><kbd>Esc</kbd> 关闭</span>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -857,7 +1170,9 @@ function renderSlashMenu(
     return html`
       <div class="slash-menu">
         <div class="slash-menu-group">
-          <div class="slash-menu-group__label">/${vs.slashMenuCommand.name} ${vs.slashMenuCommand.description}</div>
+          <div class="slash-menu-group__label">
+            ${vs.slashMenuCommand.title} · /${vs.slashMenuCommand.name}
+          </div>
           ${vs.slashMenuArgItems.map(
             (arg, i) => html`
               <div
@@ -870,16 +1185,17 @@ function renderSlashMenu(
               >
                 ${vs.slashMenuCommand?.icon ? html`<span class="slash-menu-icon">${icons[vs.slashMenuCommand.icon]}</span>` : nothing}
                 <span class="slash-menu-name">${arg}</span>
-                <span class="slash-menu-desc">/${vs.slashMenuCommand?.name} ${arg}</span>
+                <span class="slash-menu-args">/${vs.slashMenuCommand?.name} ${arg}</span>
+                <span class="slash-menu-desc">${vs.slashMenuCommand?.description ?? ""}</span>
               </div>
             `,
           )}
         </div>
         <div class="slash-menu-footer">
-          <kbd>↑↓</kbd> navigate
-          <kbd>Tab</kbd> fill
-          <kbd>Enter</kbd> run
-          <kbd>Esc</kbd> close
+          <kbd>↑↓</kbd> 选择
+          <kbd>Tab</kbd> 补全
+          <kbd>Enter</kbd> 执行
+          <kbd>Esc</kbd> 关闭
         </div>
       </div>
     `;
@@ -921,15 +1237,15 @@ function renderSlashMenu(
               }}
             >
               ${cmd.icon ? html`<span class="slash-menu-icon">${icons[cmd.icon]}</span>` : nothing}
-              <span class="slash-menu-name">/${cmd.name}</span>
-              ${cmd.args ? html`<span class="slash-menu-args">${cmd.args}</span>` : nothing}
+              <span class="slash-menu-name">${cmd.title}</span>
+              <span class="slash-menu-args">/${cmd.name}${cmd.args ? ` ${cmd.args}` : ""}</span>
               <span class="slash-menu-desc">${cmd.description}</span>
               ${
                 cmd.argOptions?.length
-                  ? html`<span class="slash-menu-badge">${cmd.argOptions.length} options</span>`
+                  ? html`<span class="slash-menu-badge">${cmd.argOptions.length} 个选项</span>`
                   : cmd.executeLocal && !cmd.args
                     ? html`
-                        <span class="slash-menu-badge">instant</span>
+                        <span class="slash-menu-badge">直接可用</span>
                       `
                     : nothing
               }
@@ -944,10 +1260,10 @@ function renderSlashMenu(
     <div class="slash-menu">
       ${sections}
       <div class="slash-menu-footer">
-        <kbd>↑↓</kbd> navigate
-        <kbd>Tab</kbd> fill
-        <kbd>Enter</kbd> select
-        <kbd>Esc</kbd> close
+        <kbd>↑↓</kbd> 选择
+        <kbd>Tab</kbd> 补全
+        <kbd>Enter</kbd> 选中
+        <kbd>Esc</kbd> 关闭
       </div>
     </div>
   `;
@@ -955,6 +1271,7 @@ function renderSlashMenu(
 
 export function renderChat(props: ChatProps) {
   const canCompose = props.connected;
+  const isGroupConversation = props.conversationMode === "group";
   const isBusy = props.sending || props.stream !== null;
   const canAbort = Boolean(props.canAbort && props.onAbort);
   const activeSession = props.sessions?.sessions?.find((row) => row.key === props.sessionKey);
@@ -1006,6 +1323,12 @@ export function renderChat(props: ChatProps) {
 
   const chatItems = buildChatItems(props);
   const isNewSessionLoading = props.newSessionLoading === true;
+  const quickActionDisabled =
+    Boolean(props.quickActionDisabled) ||
+    !props.connected ||
+    props.loading ||
+    isNewSessionLoading ||
+    isBusy;
   const isEmpty = chatItems.length === 0 && !props.loading && !isNewSessionLoading;
 
   const thread = html`
@@ -1128,6 +1451,42 @@ export function renderChat(props: ChatProps) {
   `;
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    if (vs.commandPaletteOpen) {
+      const items = getSlashCommandCompletions(vs.commandPaletteQuery);
+      if (items.length === 0) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeCommandPalette(requestUpdate);
+        }
+        return;
+      }
+
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          vs.commandPaletteIndex = (vs.commandPaletteIndex + 1) % items.length;
+          requestUpdate();
+          scrollActivePaletteItemIntoView();
+          return;
+        case "ArrowUp":
+          e.preventDefault();
+          vs.commandPaletteIndex = (vs.commandPaletteIndex - 1 + items.length) % items.length;
+          requestUpdate();
+          scrollActivePaletteItemIntoView();
+          return;
+        case "Enter": {
+          e.preventDefault();
+          const activeIndex = Math.min(vs.commandPaletteIndex, items.length - 1);
+          selectCommandPaletteItem(items[activeIndex], props, requestUpdate);
+          return;
+        }
+        case "Escape":
+          e.preventDefault();
+          closeCommandPalette(requestUpdate);
+          return;
+      }
+    }
+
     // Slash menu navigation — arg mode
     if (vs.slashMenuOpen && vs.slashMenuMode === "args" && vs.slashMenuArgItems.length > 0) {
       const len = vs.slashMenuArgItems.length;
@@ -1305,6 +1664,7 @@ export function renderChat(props: ChatProps) {
           : nothing
       }
 
+      ${renderCommandPalette(requestUpdate, props)}
       ${renderSearchBar(requestUpdate)}
       ${renderPinnedSection(props, pinned, requestUpdate)}
 
@@ -1393,6 +1753,7 @@ export function renderChat(props: ChatProps) {
 
       <!-- Input bar -->
       <div class="agent-chat__input">
+        ${renderQuickActions({ ...props, quickActionDisabled }, requestUpdate)}
         ${renderSlashMenu(requestUpdate, props)}
         ${props.groupCompose ? renderGroupMentionPopover(props.groupCompose) : nothing}
         ${renderAttachmentPreview(props)}
@@ -1525,7 +1886,7 @@ export function renderChat(props: ChatProps) {
           <div class="agent-chat__toolbar-right">
             ${nothing /* search hidden for now */}
             ${
-              canAbort
+              canAbort || isGroupConversation
                 ? nothing
                 : html`
                     <button
@@ -1538,9 +1899,20 @@ export function renderChat(props: ChatProps) {
                     </button>
                   `
             }
-            <button class="btn-ghost" @click=${() => exportMarkdown(props)} title="Export" ?disabled=${props.messages.length === 0}>
-              ${icons.download}
-            </button>
+            ${
+              isGroupConversation
+                ? nothing
+                : html`
+                    <button
+                      class="btn-ghost"
+                      @click=${() => exportMarkdown(props)}
+                      title="导出 Markdown"
+                      ?disabled=${props.messages.length === 0}
+                    >
+                      ${icons.download}
+                    </button>
+                  `
+            }
 
             ${
               canAbort && (isBusy || props.sending)

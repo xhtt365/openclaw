@@ -1,5 +1,7 @@
 "use client";
 
+import type { ChatMessage, ChatUsage } from "@/utils/messageAdapter";
+
 export type SidebarDepartment = {
   id: string;
   name: string;
@@ -18,11 +20,21 @@ export type SidebarDirectArchive = {
   id: string;
   agentId: string;
   agentName: string;
+  agentRole?: string;
+  agentAvatarUrl?: string;
+  agentAvatarText?: string;
+  agentEmoji?: string;
   preview: string;
   archivedAt: string;
+  messages: ChatMessage[];
 };
 
 export type SidebarCollapsedSections = Record<string, boolean>;
+
+export type SidebarUnreadState = {
+  directByAgentId: Record<string, number>;
+  groupById: Record<string, number>;
+};
 
 export const SIDEBAR_DEPARTMENTS_STORAGE_KEY = "xiaban.sidebar.departments";
 export const SIDEBAR_AGENT_META_STORAGE_KEY = "xiaban.sidebar.agentMeta";
@@ -30,6 +42,7 @@ export const EMPLOYEE_DEPARTMENT_MAP_STORAGE_KEY = "employeeDepartmentMap";
 export const PINNED_EMPLOYEES_STORAGE_KEY = "pinnedEmployees";
 export const SIDEBAR_COLLAPSED_SECTIONS_STORAGE_KEY = "xiaban.sidebar.collapsedSections.v2";
 export const SIDEBAR_DIRECT_ARCHIVES_STORAGE_KEY = "xiaban.sidebar.directArchives";
+export const SIDEBAR_UNREAD_STORAGE_KEY = "xiaban.sidebar.unreadState";
 const SIDEBAR_STORAGE_CHANGE_EVENT = "xiaban:sidebar-storage-change";
 
 // 这几类数据当前都先走本地 mock，后续接后端时统一从这里替换读写入口。
@@ -77,6 +90,121 @@ function parseStorageValue(key: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeUsage(value: unknown): ChatUsage | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const readNumber = (input: unknown) =>
+    typeof input === "number" && Number.isFinite(input) ? input : 0;
+  const cost =
+    isRecord(value.cost) &&
+    typeof value.cost.total === "number" &&
+    Number.isFinite(value.cost.total)
+      ? { total: value.cost.total }
+      : undefined;
+
+  return {
+    input: readNumber(value.input),
+    output: readNumber(value.output),
+    cacheRead: readNumber(value.cacheRead),
+    cacheWrite: readNumber(value.cacheWrite),
+    totalTokens: readNumber(value.totalTokens),
+    cost,
+  };
+}
+
+function cloneArchivedMessages(messages: ChatMessage[]) {
+  return messages.map((message) => ({
+    ...message,
+    usage: message.usage
+      ? {
+          ...message.usage,
+          cost: message.usage.cost ? { ...message.usage.cost } : undefined,
+        }
+      : undefined,
+    isLoading: false,
+    isNew: false,
+    isHistorical: true,
+  }));
+}
+
+function normalizeArchivedMessages(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const normalizedMessages: Array<ChatMessage | null> = value.map((item) => {
+    if (!isRecord(item)) {
+      return null;
+    }
+
+    const id = typeof item.id === "string" ? item.id.trim() : "";
+    const role = item.role === "user" || item.role === "assistant" ? item.role : null;
+    const content = typeof item.content === "string" ? item.content : "";
+    const thinking =
+      typeof item.thinking === "string" && item.thinking.trim() ? item.thinking : undefined;
+    const model = typeof item.model === "string" && item.model.trim() ? item.model : undefined;
+    const timestamp =
+      typeof item.timestamp === "number" && Number.isFinite(item.timestamp)
+        ? item.timestamp
+        : undefined;
+    const timestampLabel =
+      typeof item.timestampLabel === "string" && item.timestampLabel.trim()
+        ? item.timestampLabel.trim()
+        : undefined;
+
+    if (!id || role === null) {
+      return null;
+    }
+
+    return {
+      id,
+      role,
+      content,
+      thinking,
+      model,
+      usage: normalizeUsage(item.usage),
+      timestamp,
+      timestampLabel,
+      isLoading: false,
+      isNew: false,
+      isHistorical: true,
+    } satisfies ChatMessage;
+  });
+
+  return normalizedMessages.filter((message): message is ChatMessage => message !== null);
+}
+
+function sortDirectArchivesByNewest(archives: SidebarDirectArchive[]) {
+  return [...archives].toSorted(
+    (left, right) => new Date(right.archivedAt).getTime() - new Date(left.archivedAt).getTime(),
+  );
+}
+
+function normalizeUnreadMap(value: unknown) {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, count]) => {
+      const normalizedKey = key.trim();
+      if (!normalizedKey) {
+        return [];
+      }
+
+      const normalizedCount =
+        typeof count === "number" && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+      if (normalizedCount <= 0) {
+        return [];
+      }
+
+      return [[normalizedKey, normalizedCount]];
+    }),
+  );
 }
 
 function normalizeSidebarDepartments(value: SidebarDepartment[]) {
@@ -367,32 +495,186 @@ export function readSidebarDirectArchives(): SidebarDirectArchive[] {
     return [];
   }
 
-  return parsed
-    .map((item) => {
-      if (!isRecord(item)) {
-        return null;
-      }
+  const normalized: Array<SidebarDirectArchive | null> = parsed.map((item) => {
+    if (!isRecord(item)) {
+      return null;
+    }
 
-      const id = typeof item.id === "string" ? item.id.trim() : "";
-      const agentId = typeof item.agentId === "string" ? item.agentId.trim() : "";
-      const agentName = typeof item.agentName === "string" ? item.agentName.trim() : "";
-      const preview = typeof item.preview === "string" ? item.preview.trim() : "";
-      const archivedAt = typeof item.archivedAt === "string" ? item.archivedAt.trim() : "";
+    const id = typeof item.id === "string" ? item.id.trim() : "";
+    const agentId = typeof item.agentId === "string" ? item.agentId.trim() : "";
+    const agentName = typeof item.agentName === "string" ? item.agentName.trim() : "";
+    const preview = typeof item.preview === "string" ? item.preview.trim() : "";
+    const archivedAt = typeof item.archivedAt === "string" ? item.archivedAt.trim() : "";
+    const agentRole =
+      typeof item.agentRole === "string" && item.agentRole.trim()
+        ? item.agentRole.trim()
+        : undefined;
+    const agentAvatarUrl =
+      typeof item.agentAvatarUrl === "string" && item.agentAvatarUrl.trim()
+        ? item.agentAvatarUrl.trim()
+        : undefined;
+    const agentAvatarText =
+      typeof item.agentAvatarText === "string" && item.agentAvatarText.trim()
+        ? item.agentAvatarText.trim()
+        : undefined;
+    const agentEmoji =
+      typeof item.agentEmoji === "string" && item.agentEmoji.trim()
+        ? item.agentEmoji.trim()
+        : undefined;
 
-      if (!id || !agentId || !agentName || !archivedAt) {
-        return null;
-      }
+    if (!id || !agentId || !agentName || !archivedAt) {
+      return null;
+    }
 
-      return {
-        id,
-        agentId,
-        agentName,
-        preview: preview || "已归档，可稍后回看",
-        archivedAt,
-      };
-    })
-    .filter((archive): archive is SidebarDirectArchive => archive !== null)
-    .toSorted(
-      (left, right) => new Date(right.archivedAt).getTime() - new Date(left.archivedAt).getTime(),
-    );
+    return {
+      id,
+      agentId,
+      agentName,
+      agentRole,
+      agentAvatarUrl,
+      agentAvatarText,
+      agentEmoji,
+      preview: preview || "已归档，可稍后回看",
+      archivedAt,
+      messages: normalizeArchivedMessages(item.messages),
+    };
+  });
+
+  return sortDirectArchivesByNewest(
+    normalized.filter((archive): archive is SidebarDirectArchive => archive !== null),
+  );
+}
+
+export function writeSidebarDirectArchives(value: SidebarDirectArchive[]) {
+  const mappedArchives: Array<SidebarDirectArchive | null> = value.map((archive) => {
+    const id = archive.id.trim();
+    const agentId = archive.agentId.trim();
+    const agentName = archive.agentName.trim();
+    const archivedAt = archive.archivedAt.trim();
+    if (!id || !agentId || !agentName || !archivedAt) {
+      return null;
+    }
+
+    return {
+      ...archive,
+      id,
+      agentId,
+      agentName,
+      agentRole: archive.agentRole?.trim() || undefined,
+      agentAvatarUrl: archive.agentAvatarUrl?.trim() || undefined,
+      agentAvatarText: archive.agentAvatarText?.trim() || undefined,
+      agentEmoji: archive.agentEmoji?.trim() || undefined,
+      preview: archive.preview.trim() || "已归档，可稍后回看",
+      archivedAt,
+      messages: cloneArchivedMessages(archive.messages ?? []),
+    } satisfies SidebarDirectArchive;
+  });
+
+  const normalized = sortDirectArchivesByNewest(
+    mappedArchives.filter((archive): archive is SidebarDirectArchive => archive !== null),
+  );
+
+  writeStorageItem(SIDEBAR_DIRECT_ARCHIVES_STORAGE_KEY, JSON.stringify(normalized));
+  emitStorageChange(SIDEBAR_DIRECT_ARCHIVES_STORAGE_KEY);
+  return normalized;
+}
+
+export function appendSidebarDirectArchive(archive: SidebarDirectArchive) {
+  return writeSidebarDirectArchives([archive, ...readSidebarDirectArchives()]);
+}
+
+export function readSidebarUnreadState(): SidebarUnreadState {
+  const parsed = parseStorageValue(SIDEBAR_UNREAD_STORAGE_KEY);
+  if (!isRecord(parsed)) {
+    return {
+      directByAgentId: {},
+      groupById: {},
+    };
+  }
+
+  return {
+    directByAgentId: normalizeUnreadMap(parsed.directByAgentId),
+    groupById: normalizeUnreadMap(parsed.groupById),
+  };
+}
+
+export function writeSidebarUnreadState(value: SidebarUnreadState) {
+  const normalized = {
+    directByAgentId: normalizeUnreadMap(value.directByAgentId),
+    groupById: normalizeUnreadMap(value.groupById),
+  } satisfies SidebarUnreadState;
+
+  writeStorageItem(SIDEBAR_UNREAD_STORAGE_KEY, JSON.stringify(normalized));
+  emitStorageChange(SIDEBAR_UNREAD_STORAGE_KEY);
+  return normalized;
+}
+
+export function incrementSidebarDirectUnreadCount(agentId: string, delta = 1) {
+  const normalizedAgentId = agentId.trim();
+  if (!normalizedAgentId || !Number.isFinite(delta) || delta <= 0) {
+    return readSidebarUnreadState();
+  }
+
+  const current = readSidebarUnreadState();
+  return writeSidebarUnreadState({
+    ...current,
+    directByAgentId: {
+      ...current.directByAgentId,
+      [normalizedAgentId]: (current.directByAgentId[normalizedAgentId] ?? 0) + Math.floor(delta),
+    },
+  });
+}
+
+export function clearSidebarDirectUnreadCount(agentId: string) {
+  const normalizedAgentId = agentId.trim();
+  if (!normalizedAgentId) {
+    return readSidebarUnreadState();
+  }
+
+  const current = readSidebarUnreadState();
+  if (!(normalizedAgentId in current.directByAgentId)) {
+    return current;
+  }
+
+  const nextDirectByAgentId = { ...current.directByAgentId };
+  delete nextDirectByAgentId[normalizedAgentId];
+  return writeSidebarUnreadState({
+    ...current,
+    directByAgentId: nextDirectByAgentId,
+  });
+}
+
+export function incrementSidebarGroupUnreadCount(groupId: string, delta = 1) {
+  const normalizedGroupId = groupId.trim();
+  if (!normalizedGroupId || !Number.isFinite(delta) || delta <= 0) {
+    return readSidebarUnreadState();
+  }
+
+  const current = readSidebarUnreadState();
+  return writeSidebarUnreadState({
+    ...current,
+    groupById: {
+      ...current.groupById,
+      [normalizedGroupId]: (current.groupById[normalizedGroupId] ?? 0) + Math.floor(delta),
+    },
+  });
+}
+
+export function clearSidebarGroupUnreadCount(groupId: string) {
+  const normalizedGroupId = groupId.trim();
+  if (!normalizedGroupId) {
+    return readSidebarUnreadState();
+  }
+
+  const current = readSidebarUnreadState();
+  if (!(normalizedGroupId in current.groupById)) {
+    return current;
+  }
+
+  const nextGroupById = { ...current.groupById };
+  delete nextGroupById[normalizedGroupId];
+  return writeSidebarUnreadState({
+    ...current,
+    groupById: nextGroupById,
+  });
 }

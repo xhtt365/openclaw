@@ -7,11 +7,13 @@ import { EmployeeList, type Employee } from "@/components/layout/EmployeeList";
 import { Toaster } from "@/components/ui/toaster";
 import { cn } from "@/lib/utils";
 import { useAgentStore } from "@/stores/agentStore";
+import { useDirectArchiveStore } from "@/stores/directArchiveStore";
 import { useGroupStore } from "@/stores/groupStore";
 import {
   readChatFullscreenPreference,
   writeChatFullscreenPreference,
 } from "@/utils/chatFullscreen";
+import { readSidebarDirectArchives, subscribeSidebarStorage } from "@/utils/sidebarPersistence";
 
 const DEFAULT_EMPLOYEE: Employee = {
   id: "main",
@@ -27,6 +29,7 @@ const DEFAULT_EMPLOYEE: Employee = {
 
 function AppLayoutInner() {
   const [selectedEmployee, setSelectedEmployee] = useState<Employee>(DEFAULT_EMPLOYEE);
+  const [directArchives, setDirectArchives] = useState(() => readSidebarDirectArchives());
   const [isReady, setIsReady] = useState(false);
   const [isChatFullscreen, setIsChatFullscreen] = useState(() => readChatFullscreenPreference());
   const showDetailFor = useAgentStore((state) => state.showDetailFor);
@@ -35,9 +38,15 @@ function AppLayoutInner() {
   const selectedArchiveId = useGroupStore((state) => state.selectedArchiveId);
   const archives = useGroupStore((state) => state.archives);
   const fetchGroups = useGroupStore((state) => state.fetchGroups);
+  const selectedDirectArchiveId = useDirectArchiveStore((state) => state.selectedDirectArchiveId);
+  const clearSelectedDirectArchive = useDirectArchiveStore(
+    (state) => state.clearSelectedDirectArchive,
+  );
 
   const selectedGroup = groups.find((group) => group.id === selectedGroupId) ?? null;
   const selectedArchive = archives.find((archive) => archive.id === selectedArchiveId) ?? null;
+  const selectedDirectArchive =
+    directArchives.find((archive) => archive.id === selectedDirectArchiveId) ?? null;
 
   function handleSelectEmployee(employee: Employee) {
     setSelectedEmployee(employee);
@@ -58,10 +67,23 @@ function AppLayoutInner() {
   }, [fetchGroups]);
 
   useEffect(() => {
+    return subscribeSidebarStorage(() => {
+      setDirectArchives(readSidebarDirectArchives());
+    });
+  }, []);
+
+  useEffect(() => {
+    if (selectedDirectArchiveId !== null && selectedDirectArchive === null) {
+      clearSelectedDirectArchive();
+    }
+  }, [clearSelectedDirectArchive, selectedDirectArchive, selectedDirectArchiveId]);
+
+  useEffect(() => {
     writeChatFullscreenPreference(isChatFullscreen);
   }, [isChatFullscreen]);
 
-  const isChatSurfaceVisible = showDetailFor === null && selectedArchive === null;
+  const isChatSurfaceVisible =
+    showDetailFor === null && selectedArchive === null && selectedDirectArchive === null;
   const isLayoutFullscreen = isChatSurfaceVisible && isChatFullscreen;
 
   return (
@@ -84,13 +106,17 @@ function AppLayoutInner() {
           isReady ? "panel-right-enter" : "",
         )}
       >
-        {showDetailFor !== null && selectedGroup === null && selectedArchive === null ? (
+        {showDetailFor !== null &&
+        selectedGroup === null &&
+        selectedArchive === null &&
+        selectedDirectArchive === null ? (
           <EmployeeDetailPage />
         ) : (
           <ChatArea
             employee={selectedEmployee}
             group={selectedGroup}
             archive={selectedArchive}
+            directArchive={selectedDirectArchive}
             isChatFullscreen={isChatFullscreen}
             onChatFullscreenChange={setIsChatFullscreen}
             onSelectEmployee={handleSelectEmployee}

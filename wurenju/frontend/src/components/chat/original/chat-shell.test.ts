@@ -107,6 +107,7 @@ void test("renderOriginalChatShell 输出原版聊天顶栏和控制区", () => 
       onGroupSelect: () => {},
       onSessionSelect: () => {},
       onModelSelect: () => {},
+      onArchiveConversationClick: () => {},
       onRefresh: () => {},
       onToggleThinking: () => {},
       onToggleFocusMode: () => {},
@@ -128,6 +129,7 @@ void test("renderOriginalChatShell 输出原版聊天顶栏和控制区", () => 
   assert.match(markup, />选择模型</);
   assert.match(markup, /MiniMax-M2\.5 · minimax/);
   assert.match(markup, /刷新聊天数据/);
+  assert.match(markup, /归档当前会话/);
   assert.match(markup, /切换助手思考\/工作输出/);
   assert.match(markup, /切换专注模式 \(隐藏侧边栏 \+ 页面页眉\)/);
   assert.match(markup, /显示定时任务会话 \(已隐藏 2 个\)/);
@@ -176,6 +178,7 @@ void test("renderOriginalChatShell 的成员和项目组下拉只渲染本地选
       onGroupSelect: () => {},
       onSessionSelect: () => {},
       onModelSelect: () => {},
+      onArchiveConversationClick: () => {},
       onRefresh: () => {},
       onToggleThinking: () => {},
       onToggleFocusMode: () => {},
@@ -227,6 +230,7 @@ void test("renderOriginalChatShell 不会在按钮区左侧额外渲染错误 pi
       onGroupSelect: () => {},
       onSessionSelect: () => {},
       onModelSelect: () => {},
+      onArchiveConversationClick: () => {},
       onRefresh: () => {},
       onToggleThinking: () => {},
       onToggleFocusMode: () => {},
@@ -292,6 +296,7 @@ void test("renderOriginalChatShell 在群聊模式下渲染项目组专属标题
       onGroupSelect: () => {},
       onSessionSelect: () => {},
       onModelSelect: () => {},
+      onArchiveConversationClick: () => {},
       onAnnouncementClick: () => {},
       onUrgeClick: () => {},
       onRefresh: () => {},

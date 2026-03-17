@@ -6,6 +6,7 @@ export type SlashCommandCategory = "session" | "model" | "agents" | "tools";
 
 export type SlashCommandDef = {
   name: string;
+  title: string;
   description: string;
   args?: string;
   icon?: IconName;
@@ -22,42 +23,48 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   // ── Session ──
   {
     name: "new",
-    description: "Start a new session",
+    title: "新建会话",
+    description: "从头开始一段新的对话",
     icon: "plus",
     category: "session",
     executeLocal: true,
   },
   {
     name: "reset",
-    description: "Reset current session",
+    title: "重置会话",
+    description: "清空当前消息并重新开始",
     icon: "refresh",
     category: "session",
     executeLocal: true,
   },
   {
     name: "compact",
-    description: "Compact session context",
+    title: "压缩上下文",
+    description: "总结历史内容，释放上下文空间",
     icon: "loader",
     category: "session",
     executeLocal: true,
   },
   {
     name: "stop",
-    description: "Stop current run",
+    title: "停止运行",
+    description: "立即停止当前回复或任务",
     icon: "stop",
     category: "session",
     executeLocal: true,
   },
   {
     name: "clear",
-    description: "Clear chat history",
+    title: "清空记录",
+    description: "清掉当前界面里的聊天记录",
     icon: "trash",
     category: "session",
     executeLocal: true,
   },
   {
     name: "focus",
-    description: "Toggle focus mode",
+    title: "专注模式",
+    description: "隐藏干扰内容，只保留聊天区域",
     icon: "eye",
     category: "session",
     executeLocal: true,
@@ -66,16 +73,18 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   // ── Model ──
   {
     name: "model",
-    description: "Show or set model",
-    args: "<name>",
+    title: "切换模型",
+    description: "查看或设置当前使用的模型",
+    args: "<模型名>",
     icon: "brain",
     category: "model",
     executeLocal: true,
   },
   {
     name: "think",
-    description: "Set thinking level",
-    args: "<level>",
+    title: "思考强度",
+    description: "调整 AI 的思考深度",
+    args: "<级别>",
     icon: "brain",
     category: "model",
     executeLocal: true,
@@ -83,7 +92,8 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   },
   {
     name: "verbose",
-    description: "Toggle verbose mode",
+    title: "详细模式",
+    description: "切换简洁、详细或完整输出",
     args: "<on|off|full>",
     icon: "terminal",
     category: "model",
@@ -92,7 +102,8 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   },
   {
     name: "fast",
-    description: "Toggle fast mode",
+    title: "快速模式",
+    description: "切换更快的回复模式",
     args: "<status|on|off>",
     icon: "zap",
     category: "model",
@@ -103,27 +114,31 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   // ── Tools ──
   {
     name: "help",
-    description: "Show available commands",
+    title: "查看命令",
+    description: "显示所有可用命令",
     icon: "book",
     category: "tools",
     executeLocal: true,
   },
   {
     name: "status",
-    description: "Show session status",
+    title: "系统状态",
+    description: "查看当前会话状态",
     icon: "barChart",
     category: "tools",
   },
   {
     name: "export",
-    description: "Export session to Markdown",
+    title: "导出 Markdown",
+    description: "把当前对话导出为 Markdown",
     icon: "download",
     category: "tools",
     executeLocal: true,
   },
   {
     name: "usage",
-    description: "Show token usage",
+    title: "Token 用量",
+    description: "查看当前会话的 Token 使用情况",
     icon: "barChart",
     category: "tools",
     executeLocal: true,
@@ -132,14 +147,16 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   // ── Agents ──
   {
     name: "agents",
-    description: "List agents",
+    title: "查看智能体",
+    description: "列出当前可用的智能体",
     icon: "monitor",
     category: "agents",
     executeLocal: true,
   },
   {
     name: "kill",
-    description: "Abort sub-agents",
+    title: "结束子智能体",
+    description: "中止指定或全部子智能体",
     args: "<id|all>",
     icon: "x",
     category: "agents",
@@ -147,15 +164,17 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   },
   {
     name: "skill",
-    description: "Run a skill",
-    args: "<name>",
+    title: "运行技能",
+    description: "运行一个预设技能",
+    args: "<技能名>",
     icon: "zap",
     category: "tools",
   },
   {
     name: "steer",
-    description: "Steer a sub-agent",
-    args: "<id> <msg>",
+    title: "控制子智能体",
+    description: "向子智能体发送控制消息",
+    args: "<id> <消息>",
     icon: "send",
     category: "agents",
   },
@@ -164,17 +183,20 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
 const CATEGORY_ORDER: SlashCommandCategory[] = ["session", "model", "tools", "agents"];
 
 export const CATEGORY_LABELS: Record<SlashCommandCategory, string> = {
-  session: "Session",
-  model: "Model",
-  agents: "Agents",
-  tools: "Tools",
+  session: "会话",
+  model: "模型",
+  agents: "智能体",
+  tools: "工具",
 };
 
 export function getSlashCommandCompletions(filter: string): SlashCommandDef[] {
   const lower = filter.toLowerCase();
   const commands = lower
     ? SLASH_COMMANDS.filter(
-        (cmd) => cmd.name.startsWith(lower) || cmd.description.toLowerCase().includes(lower),
+        (cmd) =>
+          cmd.name.startsWith(lower) ||
+          cmd.title.toLowerCase().includes(lower) ||
+          cmd.description.toLowerCase().includes(lower),
       )
     : SLASH_COMMANDS;
   return commands.toSorted((a, b) => {

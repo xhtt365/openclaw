@@ -6,6 +6,7 @@ import {
   type GroupArchive,
   type GroupChatMessage,
 } from "@/stores/groupStore";
+import { getAgentAvatarInfo } from "@/utils/agentAvatar";
 import { writeGroupStorageSnapshot } from "@/utils/groupPersistence";
 
 export const HUMAN_MEMBER_LABEL = "You";
@@ -30,6 +31,11 @@ export type GroupMemberMutationResult = {
   reason?: GroupMemberMutationReason;
 };
 
+function resolveManagedMemberAvatarUrl(agent: Pick<Agent, "id" | "name" | "emoji" | "avatarUrl">) {
+  const avatarInfo = getAgentAvatarInfo(agent.id, agent.avatarUrl ?? agent.emoji, agent.name);
+  return avatarInfo.type === "image" ? avatarInfo.value : undefined;
+}
+
 export function toManagedGroupMember(
   agent: Pick<Agent, "id" | "name" | "emoji" | "avatarUrl" | "role">,
 ): AgentInfo {
@@ -37,7 +43,8 @@ export function toManagedGroupMember(
     id: agent.id.trim(),
     name: agent.name.trim() || agent.id.trim(),
     emoji: agent.emoji?.trim() || undefined,
-    avatarUrl: agent.avatarUrl?.trim() || undefined,
+    // 群成员统一复用左栏同一套头像解析，避免本地头像映射在群聊入口丢失。
+    avatarUrl: resolveManagedMemberAvatarUrl(agent),
     role: agent.role?.trim() || undefined,
   };
 }
@@ -89,7 +96,7 @@ export function resolveDisplayAgentMembers(group: Group, agents: Agent[]) {
         id: member.id,
         name: liveAgent.name.trim() || member.name,
         emoji: liveAgent.emoji?.trim() || member.emoji,
-        avatarUrl: liveAgent.avatarUrl?.trim() || member.avatarUrl,
+        avatarUrl: resolveManagedMemberAvatarUrl(liveAgent) ?? member.avatarUrl,
         role: liveAgent.role?.trim() || member.role,
       };
     }),

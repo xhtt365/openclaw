@@ -1,12 +1,21 @@
 "use client";
 
-import { Check, ChevronLeft, ChevronRight, Loader2, Search, ShieldAlert } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  ImagePlus,
+  Loader2,
+  Search,
+  ShieldAlert,
+  Sparkles,
+  Upload,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -24,6 +33,15 @@ import { saveAgentAvatarMapping } from "@/utils/agentAvatar";
 import { buildAvailableAgentId } from "@/utils/agentId";
 
 const DEFAULT_EMPLOYEE_EMOJI = "🤖";
+const AVATAR_UPLOAD_ACCEPT = "image/png,image/jpeg,image/webp,image/svg+xml";
+const AVATAR_UPLOAD_MAX_BYTES = 2 * 1024 * 1024;
+const EMPLOYEE_NAME_PLACEHOLDER = "输入员工名称";
+const EMPLOYEE_ROLE_PLACEHOLDER = "例如：产品经理、运营、开发工程师";
+const EMPLOYEE_BIO_PLACEHOLDER = "介绍一下职责、擅长方向和协作风格";
+const EMPLOYEE_INPUT_CLASS_NAME =
+  "h-11 rounded-2xl border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 text-[15px] shadow-none placeholder:text-[var(--color-text-secondary)] focus-visible:border-[var(--brand-primary)] focus-visible:ring-[3px] focus-visible:ring-[color:var(--brand-subtle)]";
+const EMPLOYEE_TEXTAREA_CLASS_NAME =
+  "min-h-[84px] rounded-2xl border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-3 text-[15px] shadow-none placeholder:text-[var(--color-text-secondary)] focus-visible:border-[var(--brand-primary)] focus-visible:ring-[3px] focus-visible:ring-[color:var(--brand-subtle)]";
 
 const STEP_ITEMS = [
   { id: 1, label: "1. 基本信息" },
@@ -40,6 +58,8 @@ type EmployeeFormState = {
   bio: string;
   emoji: string;
   avatarId: string;
+  uploadedAvatarName: string;
+  uploadedAvatarSrc: string;
 };
 
 const INITIAL_FORM_STATE: EmployeeFormState = {
@@ -48,6 +68,8 @@ const INITIAL_FORM_STATE: EmployeeFormState = {
   bio: "",
   emoji: DEFAULT_EMPLOYEE_EMOJI,
   avatarId: "",
+  uploadedAvatarName: "",
+  uploadedAvatarSrc: "",
 };
 
 function joinGatewayPath(baseDir: string, leaf: string) {
@@ -82,19 +104,76 @@ function wait(ms: number) {
   });
 }
 
+function isSupportedAvatarFile(file: File) {
+  if (file.type.startsWith("image/")) {
+    return true;
+  }
+
+  return /\.(png|jpe?g|webp|svg)$/i.test(file.name);
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("头像读取失败，请换一张图片再试"));
+    });
+    reader.addEventListener("error", () => reject(new Error("头像读取失败，请换一张图片再试")));
+    reader.readAsDataURL(file);
+  });
+}
+
+function EmployeeAvatarPreview({
+  imageSrc,
+  emoji,
+  alt,
+  className,
+  emojiClassName,
+  fallback,
+}: {
+  imageSrc?: string;
+  emoji: string;
+  alt: string;
+  className?: string;
+  emojiClassName?: string;
+  fallback?: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-center overflow-hidden rounded-full border",
+        className,
+      )}
+    >
+      {imageSrc ? (
+        <img src={imageSrc} alt={alt} className="h-full w-full object-cover" />
+      ) : fallback ? (
+        fallback
+      ) : (
+        <span className={cn("select-none", emojiClassName)}>{emoji}</span>
+      )}
+    </div>
+  );
+}
+
 function StepIndicator({ step }: { step: Step }) {
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-2">
       {STEP_ITEMS.map((item, index) => {
         const isCompleted = step > item.id;
         const isActive = step === item.id;
 
         return (
-          <div key={item.id} className="flex min-w-0 flex-1 items-center gap-3">
-            <div className="flex min-w-0 items-center gap-2">
+          <div key={item.id} className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="flex min-w-0 items-center gap-1.5">
               <span
                 className={cn(
-                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-xs font-semibold transition-colors",
+                  "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold transition-colors",
                   isCompleted && "border-primary bg-primary text-primary-foreground",
                   isActive &&
                     "border-primary bg-primary/12 text-primary shadow-[0_0_0_1px_var(--color-brand-glow)]",
@@ -107,7 +186,7 @@ function StepIndicator({ step }: { step: Step }) {
               </span>
               <span
                 className={cn(
-                  "truncate text-sm transition-colors",
+                  "truncate text-[13px] transition-colors",
                   isActive && "font-semibold text-primary",
                   isCompleted && "font-medium text-foreground",
                   !isCompleted && !isActive && "text-muted-foreground",
@@ -198,6 +277,9 @@ export function CreateEmployeeModal({
   const [creatingStep, setCreatingStep] = useState<CreatingStep>("idle");
   const [draftAgentId, setDraftAgentId] = useState("");
   const [hasCreatedAgent, setHasCreatedAgent] = useState(false);
+  const [avatarError, setAvatarError] = useState("");
+  const [isReadingAvatar, setIsReadingAvatar] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const trimmedDisplayName = form.displayName.trim();
   const trimmedRole = form.role.trim();
@@ -285,6 +367,9 @@ export function CreateEmployeeModal({
     () => PRESET_AVATARS.find((avatar) => avatar.id === form.avatarId) ?? null,
     [form.avatarId],
   );
+  const selectedAvatarSrc = form.uploadedAvatarSrc.trim() || selectedPresetAvatar?.src || "";
+  const usingUploadedAvatar = Boolean(form.uploadedAvatarSrc.trim());
+  const usingSystemAvatar = !selectedAvatarSrc;
 
   function resetModalState() {
     setStep(1);
@@ -300,6 +385,8 @@ export function CreateEmployeeModal({
     setCreatingStep("idle");
     setDraftAgentId("");
     setHasCreatedAgent(false);
+    setAvatarError("");
+    setIsReadingAvatar(false);
   }
 
   function handleOpenChange(nextOpen: boolean) {
@@ -312,6 +399,74 @@ export function CreateEmployeeModal({
     }
 
     onOpenChange(nextOpen);
+  }
+
+  function updateForm(patch: Partial<EmployeeFormState>) {
+    setForm((current) => ({
+      ...current,
+      ...patch,
+    }));
+  }
+
+  function handleUseSystemAvatar() {
+    setAvatarError("");
+    updateForm({
+      avatarId: "",
+      uploadedAvatarName: "",
+      uploadedAvatarSrc: "",
+    });
+  }
+
+  function handlePresetAvatarSelect(avatarId: string) {
+    setAvatarError("");
+    updateForm({
+      avatarId,
+      uploadedAvatarName: "",
+      uploadedAvatarSrc: "",
+    });
+  }
+
+  async function handleAvatarUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    if (!isSupportedAvatarFile(file)) {
+      setAvatarError("只支持 PNG、JPG、WEBP 或 SVG 图片");
+      return;
+    }
+
+    if (file.size > AVATAR_UPLOAD_MAX_BYTES) {
+      setAvatarError("头像图片请控制在 2MB 以内");
+      return;
+    }
+
+    setAvatarError("");
+    setIsReadingAvatar(true);
+
+    try {
+      const nextAvatarSrc = await readFileAsDataUrl(file);
+      if (!nextAvatarSrc.startsWith("data:image/")) {
+        throw new Error("头像读取失败，请换一张图片再试");
+      }
+
+      updateForm({
+        avatarId: "",
+        uploadedAvatarName: file.name,
+        uploadedAvatarSrc: nextAvatarSrc,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim()
+          ? error.message
+          : "头像读取失败，请换一张图片再试";
+      setAvatarError(message);
+    } finally {
+      setIsReadingAvatar(false);
+    }
   }
 
   async function handleCreate() {
@@ -354,8 +509,8 @@ export function CreateEmployeeModal({
       await gateway.updateAgent(agentId, updateParams);
       setCreatingStep("writing-files");
 
-      if (selectedPresetAvatar) {
-        saveAgentAvatarMapping(agentId, selectedPresetAvatar.src);
+      if (selectedAvatarSrc) {
+        saveAgentAvatarMapping(agentId, selectedAvatarSrc);
       }
 
       const defaultAgentFiles = buildDefaultAgentFiles({
@@ -408,119 +563,221 @@ export function CreateEmployeeModal({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="overflow-hidden rounded-[20px] border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0 text-[var(--color-text-primary)] shadow-[var(--shadow-xl)] sm:max-w-3xl">
-        <div className="border-b border-border px-6 py-5">
-          <DialogHeader className="gap-3 text-left">
-            <DialogTitle className="text-xl">创建员工</DialogTitle>
-            <DialogDescription>
-              填好资料后，前端会直接调用 Gateway API 创建员工，无需终端命令，也不用重启 Gateway。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="mt-5">
-            <StepIndicator step={step} />
+      <DialogContent className="flex max-h-[78vh] w-[min(640px,calc(100vw-2rem))] flex-col overflow-hidden rounded-[24px] border-[var(--modal-shell-border)] bg-[var(--modal-shell-bg)] p-0 text-[var(--color-text-primary)] shadow-[var(--modal-shell-shadow)] backdrop-blur-xl sm:max-w-[640px]">
+        <div className="relative border-b border-[var(--modal-shell-border)] px-5 py-3.5">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-[radial-gradient(circle_at_top_left,var(--surface-brand-soft),transparent_58%),radial-gradient(circle_at_top_right,var(--brand-glow),transparent_34%)] opacity-90" />
+          <div className="relative">
+            <DialogHeader className="gap-0 text-left">
+              <DialogTitle className="text-xl">新增员工</DialogTitle>
+            </DialogHeader>
+            <div className="mt-3">
+              <StepIndicator step={step} />
+            </div>
           </div>
         </div>
 
-        <div className="im-scroll max-h-[72vh] overflow-y-auto px-6 py-5">
+        <div className="im-scroll min-h-0 flex-1 overflow-y-auto px-5 py-3.5">
           {step === 1 ? (
-            <div className="space-y-5">
-              <div className="space-y-2">
-                <label
-                  htmlFor="employee-display-name"
-                  className="text-sm font-medium text-foreground"
-                >
-                  显示名
-                </label>
-                <Input
-                  id="employee-display-name"
-                  value={form.displayName}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      displayName: event.target.value,
-                    }))
-                  }
-                  placeholder="周杰伦"
-                  autoComplete="off"
-                  autoFocus
-                />
-              </div>
+            <div className="space-y-3">
+              <section className="space-y-3">
+                <div className="flex flex-col items-center">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={AVATAR_UPLOAD_ACCEPT}
+                    className="hidden"
+                    onChange={(event) => {
+                      void handleAvatarUpload(event);
+                    }}
+                  />
 
-              <div className="space-y-2">
-                <label htmlFor="employee-role" className="text-sm font-medium text-foreground">
-                  职位
-                </label>
-                <Input
-                  id="employee-role"
-                  value={form.role}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      role: event.target.value,
-                    }))
-                  }
-                  placeholder="音乐大师"
-                  autoComplete="off"
-                />
-              </div>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className={cn(
+                      "group relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border bg-[var(--color-bg-card)] transition-all",
+                      selectedAvatarSrc
+                        ? "border-[var(--surface-brand-border)] shadow-[0_12px_32px_var(--color-shadow-card)]"
+                        : "border-[var(--color-border)] hover:border-[var(--surface-brand-border)]",
+                    )}
+                    aria-label="上传员工头像"
+                  >
+                    {selectedAvatarSrc ? (
+                      <img
+                        src={selectedAvatarSrc}
+                        alt={trimmedDisplayName || "员工头像预览"}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-[var(--surface-soft)] text-[var(--color-text-secondary)]">
+                        <ImagePlus className="h-5.5 w-5.5" />
+                      </div>
+                    )}
+                    <span className="absolute bottom-0.5 right-0.5 flex h-6 w-6 items-center justify-center rounded-full border border-[var(--modal-shell-border)] bg-[var(--color-bg-card)] text-[var(--color-text-secondary)] shadow-[var(--shadow-sm)] transition-colors group-hover:text-[var(--color-text-primary)]">
+                      {isReadingAvatar ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Upload className="h-3 w-3" />
+                      )}
+                    </span>
+                  </button>
 
-              <div className="space-y-2">
-                <label htmlFor="employee-bio" className="text-sm font-medium text-foreground">
-                  简介
-                </label>
-                <Textarea
-                  id="employee-bio"
-                  value={form.bio}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      bio: event.target.value,
-                    }))
-                  }
-                  placeholder="一句话描述职责和风格"
-                  rows={4}
-                />
-              </div>
+                  <div className="mt-2 flex items-center justify-center gap-6 text-[13px]">
+                    <button
+                      type="button"
+                      onClick={handleUseSystemAvatar}
+                      className={cn(
+                        "font-medium transition-colors",
+                        usingSystemAvatar
+                          ? "text-[var(--color-text-primary)]"
+                          : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
+                      )}
+                    >
+                      默认头像
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className={cn(
+                        "font-medium transition-colors",
+                        usingUploadedAvatar
+                          ? "text-[var(--color-text-primary)]"
+                          : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
+                      )}
+                    >
+                      上传图片
+                    </button>
+                  </div>
 
-              <div className="space-y-3">
-                <div className="text-sm font-medium text-foreground">头像选择</div>
-                <div className="grid max-h-[280px] grid-cols-5 gap-2 overflow-y-auto pr-1">
-                  {PRESET_AVATARS.map((avatar) => {
-                    const isSelected = form.avatarId === avatar.id;
-
-                    return (
+                  <div className="w-full">
+                    <div className="grid max-h-[96px] grid-cols-7 gap-2 overflow-y-auto pr-1 sm:grid-cols-10">
                       <button
-                        key={avatar.id}
                         type="button"
-                        onClick={() =>
-                          setForm((current) => ({
-                            ...current,
-                            avatarId: avatar.id,
-                          }))
-                        }
+                        onClick={handleUseSystemAvatar}
                         className={cn(
-                          "h-14 w-14 overflow-hidden rounded-full border-2 transition-all",
-                          isSelected
-                            ? "border-[var(--brand-primary)] shadow-[0_0_0_2px_var(--brand-subtle)]"
-                            : "border-transparent hover:border-[color:var(--brand-subtle)]",
+                          "flex aspect-square items-center justify-center rounded-full border transition-all",
+                          usingSystemAvatar
+                            ? "border-[var(--brand-primary)] bg-[var(--surface-brand-soft)] shadow-[0_0_0_2px_var(--brand-subtle)]"
+                            : "border-transparent bg-[var(--color-bg-soft)] hover:border-[var(--surface-brand-border)] hover:bg-[var(--surface-soft-strong)]",
                         )}
-                        aria-label={`选择头像 ${avatar.label}`}
-                        aria-pressed={isSelected}
-                        title={avatar.label}
+                        aria-pressed={usingSystemAvatar}
+                        aria-label="使用系统默认头像"
+                        title="使用系统默认头像"
                       >
-                        <img
-                          src={avatar.src}
-                          alt={avatar.label}
-                          className="h-full w-full object-cover"
+                        <Sparkles
+                          className={cn(
+                            "h-4.5 w-4.5",
+                            usingSystemAvatar
+                              ? "text-[var(--surface-brand-text)]"
+                              : "text-[var(--color-text-secondary)]",
+                          )}
                         />
                       </button>
-                    );
-                  })}
+
+                      {PRESET_AVATARS.map((avatar) => {
+                        const isSelected = form.avatarId === avatar.id;
+
+                        return (
+                          <button
+                            key={avatar.id}
+                            type="button"
+                            onClick={() => handlePresetAvatarSelect(avatar.id)}
+                            className={cn(
+                              "aspect-square overflow-hidden rounded-full border-2 transition-all",
+                              isSelected
+                                ? "border-[var(--brand-primary)] shadow-[0_0_0_2px_var(--brand-subtle)]"
+                                : "border-transparent hover:border-[var(--surface-brand-border)]",
+                            )}
+                            aria-label={`选择头像 ${avatar.label}`}
+                            aria-pressed={isSelected}
+                            title={avatar.label}
+                          >
+                            <img
+                              src={avatar.src}
+                              alt={avatar.label}
+                              className="h-full w-full object-cover"
+                            />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {avatarError ? (
+                    <div className="mt-3 w-full rounded-2xl border border-[var(--surface-danger-border)] bg-[var(--surface-danger-soft)] px-4 py-3 text-sm text-[var(--surface-danger-text)]">
+                      {avatarError}
+                    </div>
+                  ) : null}
                 </div>
-                <div className="text-xs text-muted-foreground">
-                  未选图片时仍会使用默认 emoji 作为 Gateway fallback。
+              </section>
+
+              <section className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <label
+                      htmlFor="employee-display-name"
+                      className="text-[13px] font-medium text-foreground"
+                    >
+                      员工名称
+                    </label>
+                    <Input
+                      id="employee-display-name"
+                      value={form.displayName}
+                      onChange={(event) =>
+                        updateForm({
+                          displayName: event.target.value,
+                        })
+                      }
+                      placeholder={EMPLOYEE_NAME_PLACEHOLDER}
+                      autoComplete="off"
+                      autoFocus
+                      className={EMPLOYEE_INPUT_CLASS_NAME}
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="employee-role"
+                      className="text-[13px] font-medium text-foreground"
+                    >
+                      职位
+                    </label>
+                    <Input
+                      id="employee-role"
+                      value={form.role}
+                      onChange={(event) =>
+                        updateForm({
+                          role: event.target.value,
+                        })
+                      }
+                      placeholder={EMPLOYEE_ROLE_PLACEHOLDER}
+                      autoComplete="off"
+                      className={EMPLOYEE_INPUT_CLASS_NAME}
+                    />
+                  </div>
+
+                  <div className="space-y-1 sm:col-span-2">
+                    <label
+                      htmlFor="employee-bio"
+                      className="text-[13px] font-medium text-foreground"
+                    >
+                      个人简介
+                    </label>
+                    <Textarea
+                      id="employee-bio"
+                      value={form.bio}
+                      onChange={(event) =>
+                        updateForm({
+                          bio: event.target.value,
+                        })
+                      }
+                      placeholder={EMPLOYEE_BIO_PLACEHOLDER}
+                      rows={3}
+                      className={EMPLOYEE_TEXTAREA_CLASS_NAME}
+                    />
+                  </div>
                 </div>
-              </div>
+              </section>
             </div>
           ) : null}
 
@@ -611,17 +868,18 @@ export function CreateEmployeeModal({
 
               <section className="rounded-[18px] border border-border bg-[var(--color-bg-card)] p-5">
                 <div className="flex items-start gap-4">
-                  <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--color-bg-secondary)] text-4xl shadow-sm">
-                    {selectedPresetAvatar ? (
-                      <img
-                        src={selectedPresetAvatar.src}
-                        alt={selectedPresetAvatar.label}
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      form.emoji
-                    )}
-                  </div>
+                  <EmployeeAvatarPreview
+                    imageSrc={selectedAvatarSrc}
+                    emoji={form.emoji}
+                    alt={trimmedDisplayName || "员工头像"}
+                    className="h-16 w-16 shrink-0 border-[var(--surface-brand-border)] bg-[var(--color-bg-secondary)] shadow-sm"
+                    emojiClassName="text-4xl"
+                    fallback={
+                      <div className="flex h-full w-full items-center justify-center bg-[var(--surface-soft)] text-[var(--color-text-secondary)]">
+                        <Sparkles className="h-5 w-5" />
+                      </div>
+                    }
+                  />
                   <div className="min-w-0 space-y-4">
                     <div>
                       <div className="text-xl font-semibold text-foreground">
@@ -698,7 +956,7 @@ export function CreateEmployeeModal({
           ) : null}
         </div>
 
-        <DialogFooter className="border-t border-border px-6 py-4">
+        <DialogFooter className="border-t border-[var(--modal-shell-border)] bg-[var(--surface-soft)] px-5 py-3">
           {step === 1 ? (
             <>
               <Button type="button" variant="ghost" onClick={() => handleOpenChange(false)}>

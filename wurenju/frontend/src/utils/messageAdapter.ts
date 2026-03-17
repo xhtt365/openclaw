@@ -51,6 +51,13 @@ export interface HistoryMessage {
   stopReason?: string;
 }
 
+type SidebarSyncMessage = Omit<HistoryMessage, "content"> &
+  Partial<ChatMessage> & {
+    id?: string;
+    content?: HistoryContentBlock[] | string;
+    text?: string;
+  };
+
 function toFiniteNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -77,6 +84,24 @@ function extractBlockContent(blocks: HistoryContentBlock[]) {
   return {
     content,
     thinking: thinking || undefined,
+  };
+}
+
+function extractSidebarSyncContent(message: SidebarSyncMessage) {
+  if (typeof message.content === "string") {
+    return {
+      content: message.content,
+      thinking: typeof message.thinking === "string" ? message.thinking : undefined,
+    };
+  }
+
+  if (Array.isArray(message.content)) {
+    return extractBlockContent(message.content);
+  }
+
+  return {
+    content: typeof message.text === "string" ? message.text : "",
+    thinking: typeof message.thinking === "string" ? message.thinking : undefined,
   };
 }
 
@@ -121,13 +146,12 @@ export function adaptHistoryMessage(message: unknown): ChatMessage | null {
     return null;
   }
 
-  const rawMessage = message as HistoryMessage;
+  const rawMessage = message as SidebarSyncMessage;
   if (rawMessage.role !== "user" && rawMessage.role !== "assistant") {
     return null;
   }
 
-  const blocks = Array.isArray(rawMessage.content) ? rawMessage.content : [];
-  const extracted = extractBlockContent(blocks);
+  const extracted = extractSidebarSyncContent(rawMessage);
   const timestamp = toFiniteNumber(rawMessage.timestamp);
   const content =
     rawMessage.role === "assistant" ? sanitizeAssistantText(extracted.content) : extracted.content;
@@ -137,7 +161,10 @@ export function adaptHistoryMessage(message: unknown): ChatMessage | null {
       : extracted.thinking;
 
   return {
-    id: crypto.randomUUID(),
+    id:
+      typeof rawMessage.id === "string" && rawMessage.id.trim()
+        ? rawMessage.id.trim()
+        : crypto.randomUUID(),
     role: rawMessage.role,
     content,
     thinking,
@@ -147,6 +174,27 @@ export function adaptHistoryMessage(message: unknown): ChatMessage | null {
     timestampLabel: timestamp === undefined ? "历史消息" : undefined,
     isNew: false,
     isHistorical: true,
+  };
+}
+
+export function adaptSidebarSyncMessage(message: unknown): ChatMessage | null {
+  const adapted = adaptHistoryMessage(message);
+  if (!adapted) {
+    return null;
+  }
+
+  const rawMessage = message as Partial<ChatMessage>;
+  const timestampLabel =
+    typeof rawMessage.timestampLabel === "string" && rawMessage.timestampLabel.trim()
+      ? rawMessage.timestampLabel.trim()
+      : adapted.timestampLabel;
+
+  return {
+    ...adapted,
+    isLoading: rawMessage.isLoading === true ? true : undefined,
+    isNew: rawMessage.isNew === true,
+    isHistorical: rawMessage.isHistorical === true,
+    timestampLabel,
   };
 }
 
@@ -164,6 +212,23 @@ export function adaptHistoryMessages(payload: GatewayHistoryPayload | null): Cha
 
   return rawMessages
     .map((message, index) => ({ index, message: adaptHistoryMessage(message) }))
+    .filter((entry): entry is { index: number; message: ChatMessage } => entry.message !== null)
+    .toSorted((left, right) => {
+      const leftTimestamp = left.message.timestamp;
+      const rightTimestamp = right.message.timestamp;
+
+      if (leftTimestamp === undefined || rightTimestamp === undefined) {
+        return left.index - right.index;
+      }
+
+      return leftTimestamp - rightTimestamp;
+    })
+    .map((entry) => entry.message);
+}
+
+export function adaptSidebarSyncMessages(messages: unknown[]): ChatMessage[] {
+  return messages
+    .map((message, index) => ({ index, message: adaptSidebarSyncMessage(message) }))
     .filter((entry): entry is { index: number; message: ChatMessage } => entry.message !== null)
     .toSorted((left, right) => {
       const leftTimestamp = left.message.timestamp;
