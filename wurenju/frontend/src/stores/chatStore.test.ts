@@ -46,6 +46,10 @@ const memoryStorage = new MemoryStorage();
 const originalWindow = globalThis.window;
 const originalCustomEvent = globalThis.CustomEvent;
 
+type GatewayPrivate = {
+  handleMessage: (frame: Record<string, unknown>) => void;
+};
+
 const ARCHIVE_AGENT: Agent = {
   id: "agent-archive",
   name: "小红",
@@ -206,6 +210,46 @@ void test("archiveCurrentSession 会把当前 1v1 消息写入归档并清空会
   } finally {
     gateway.deleteSession = originalDeleteSession;
   }
+});
+
+void test("群聊 sessionKey 的回复不会污染 1v1 会话和员工未读数", async () => {
+  const gatewayInternal = gateway as unknown as GatewayPrivate;
+
+  useAgentStore.setState({
+    agents: [ARCHIVE_AGENT],
+    currentAgentId: "someone-else",
+    mainKey: "main",
+    showDetailFor: null,
+  });
+  useGroupStore.setState({
+    selectedGroupId: null,
+    selectedArchiveId: null,
+  });
+  useDirectArchiveStore.setState({
+    selectedDirectArchiveId: null,
+  });
+
+  gatewayInternal.handleMessage({
+    type: "event",
+    event: "chat",
+    payload: {
+      runId: "run-group-final",
+      sessionKey: `agent:${ARCHIVE_AGENT.id}:group:group-1`,
+      state: "final",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "这是群聊里的成员回复" }],
+        timestamp: Date.now(),
+      },
+    },
+  });
+
+  await Promise.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await Promise.resolve();
+
+  assert.deepEqual(useChatStore.getState().getMessagesForAgent(ARCHIVE_AGENT.id), []);
+  assert.equal(readSidebarUnreadState().directByAgentId[ARCHIVE_AGENT.id] ?? 0, 0);
 });
 
 void test("gateway final 会按 sessionKey 写入对应员工消息和未读，即使当前没有 activeReplyAgentId", async () => {

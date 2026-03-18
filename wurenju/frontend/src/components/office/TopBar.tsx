@@ -12,7 +12,7 @@ type TopBarProps = {
 };
 
 const ACTION_BUTTON_CLASS_NAME =
-  "inline-flex h-11 items-center gap-2 rounded-lg border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] px-4 text-sm font-semibold text-[var(--color-text-primary)] shadow-[var(--shadow-sm)] transition-all duration-150";
+  "inline-flex h-10 items-center gap-2 rounded-2xl border border-[var(--modal-shell-border)] bg-[color-mix(in_srgb,var(--surface-glass-strong)_86%,transparent)] px-4 text-sm font-semibold text-[var(--color-text-primary)] shadow-[0_6px_18px_rgba(15,23,42,0.05)] backdrop-blur-xl transition-all duration-150";
 
 export function TopBar({
   isFullscreen,
@@ -25,12 +25,12 @@ export function TopBar({
   onToggleFullscreen,
 }: TopBarProps) {
   return (
-    <header className="flex h-20 shrink-0 items-center justify-between border-b border-[var(--color-border)] px-6">
+    <header className="flex h-[72px] shrink-0 items-center justify-between border-b border-[color-mix(in_srgb,var(--divider)_72%,transparent)] bg-[color-mix(in_srgb,var(--color-bg-primary)_78%,transparent)] px-5 backdrop-blur-xl">
       <div className="flex min-w-0 items-center gap-4">
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex h-11 w-11 items-center justify-center rounded-full text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--surface-soft-strong)] hover:text-[var(--color-text-primary)]"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-full text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--surface-soft-strong)] hover:text-[var(--color-text-primary)]"
           aria-label="返回主聊天页"
         >
           <ArrowLeft className="h-5 w-5" />
@@ -41,11 +41,11 @@ export function TopBar({
         </div>
 
         <div className="min-w-0">
-          <div className="truncate text-[28px] font-bold tracking-tight text-[var(--color-text-primary)]">
-            龙虾办公室 Lobster Office
+          <div className="truncate text-[17px] font-semibold tracking-tight text-[var(--color-text-primary)]">
+            虾班办公室 Lobster Office
           </div>
-          <div className="mt-1 truncate text-sm text-[var(--color-text-secondary)]">
-            🦞 AI 员工总控台
+          <div className="mt-0.5 truncate text-xs text-[var(--color-text-secondary)]">
+            AI 员工总控台
           </div>
         </div>
       </div>
@@ -77,11 +77,15 @@ export function TopBar({
           <SlidersHorizontal className="h-4 w-4" />
           模型配置
         </button>
-        <div className="mx-1 h-8 w-px bg-[var(--divider)]" />
+        <span
+          className={`${ACTION_BUTTON_CLASS_NAME} border-[var(--surface-brand-border)] bg-[var(--surface-brand-soft)] text-[var(--surface-brand-text)] shadow-none`}
+        >
+          AI员工总控台
+        </span>
         <button
           type="button"
           onClick={onToggleFullscreen}
-          className={`${ACTION_BUTTON_CLASS_NAME} px-3`}
+          className={`${ACTION_BUTTON_CLASS_NAME} h-10 w-10 justify-center px-0`}
           aria-label={isFullscreen ? "退出全屏" : "进入全屏"}
         >
           {isFullscreen ? <Shrink className="h-4 w-4" /> : <Expand className="h-4 w-4" />}

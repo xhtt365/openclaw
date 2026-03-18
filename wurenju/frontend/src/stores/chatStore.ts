@@ -43,6 +43,7 @@ interface ChatState {
   compactCurrentSession: () => Promise<SessionActionResult>;
   resetCurrentSession: () => Promise<SessionActionResult>;
   archiveCurrentSession: () => Promise<SessionActionResult>;
+  removeAgentLocalState: (agentId: string) => void;
   getMessagesForAgent: (agentId: string) => ChatMessage[];
   getUsageForAgent: (agentId: string) => ChatUsage;
   getContextWindowSizeForAgent: (agentId: string) => number;
@@ -174,6 +175,12 @@ function withNumber(map: NumberBuckets, agentId: string, value: number) {
   return next;
 }
 
+function removeBucketEntry<T>(map: Map<string, T>, agentId: string) {
+  const next = new Map(map);
+  next.delete(agentId);
+  return next;
+}
+
 function resetMessages(map: MessageBuckets, agentId: string) {
   const next = new Map(map);
   next.set(agentId, []);
@@ -196,6 +203,10 @@ function resolveAgentIdFromSessionKey(sessionKey: string | null | undefined) {
 
   const agentId = parts[1]?.trim() || "";
   return agentId || null;
+}
+
+function isGroupSessionKey(sessionKey: string | null | undefined) {
+  return typeof sessionKey === "string" && sessionKey.includes(":group:");
 }
 
 function summarizeUsage(messages: ChatMessage[]): ChatUsage {
@@ -375,6 +386,14 @@ export const useChatStore = create<ChatState>((set, get) => {
   // 注册 Gateway 回调，将最终回复落到当前待回复的 Agent 会话桶。
   gateway.setHandlers(
     (msgs: GatewayMessage[], meta?: GatewayMessageMeta) => {
+      // 群聊成员回复复用 agent:xxx:group:yyy 的 sessionKey，这里要拦住，避免污染 1v1 会话和未读数。
+      if (isGroupSessionKey(meta?.sessionKey)) {
+        console.log(
+          `[Store] ignore group session reply in direct store: sessionKey=${meta?.sessionKey}`,
+        );
+        return;
+      }
+
       const replyAgentId =
         resolveAgentIdFromSessionKey(meta?.sessionKey) ?? get().activeReplyAgentId;
       if (!replyAgentId) {
@@ -869,6 +888,35 @@ export const useChatStore = create<ChatState>((set, get) => {
           error: getErrorMessage(error, "归档会话失败"),
         };
       }
+    },
+
+    removeAgentLocalState: (agentId) => {
+      const normalizedAgentId = agentId.trim();
+      if (!normalizedAgentId) {
+        return;
+      }
+
+      set((state) => ({
+        messagesByAgentId: removeBucketEntry(state.messagesByAgentId, normalizedAgentId),
+        usageByAgentId: removeBucketEntry(state.usageByAgentId, normalizedAgentId),
+        contextWindowSizeByAgentId: removeBucketEntry(
+          state.contextWindowSizeByAgentId,
+          normalizedAgentId,
+        ),
+        currentContextUsedByAgentId: removeBucketEntry(
+          state.currentContextUsedByAgentId,
+          normalizedAgentId,
+        ),
+        historyLoadedByAgentId: removeBucketEntry(state.historyLoadedByAgentId, normalizedAgentId),
+        historyLoadingByAgentId: removeBucketEntry(
+          state.historyLoadingByAgentId,
+          normalizedAgentId,
+        ),
+        activeReplyAgentId:
+          state.activeReplyAgentId === normalizedAgentId ? null : state.activeReplyAgentId,
+      }));
+      clearSidebarDirectUnreadCount(normalizedAgentId);
+      console.log(`[Store] 已清理员工本地会话状态: ${normalizedAgentId}`);
     },
 
     getMessagesForAgent: (agentId) => {

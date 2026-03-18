@@ -160,6 +160,12 @@ export type GatewayAgentUpdateResult = {
   agentId: string;
 };
 
+export type GatewayDeleteAgentResult = {
+  ok: true;
+  agentId: string;
+  removedBindings: number;
+};
+
 type PendingRequest = {
   method: string;
   waitForChatFinal?: boolean;
@@ -1266,6 +1272,19 @@ class GatewayService {
     return await this.sendRequest<GatewayAgentUpdateResult>("agents.update", {
       agentId,
       ...params,
+    });
+  }
+
+  // 源码确认：
+  // - schema: src/gateway/protocol/schema/agents-models-skills.ts
+  // - handler: src/gateway/server-methods/agents.ts
+  // req: { "agentId": string, "deleteFiles"?: boolean }
+  // res: { "ok": true, "agentId": string, "removedBindings": number }
+  async deleteAgent(agentId: string, deleteFiles = true) {
+    console.log(`[GW] deleteAgent: ${agentId}, deleteFiles=${deleteFiles}`);
+    return await this.sendRequest<GatewayDeleteAgentResult>("agents.delete", {
+      agentId,
+      deleteFiles,
     });
   }
 
