@@ -138,6 +138,7 @@ interface AgentState {
   ensureModelRuntimeConfig: (agentId: string, modelRef?: string | null) => Promise<string | null>;
   setAgentModel: (agentId: string, model: string) => Promise<void>;
   addModelFromJSON: (jsonStr: string) => Promise<void>;
+  deleteAgent: (agentId: string, deleteFiles?: boolean) => Promise<{ nextAgentId: string | null }>;
   setCurrentAgent: (agentId: string) => void;
   getCurrentSessionKey: () => string;
   openDetail: (agentId: string) => Promise<void>;
@@ -1655,6 +1656,43 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       console.error("[Store] addModelFromJSON failed:", error);
       throw error;
     }
+  },
+
+  deleteAgent: async (agentId, deleteFiles = true) => {
+    const normalizedAgentId = agentId.trim();
+    if (!normalizedAgentId) {
+      throw new Error("员工 ID 不能为空");
+    }
+
+    console.log(`[Store] deleteAgent: ${normalizedAgentId}, deleteFiles=${deleteFiles}`);
+    await gateway.deleteAgent(normalizedAgentId, deleteFiles);
+
+    let nextAgentId: string | null = null;
+    set((state) => {
+      const nextAgents = state.agents.filter((agent) => agent.id !== normalizedAgentId);
+      const nextAgentFiles = new Map(state.agentFiles);
+      nextAgentFiles.delete(normalizedAgentId);
+      nextAgentId =
+        state.currentAgentId === normalizedAgentId
+          ? (nextAgents[0]?.id ?? null)
+          : state.currentAgentId || nextAgents[0]?.id || null;
+      const shouldCloseDetail = state.showDetailFor === normalizedAgentId;
+
+      return {
+        agents: nextAgents,
+        currentAgentId: nextAgentId ?? "",
+        showDetailFor: shouldCloseDetail ? null : state.showDetailFor,
+        agentFiles: nextAgentFiles,
+        activeFileName: shouldCloseDetail ? null : state.activeFileName,
+        fileContent: shouldCloseDetail ? "" : state.fileContent,
+        fileDirty: shouldCloseDetail ? false : state.fileDirty,
+        fileSaving: false,
+        fileLoading: false,
+        currentAgentModel: shouldCloseDetail ? null : state.currentAgentModel,
+      };
+    });
+
+    return { nextAgentId };
   },
 
   setCurrentAgent: (agentId) => {

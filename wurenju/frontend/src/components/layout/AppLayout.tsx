@@ -9,6 +9,8 @@ import { cn } from "@/lib/utils";
 import { useAgentStore } from "@/stores/agentStore";
 import { useDirectArchiveStore } from "@/stores/directArchiveStore";
 import { useGroupStore } from "@/stores/groupStore";
+import { AGENT_AVATAR_STORAGE_KEY } from "@/utils/agentAvatar";
+import { getAgentAvatarInfo } from "@/utils/agentAvatar";
 import {
   readChatFullscreenPreference,
   writeChatFullscreenPreference,
@@ -32,12 +34,16 @@ function AppLayoutInner() {
   const [directArchives, setDirectArchives] = useState(() => readSidebarDirectArchives());
   const [isReady, setIsReady] = useState(false);
   const [isChatFullscreen, setIsChatFullscreen] = useState(() => readChatFullscreenPreference());
+  const [avatarVersion, setAvatarVersion] = useState(0);
+  const agents = useAgentStore((state) => state.agents);
   const showDetailFor = useAgentStore((state) => state.showDetailFor);
   const groups = useGroupStore((state) => state.groups);
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
   const selectedArchiveId = useGroupStore((state) => state.selectedArchiveId);
   const archives = useGroupStore((state) => state.archives);
   const fetchGroups = useGroupStore((state) => state.fetchGroups);
+  const clearSelectedGroup = useGroupStore((state) => state.clearSelectedGroup);
+  const clearSelectedArchive = useGroupStore((state) => state.clearSelectedArchive);
   const selectedDirectArchiveId = useDirectArchiveStore((state) => state.selectedDirectArchiveId);
   const clearSelectedDirectArchive = useDirectArchiveStore(
     (state) => state.clearSelectedDirectArchive,
@@ -73,6 +79,35 @@ function AppLayoutInner() {
   }, []);
 
   useEffect(() => {
+    function handleAvatarRefresh(event?: Event) {
+      if (event instanceof StorageEvent && event.key && event.key !== AGENT_AVATAR_STORAGE_KEY) {
+        return;
+      }
+
+      setAvatarVersion((current) => current + 1);
+    }
+
+    window.addEventListener("xiaban-agent-avatar-updated", handleAvatarRefresh);
+    window.addEventListener("storage", handleAvatarRefresh);
+    return () => {
+      window.removeEventListener("xiaban-agent-avatar-updated", handleAvatarRefresh);
+      window.removeEventListener("storage", handleAvatarRefresh);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (selectedGroupId !== null && selectedGroup === null) {
+      clearSelectedGroup();
+    }
+  }, [clearSelectedGroup, selectedGroup, selectedGroupId]);
+
+  useEffect(() => {
+    if (selectedArchiveId !== null && selectedArchive === null) {
+      clearSelectedArchive();
+    }
+  }, [clearSelectedArchive, selectedArchive, selectedArchiveId]);
+
+  useEffect(() => {
     if (selectedDirectArchiveId !== null && selectedDirectArchive === null) {
       clearSelectedDirectArchive();
     }
@@ -82,9 +117,36 @@ function AppLayoutInner() {
     writeChatFullscreenPreference(isChatFullscreen);
   }, [isChatFullscreen]);
 
+  useEffect(() => {
+    const matchedAgent = agents.find((agent) => agent.id === selectedEmployee.id);
+    if (!matchedAgent) {
+      return;
+    }
+
+    const avatarInfo = getAgentAvatarInfo(
+      matchedAgent.id,
+      matchedAgent.avatarUrl ?? matchedAgent.emoji,
+      matchedAgent.name,
+    );
+    const nextAvatarText =
+      avatarInfo.type === "image" ? matchedAgent.name.charAt(0) : avatarInfo.value;
+
+    setSelectedEmployee((current) => ({
+      ...current,
+      name: matchedAgent.name,
+      role: matchedAgent.role?.trim() || "",
+      avatarText: nextAvatarText || current.avatarText,
+      avatarUrl: avatarInfo.type === "image" ? avatarInfo.value : undefined,
+      emoji: avatarInfo.type === "emoji" ? avatarInfo.value : matchedAgent.emoji,
+    }));
+  }, [agents, avatarVersion, selectedEmployee.id]);
+
   const isChatSurfaceVisible =
     showDetailFor === null && selectedArchive === null && selectedDirectArchive === null;
   const isLayoutFullscreen = isChatSurfaceVisible && isChatFullscreen;
+  const shouldRenderArchiveFallback =
+    (selectedArchiveId !== null && selectedArchive === null) ||
+    (selectedDirectArchiveId !== null && selectedDirectArchive === null);
 
   return (
     <div
@@ -109,8 +171,22 @@ function AppLayoutInner() {
         {showDetailFor !== null &&
         selectedGroup === null &&
         selectedArchive === null &&
-        selectedDirectArchive === null ? (
+        selectedDirectArchive === null &&
+        !shouldRenderArchiveFallback ? (
           <EmployeeDetailPage />
+        ) : shouldRenderArchiveFallback ? (
+          <div className="flex h-full min-h-0 flex-col bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
+            <div className="mx-auto flex h-full w-full max-w-[960px] flex-1 items-center justify-center px-6 py-6">
+              <div className="w-full rounded-[28px] border border-[var(--color-border)] bg-[var(--color-bg-soft)] px-8 py-10 text-center shadow-[var(--shadow-md)] backdrop-blur-xl">
+                <div className="text-lg font-semibold text-[var(--color-text-primary)]">
+                  归档正在恢复中
+                </div>
+                <div className="mt-3 text-sm leading-7 text-[var(--color-text-secondary)]">
+                  当前归档数据还在同步或已失效。系统会自动尝试恢复；如果是历史旧缓存，也会优先按只读模式兼容展示。
+                </div>
+              </div>
+            </div>
+          </div>
         ) : (
           <ChatArea
             employee={selectedEmployee}

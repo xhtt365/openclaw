@@ -77,6 +77,37 @@ export function saveAgentAvatarMapping(agentId: string, avatarSrc: string) {
   }
 }
 
+export function removeAgentAvatarMapping(agentId: string) {
+  const normalizedAgentId = agentId.trim();
+  if (!normalizedAgentId) {
+    return;
+  }
+
+  const storage = getStorage();
+  if (!storage) {
+    return;
+  }
+
+  const avatarMap = readAgentAvatarMap();
+  if (!(normalizedAgentId in avatarMap)) {
+    return;
+  }
+
+  delete avatarMap[normalizedAgentId];
+  storage.setItem(AGENT_AVATAR_STORAGE_KEY, JSON.stringify(avatarMap));
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("xiaban-agent-avatar-updated", {
+        detail: {
+          agentId: normalizedAgentId,
+          removed: true,
+        },
+      }),
+    );
+  }
+}
+
 export function getAgentAvatarInfo(
   agentId: string,
   gatewayAvatar?: string | null,

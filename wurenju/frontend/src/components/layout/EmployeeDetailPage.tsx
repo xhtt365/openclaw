@@ -1,15 +1,29 @@
 "use client";
 
-import { ArrowLeft, Bot, FileText, Loader2, Save, Settings2 } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  Bot,
+  BriefcaseBusiness,
+  FileText,
+  ImagePlus,
+  Loader2,
+  Save,
+  Settings2,
+  Sparkles,
+} from "lucide-react";
+import { type ChangeEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { ConfirmModal } from "@/components/modals/ConfirmModal";
 import { ModelSelectModal } from "@/components/modals/ModelSelectModal";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { gateway } from "@/services/gateway";
 import { useAgentStore } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
 import type { AgentFile } from "@/types/agent";
+import { getAgentAvatarInfo, saveAgentAvatarMapping } from "@/utils/agentAvatar";
 import {
+  buildAgentIdentityContent,
   formatAgentCreatedAt,
   parseAgentIdentityContent,
   pickAgentCreatedAtMs,
@@ -22,6 +36,9 @@ type MetadataItem = {
 
 const EMPTY_FILES: AgentFile[] = [];
 const EMPTY_MESSAGES: Array<{ id?: string }> = [];
+const PRIORITY_FILE_NAMES = ["IDENTITY.md", "SOUL.md", "USER.md"] as const;
+const AVATAR_UPLOAD_ACCEPT = "image/png,image/jpeg,image/webp,image/svg+xml";
+const AVATAR_UPLOAD_MAX_BYTES = 2 * 1024 * 1024;
 
 function formatFileSize(size: number) {
   if (size < 1024) {
@@ -66,8 +83,7 @@ function resolveIdentityRole(content: string) {
 }
 
 function resolvePreferredFile(files: AgentFile[]) {
-  const preferredNames = ["IDENTITY.md", "SOUL.md", "USER.md"];
-  for (const name of preferredNames) {
+  for (const name of PRIORITY_FILE_NAMES) {
     const matched = files.find((file) => file.name === name);
     if (matched) {
       return matched.name;
@@ -89,6 +105,37 @@ function formatModelShortName(modelRef: string | null | undefined) {
   }
 
   return trimmed.slice(separatorIndex + 1) || trimmed;
+}
+
+function upsertAgentFile(files: AgentFile[], nextFile: AgentFile) {
+  const exists = files.some((file) => file.name === nextFile.name);
+  return exists
+    ? files.map((file) => (file.name === nextFile.name ? nextFile : file))
+    : [...files, nextFile];
+}
+
+function isSupportedAvatarFile(file: File) {
+  if (file.type.startsWith("image/")) {
+    return true;
+  }
+
+  return /\.(png|jpe?g|webp|svg)$/i.test(file.name);
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("头像读取失败，请换一张图片再试"));
+    });
+    reader.addEventListener("error", () => reject(new Error("头像读取失败，请换一张图片再试")));
+    reader.readAsDataURL(file);
+  });
 }
 
 function MetadataCard({ item }: { item: MetadataItem }) {
@@ -187,7 +234,22 @@ export function EmployeeDetailPage() {
   const [showUnsavedChangesModal, setShowUnsavedChangesModal] = useState(false);
   const [pendingFileName, setPendingFileName] = useState<string | null>(null);
   const [switchingFile, setSwitchingFile] = useState(false);
+  const [, setAvatarVersion] = useState(0);
+  const [profileDraft, setProfileDraft] = useState({
+    name: "",
+    role: "",
+    description: "",
+    emoji: "🤖",
+  });
+  const [profileBaseline, setProfileBaseline] = useState({
+    name: "",
+    role: "",
+    description: "",
+    emoji: "🤖",
+  });
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   const toastTimerRef = useRef<number | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   const agent = agents.find((item) => item.id === showDetailFor) ?? null;
   const files = showDetailFor ? (agentFiles.get(showDetailFor) ?? EMPTY_FILES) : EMPTY_FILES;
@@ -200,8 +262,7 @@ export function EmployeeDetailPage() {
     agent?.role?.trim() ||
     parsedIdentity.role?.trim() ||
     resolveIdentityRole(identityFile?.content ?? "") ||
-    agent?.id ||
-    "—";
+    "AI 员工";
   const createdAtMs = agent?.createdAtMs ?? pickAgentCreatedAtMs(files);
   const metadataItems: MetadataItem[] = [
     {
@@ -210,10 +271,27 @@ export function EmployeeDetailPage() {
     },
     { label: "Agent ID", value: agent?.id ?? "—" },
     { label: "创建时间", value: formatAgentCreatedAt(createdAtMs) },
-    { label: "状态", value: "在线" },
     { label: "上下文消息条数", value: String(messages.length) },
-    { label: "技能数", value: "0" },
+    { label: "状态", value: "在线" },
   ];
+  const profileDirty =
+    profileDraft.name.trim() !== profileBaseline.name ||
+    profileDraft.role.trim() !== profileBaseline.role ||
+    profileDraft.description.trim() !== profileBaseline.description ||
+    profileDraft.emoji.trim() !== profileBaseline.emoji;
+  const avatarInfo = agent
+    ? getAgentAvatarInfo(
+        agent.id,
+        agent.avatarUrl ?? profileDraft.emoji ?? agent.emoji,
+        profileDraft.name.trim() || agent.name,
+      )
+    : null;
+  const priorityFiles = files.filter((file) =>
+    PRIORITY_FILE_NAMES.includes(file.name as (typeof PRIORITY_FILE_NAMES)[number]),
+  );
+  const secondaryFiles = files.filter(
+    (file) => !PRIORITY_FILE_NAMES.includes(file.name as (typeof PRIORITY_FILE_NAMES)[number]),
+  );
 
   useEffect(() => {
     return () => {
@@ -261,6 +339,44 @@ export function EmployeeDetailPage() {
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [activeFileName, fileLoading, fileSaving, showDetailFor]);
+
+  useEffect(() => {
+    if (!agent) {
+      return;
+    }
+
+    const nextProfile = {
+      name: agent.name,
+      role:
+        agent.role?.trim() ||
+        parsedIdentity.role?.trim() ||
+        resolveIdentityRole(identityFile?.content ?? "") ||
+        "",
+      description: agent.description?.trim() || parsedIdentity.description?.trim() || "",
+      emoji: parsedIdentity.emoji?.trim() || agent.emoji?.trim() || "🤖",
+    };
+
+    setProfileDraft(nextProfile);
+    setProfileBaseline(nextProfile);
+    setIsSavingProfile(false);
+  }, [
+    agent,
+    identityFile?.content,
+    parsedIdentity.description,
+    parsedIdentity.emoji,
+    parsedIdentity.role,
+  ]);
+
+  useEffect(() => {
+    function handleAvatarRefresh() {
+      setAvatarVersion((current) => current + 1);
+    }
+
+    window.addEventListener("xiaban-agent-avatar-updated", handleAvatarRefresh);
+    return () => {
+      window.removeEventListener("xiaban-agent-avatar-updated", handleAvatarRefresh);
+    };
+  }, []);
 
   if (!showDetailFor) {
     return null;
@@ -327,6 +443,150 @@ export function EmployeeDetailPage() {
     await selectFile(name);
   }
 
+  async function handleSaveProfile() {
+    if (!agent || isSavingProfile) {
+      return;
+    }
+
+    const nextName = profileDraft.name.trim();
+    if (!nextName) {
+      toast({
+        title: "姓名不能为空",
+        description: "请先填写员工名称",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const nextRole = profileDraft.role.trim();
+    const nextDescription = profileDraft.description.trim();
+    const nextEmoji = profileDraft.emoji.trim() || agent.emoji?.trim() || "🤖";
+    const previousIdentityContent =
+      activeFileName === "IDENTITY.md" && fileContent.trim() ? fileContent : identityFile?.content;
+    const nextIdentityContent = buildAgentIdentityContent({
+      previousContent: previousIdentityContent,
+      name: nextName,
+      emoji: nextEmoji,
+      role: nextRole,
+      description: nextDescription,
+    });
+
+    setIsSavingProfile(true);
+
+    try {
+      await gateway.updateAgent(agent.id, { name: nextName });
+      await gateway.setAgentFile(agent.id, "IDENTITY.md", nextIdentityContent);
+
+      const updatedAtMs = Date.now();
+      const nextIdentityFile: AgentFile = {
+        name: "IDENTITY.md",
+        size: new TextEncoder().encode(nextIdentityContent).length,
+        updatedAtMs,
+        content: nextIdentityContent,
+      };
+
+      useAgentStore.setState((state) => {
+        const currentFiles = state.agentFiles.get(agent.id) ?? [];
+        const nextFiles = upsertAgentFile(currentFiles, nextIdentityFile);
+        const nextAgentFiles = new Map(state.agentFiles);
+        nextAgentFiles.set(agent.id, nextFiles);
+
+        return {
+          agents: state.agents.map((item) =>
+            item.id === agent.id
+              ? {
+                  ...item,
+                  name: nextName,
+                  role: nextRole || "AI 员工",
+                  description: nextDescription || undefined,
+                  emoji: nextEmoji,
+                  createdAtMs: item.createdAtMs ?? updatedAtMs,
+                }
+              : item,
+          ),
+          agentFiles: nextAgentFiles,
+          fileContent:
+            state.showDetailFor === agent.id && state.activeFileName === "IDENTITY.md"
+              ? nextIdentityContent
+              : state.fileContent,
+          fileDirty:
+            state.showDetailFor === agent.id && state.activeFileName === "IDENTITY.md"
+              ? false
+              : state.fileDirty,
+        };
+      });
+
+      const nextProfile = {
+        name: nextName,
+        role: nextRole,
+        description: nextDescription,
+        emoji: nextEmoji,
+      };
+      setProfileDraft(nextProfile);
+      setProfileBaseline(nextProfile);
+      toast({
+        title: "资料已更新",
+        description: "姓名、职务和简介已同步到员工资料",
+      });
+    } catch (error) {
+      toast({
+        title: "保存资料失败",
+        description: error instanceof Error && error.message.trim() ? error.message : "请稍后重试",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingProfile(false);
+    }
+  }
+
+  function handleTriggerAvatarUpload() {
+    avatarInputRef.current?.click();
+  }
+
+  async function handleAvatarFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!agent || !file) {
+      return;
+    }
+
+    if (!isSupportedAvatarFile(file)) {
+      toast({
+        title: "头像格式不支持",
+        description: "请上传 PNG、JPG、WEBP 或 SVG 图片",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (file.size > AVATAR_UPLOAD_MAX_BYTES) {
+      toast({
+        title: "头像过大",
+        description: "请上传 2MB 以内的图片",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // 头像只走本地映射，避免影响网关文件结构。
+      const avatarSrc = await readFileAsDataUrl(file);
+      saveAgentAvatarMapping(agent.id, avatarSrc);
+      setAvatarVersion((current) => current + 1);
+      toast({
+        title: "头像已更新",
+        description: "资料页、侧栏和聊天头像会同步刷新",
+      });
+    } catch (error) {
+      toast({
+        title: "头像更新失败",
+        description: error instanceof Error && error.message.trim() ? error.message : "请稍后重试",
+        variant: "destructive",
+      });
+    }
+  }
+
   function closeUnsavedChangesModal() {
     if (switchingFile) {
       return;
@@ -355,7 +615,7 @@ export function EmployeeDetailPage() {
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto flex max-w-[800px] flex-col gap-6 px-6 py-6">
+        <div className="mx-auto flex max-w-[1360px] flex-col gap-4 px-5 py-5">
           <div className="flex items-center justify-between gap-4">
             <Button
               type="button"
@@ -371,89 +631,259 @@ export function EmployeeDetailPage() {
             </div>
           </div>
 
-          <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-6 backdrop-blur-xl">
-            <div className="flex flex-col items-center text-center">
-              <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-[28px] border border-[var(--color-border)] bg-[var(--color-bg-card)] shadow-[0_18px_48px_var(--color-shadow-card)]">
-                {agent.avatarUrl ? (
-                  <img
-                    alt={agent.name}
-                    src={agent.avatarUrl}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <span className="text-4xl">{agent.emoji?.trim() || agent.name.charAt(0)}</span>
-                )}
-              </div>
-              <div className="mt-5 text-xl font-bold text-[var(--color-text-primary)]">
-                {agent.name}
-              </div>
-              <div className="mt-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-1 text-sm text-[var(--color-text-secondary)]">
-                {roleLabel}
-              </div>
-            </div>
-
-            <div className="mt-6 grid grid-cols-3 gap-3">
-              {metadataItems.map((item) => (
-                <MetadataCard key={item.label} item={item} />
-              ))}
-            </div>
-          </section>
-
-          <section className="grid gap-4 md:grid-cols-2">
-            <ActionCard
-              emoji="🔗"
-              title="配置渠道"
-              icon={<Settings2 className="h-4 w-4" />}
-              badge="开发中"
-              hint="功能入口预留，下一轮接交互"
-            />
-            <ActionCard
-              emoji="🤖"
-              title="配置模型"
-              icon={<Bot className="h-4 w-4" />}
-              disabled={false}
-              hint="已接入 Gateway，可直接切换当前员工模型"
-              value={formatModelShortName(
-                currentAgentModel || agent?.modelName || defaultModelLabel,
-              )}
-              onClick={() => setShowModelModal(true)}
-            />
-          </section>
-
-          <section className="min-h-[420px] rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-5 backdrop-blur-xl">
-            <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] pb-4">
-              <div className="flex items-center gap-2 text-base font-semibold text-[var(--color-text-primary)]">
-                <span aria-hidden="true">📝</span>
-                <span>提示词文件</span>
-              </div>
-              <Button
-                type="button"
-                onClick={() => void handleSave()}
-                disabled={!activeFileName || fileLoading || fileSaving}
-                className={cn(
-                  "h-10 rounded-xl px-4",
-                  fileDirty
-                    ? "bg-[var(--color-brand)] text-[var(--color-text-on-brand)] hover:bg-[var(--color-brand-light)]"
-                    : "border border-[var(--color-border)] bg-[var(--color-bg-card)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]",
-                )}
+          <div className="grid min-h-0 gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+            <aside className="flex min-h-0 flex-col gap-4 xl:sticky xl:top-5 xl:self-start">
+              <section
+                className="overflow-hidden rounded-[28px] border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-5 shadow-[var(--shadow-md)] backdrop-blur-xl"
+                style={{
+                  background:
+                    "linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 40%, color-mix(in srgb, var(--accent-2) 12%, transparent))",
+                }}
               >
-                {fileSaving ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" />
-                )}
-                {fileDirty ? "保存 *" : "保存"}
-              </Button>
-            </div>
+                <div className="flex items-start gap-4">
+                  <div className="relative shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleTriggerAvatarUpload}
+                      className="group relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[28px] border border-[var(--color-border)] bg-[var(--color-bg-card)] shadow-[0_18px_48px_var(--color-shadow-card)]"
+                      aria-label="点击修改头像"
+                      title="点击修改头像"
+                    >
+                      {avatarInfo?.type === "image" ? (
+                        <img
+                          alt={profileDraft.name || agent.name}
+                          src={avatarInfo.value}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-5xl">
+                          {avatarInfo?.value ?? agent.name.charAt(0)}
+                        </span>
+                      )}
+                      <div className="absolute inset-x-2 bottom-2 rounded-full bg-[color:color-mix(in_srgb,var(--color-bg-card)_82%,transparent)] px-2 py-1 text-[11px] font-medium text-[var(--color-text-primary)] opacity-0 transition-opacity group-hover:opacity-100">
+                        点击修改头像
+                      </div>
+                    </button>
+                    <input
+                      ref={avatarInputRef}
+                      type="file"
+                      accept={AVATAR_UPLOAD_ACCEPT}
+                      className="hidden"
+                      onChange={(event) => {
+                        void handleAvatarFileChange(event);
+                      }}
+                    />
+                  </div>
 
-            <div className="mt-4 grid min-h-[360px] gap-4 lg:grid-cols-[200px_minmax(0,1fr)]">
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] p-2">
-                <div className="mb-2 px-2 pt-1 text-xs uppercase tracking-[0.18em] text-[var(--color-text-secondary)]">
-                  文件列表
+                  <div className="min-w-0 flex-1">
+                    <div className="inline-flex items-center gap-2 rounded-full bg-[var(--color-bg-brand-soft)] px-3 py-1 text-xs font-semibold text-[var(--color-brand)]">
+                      <BriefcaseBusiness className="h-3.5 w-3.5" />
+                      编辑资料
+                    </div>
+                    <div className="mt-3 text-2xl font-bold tracking-tight text-[var(--color-text-primary)]">
+                      {profileDraft.name || agent.name}
+                    </div>
+                    <div className="mt-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-1 text-sm font-medium text-[var(--color-text-secondary)]">
+                      {profileDraft.role.trim() || roleLabel}
+                    </div>
+                    <div className="mt-3 text-sm leading-7 text-[var(--color-text-secondary)]">
+                      {profileDraft.description.trim() || "为董事长处理复杂工作，保持持续在线。"}
+                    </div>
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  {files.length > 0 ? (
-                    files.map((file) => {
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)]">
+                    <Sparkles className="h-3.5 w-3.5 text-[var(--accent)]" />
+                    在线待命
+                  </div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)]">
+                    <Bot className="h-3.5 w-3.5 text-[var(--accent-2)]" />
+                    {formatModelShortName(
+                      currentAgentModel || agent?.modelName || defaultModelLabel,
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              <section className="rounded-[24px] border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-4 shadow-[var(--shadow-sm)] backdrop-blur-xl">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                      资料面板
+                    </div>
+                    <div className="mt-1 text-xs leading-6 text-[var(--color-text-secondary)]">
+                      保存后会同步写入 `IDENTITY.md`
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      void handleSaveProfile();
+                    }}
+                    disabled={!profileDirty || isSavingProfile}
+                    className="h-10 rounded-2xl px-4"
+                  >
+                    {isSavingProfile ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    保存
+                  </Button>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  <label className="block">
+                    <div className="mb-2 text-sm font-medium text-[var(--color-text-primary)]">
+                      员工名称
+                    </div>
+                    <input
+                      value={profileDraft.name}
+                      onChange={(event) => {
+                        setProfileDraft((current) => ({
+                          ...current,
+                          name: event.target.value,
+                        }));
+                      }}
+                      placeholder="输入员工名称"
+                      className="h-11 w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 text-[15px] text-[var(--color-text-primary)] outline-none transition-[border-color,box-shadow] placeholder:text-[var(--color-text-secondary)] focus:border-[var(--accent)] focus:shadow-[0_0_0_1px_var(--accent-glow)]"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <div className="mb-2 text-sm font-medium text-[var(--color-text-primary)]">
+                      职务
+                    </div>
+                    <input
+                      value={profileDraft.role}
+                      onChange={(event) => {
+                        setProfileDraft((current) => ({
+                          ...current,
+                          role: event.target.value,
+                        }));
+                      }}
+                      placeholder="例如：产品负责人、运营经理、全栈开发"
+                      className="h-11 w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 text-[15px] text-[var(--color-text-primary)] outline-none transition-[border-color,box-shadow] placeholder:text-[var(--color-text-secondary)] focus:border-[var(--accent)] focus:shadow-[0_0_0_1px_var(--accent-glow)]"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <div className="mb-2 text-sm font-medium text-[var(--color-text-primary)]">
+                      简介
+                    </div>
+                    <textarea
+                      value={profileDraft.description}
+                      onChange={(event) => {
+                        setProfileDraft((current) => ({
+                          ...current,
+                          description: event.target.value,
+                        }));
+                      }}
+                      rows={4}
+                      placeholder="介绍一下职责、擅长方向和协作风格"
+                      className="min-h-[112px] w-full resize-none rounded-[20px] border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-3 text-[15px] leading-7 text-[var(--color-text-primary)] outline-none transition-[border-color,box-shadow] placeholder:text-[var(--color-text-secondary)] focus:border-[var(--accent)] focus:shadow-[0_0_0_1px_var(--accent-glow)]"
+                    />
+                  </label>
+                </div>
+              </section>
+
+              <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-2">
+                {metadataItems.map((item) => (
+                  <MetadataCard key={item.label} item={item} />
+                ))}
+              </section>
+
+              <section className="grid gap-3">
+                <ActionCard
+                  emoji="🤖"
+                  title="配置模型"
+                  icon={<Bot className="h-4 w-4" />}
+                  disabled={false}
+                  hint="已接入 Gateway，可直接切换当前员工模型"
+                  value={formatModelShortName(
+                    currentAgentModel || agent?.modelName || defaultModelLabel,
+                  )}
+                  onClick={() => setShowModelModal(true)}
+                />
+                <ActionCard
+                  emoji="🖼️"
+                  title="修改头像"
+                  icon={<ImagePlus className="h-4 w-4" />}
+                  disabled={false}
+                  hint="头像立即本地生效，不影响网关文件"
+                  onClick={handleTriggerAvatarUpload}
+                />
+                <ActionCard
+                  emoji="🔗"
+                  title="配置渠道"
+                  icon={<Settings2 className="h-4 w-4" />}
+                  badge="开发中"
+                  hint="功能入口预留，下一轮接交互"
+                />
+              </section>
+            </aside>
+
+            <section className="min-h-0 rounded-[28px] border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-5 shadow-[var(--shadow-md)] backdrop-blur-xl">
+              <div className="flex flex-col gap-4 border-b border-[var(--color-border)] pb-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-base font-semibold text-[var(--color-text-primary)]">
+                    <span aria-hidden="true">📝</span>
+                    <span>核心提示词工作台</span>
+                  </div>
+                  <div className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+                    关键文件直接放到首屏，减少滚动；支持 Cmd+S / Ctrl+S 快速保存。
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => void handleSave()}
+                  disabled={!activeFileName || fileLoading || fileSaving}
+                  className={cn(
+                    "h-10 rounded-xl px-4",
+                    fileDirty
+                      ? "bg-[var(--color-brand)] text-[var(--color-text-on-brand)] hover:bg-[var(--color-brand-light)]"
+                      : "border border-[var(--color-border)] bg-[var(--color-bg-card)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]",
+                  )}
+                >
+                  {fileSaving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  {fileDirty ? "保存 *" : "保存"}
+                </Button>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                {(priorityFiles.length > 0 ? priorityFiles : files).map((file) => {
+                  const isActive = file.name === activeFileName;
+                  return (
+                    <button
+                      key={file.name}
+                      type="button"
+                      onClick={() => void handleSelectFile(file.name)}
+                      className={cn(
+                        "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors",
+                        isActive
+                          ? "border-[var(--color-brand)] bg-[var(--color-bg-brand-soft)] text-[var(--color-brand)]"
+                          : "border-[var(--color-border)] bg-[var(--color-bg-card)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]",
+                      )}
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      {file.name}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {secondaryFiles.length > 0 ? (
+                <div className="mt-4 rounded-[22px] border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-3">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-text-secondary)]">
+                    其他文件
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {secondaryFiles.map((file) => {
                       const isActive = file.name === activeFileName;
                       return (
                         <button
@@ -461,35 +891,21 @@ export function EmployeeDetailPage() {
                           type="button"
                           onClick={() => void handleSelectFile(file.name)}
                           className={cn(
-                            "flex w-full items-center gap-3 rounded-xl border-l-2 px-3 py-3 text-left transition-colors",
+                            "rounded-full border px-3 py-1.5 text-xs transition-colors",
                             isActive
-                              ? "border-[var(--color-brand)] bg-[var(--color-bg-hover)]"
-                              : "border-transparent hover:bg-[var(--color-bg-hover)]",
+                              ? "border-[var(--color-brand)] bg-[var(--color-bg-brand-soft)] text-[var(--color-brand)]"
+                              : "border-[var(--color-border)] bg-[var(--color-bg-soft)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]",
                           )}
                         >
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-bg-soft)] text-base">
-                            <span aria-hidden="true">📄</span>
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">
-                              {file.name}
-                            </div>
-                            <div className="mt-1 text-xs text-[var(--color-text-secondary)]">
-                              {formatFileSize(file.size)}
-                            </div>
-                          </div>
+                          {file.name} · {formatFileSize(file.size)}
                         </button>
                       );
-                    })
-                  ) : (
-                    <div className="px-3 py-6 text-sm text-[var(--color-text-secondary)]">
-                      暂无可编辑文件
-                    </div>
-                  )}
+                    })}
+                  </div>
                 </div>
-              </div>
+              ) : null}
 
-              <div className="flex min-h-[360px] flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)]">
+              <div className="mt-4 flex min-h-[calc(100vh-220px)] min-w-0 flex-col rounded-[24px] border border-[var(--color-border)] bg-[var(--color-bg-card)]">
                 <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] px-4 py-3">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">
@@ -497,8 +913,8 @@ export function EmployeeDetailPage() {
                     </div>
                     <div className="mt-1 text-xs text-[var(--color-text-secondary)]">
                       {activeFileName
-                        ? "支持 Cmd+S / Ctrl+S 快速保存"
-                        : "从左侧选择一个提示词文件开始编辑"}
+                        ? "优先文件已上提到首屏，减少来回滚动"
+                        : "从上方选择一个提示词文件开始编辑"}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
@@ -518,8 +934,8 @@ export function EmployeeDetailPage() {
                       value={fileContent}
                       onChange={(event) => updateFileContent(event.target.value)}
                       disabled={!activeFileName || fileSaving}
-                      placeholder={activeFileName ? "在这里编辑提示词内容..." : "请选择左侧文件"}
-                      className="min-h-[320px] flex-1 resize-none bg-transparent px-4 py-4 font-mono text-sm leading-6 text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-secondary)] disabled:cursor-not-allowed disabled:text-[var(--color-text-secondary)]"
+                      placeholder={activeFileName ? "在这里编辑提示词内容..." : "请选择上方文件"}
+                      className="min-h-[420px] flex-1 resize-none bg-transparent px-5 py-4 font-mono text-sm leading-7 text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-secondary)] disabled:cursor-not-allowed disabled:text-[var(--color-text-secondary)]"
                     />
                   )}
 
@@ -533,8 +949,8 @@ export function EmployeeDetailPage() {
                   ) : null}
                 </div>
               </div>
-            </div>
-          </section>
+            </section>
+          </div>
         </div>
       </div>
 
