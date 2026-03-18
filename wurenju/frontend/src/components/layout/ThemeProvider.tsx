@@ -5,6 +5,7 @@ import { ThemeContext, type ResolvedThemeMode, type ThemeMode } from "@/componen
 
 const THEME_STORAGE_KEY = "xiaban_theme";
 const LEGACY_THEME_STORAGE_KEY = "theme";
+const THEME_SWITCHING_ATTRIBUTE = "data-theme-switching";
 
 function readStoredThemePreference(): ThemeMode | null {
   if (typeof window === "undefined") {
@@ -28,7 +29,8 @@ function resolveSystemTheme(): ResolvedThemeMode {
 }
 
 function resolveInitialTheme(): ThemeMode {
-  return readStoredThemePreference() ?? "dark";
+  // 新用户首次进入默认使用浅色白底，旧缓存主题保持原样。
+  return readStoredThemePreference() ?? "light";
 }
 
 function resolveThemeMode(mode: ThemeMode): ResolvedThemeMode {
@@ -51,11 +53,38 @@ function applyThemeClass(theme: ResolvedThemeMode) {
   body.style.colorScheme = theme;
 }
 
+function suppressThemeTransitions() {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+
+  const html = document.documentElement;
+  html.setAttribute(THEME_SWITCHING_ATTRIBUTE, "true");
+
+  let cleared = false;
+  const clear = () => {
+    if (cleared) {
+      return;
+    }
+
+    cleared = true;
+    html.removeAttribute(THEME_SWITCHING_ATTRIBUTE);
+  };
+
+  const frameId = window.requestAnimationFrame(() => {
+    window.setTimeout(clear, 160);
+  });
+
+  return () => {
+    window.cancelAnimationFrame(frameId);
+    clear();
+  };
+}
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<ThemeMode>(() => resolveInitialTheme());
-  const [resolvedTheme, setResolvedTheme] = useState<ResolvedThemeMode>(() =>
-    resolveThemeMode(resolveInitialTheme()),
-  );
+  const [systemTheme, setSystemTheme] = useState<ResolvedThemeMode>(() => resolveSystemTheme());
+  const resolvedTheme = theme === "system" ? systemTheme : theme;
 
   useEffect(() => {
     if (typeof window === "undefined" || theme !== "system") {
@@ -63,8 +92,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
 
     const media = window.matchMedia("(prefers-color-scheme: dark)");
+    setSystemTheme(media.matches ? "dark" : "light");
     const handleChange = (event: MediaQueryListEvent) => {
-      setResolvedTheme(event.matches ? "dark" : "light");
+      setSystemTheme(event.matches ? "dark" : "light");
     };
 
     media.addEventListener("change", handleChange);
@@ -73,19 +103,20 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     };
   }, [theme]);
 
-  useEffect(() => {
-    setResolvedTheme(resolveThemeMode(theme));
-  }, [theme]);
-
   useLayoutEffect(() => {
+    const restoreTransitions = suppressThemeTransitions();
     applyThemeClass(resolvedTheme);
+    return restoreTransitions;
+  }, [resolvedTheme]);
+
+  useEffect(() => {
     try {
       window.localStorage.setItem(THEME_STORAGE_KEY, theme);
       window.localStorage.removeItem(LEGACY_THEME_STORAGE_KEY);
     } catch (error) {
       console.error("[Theme] 保存主题失败:", error);
     }
-  }, [resolvedTheme, theme]);
+  }, [theme]);
 
   const setTheme = useCallback((nextTheme: ThemeMode) => {
     setThemeState(nextTheme);

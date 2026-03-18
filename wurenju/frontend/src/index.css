@@ -9,15 +9,15 @@
 html.light,
 body.light,
 [data-theme="light"] {
-  --bg-base: #f5f3f7;
+  --bg-base: #f6f5f2;
   --bg-sidebar: #ffffff;
-  --bg-main: #faf9fc;
+  --bg-main: #ffffff;
   --bg-elevated: #ffffff;
-  --bg-hover: #f0edf4;
-  --bg-muted: #f6f1f7;
-  --text-primary: #1a1a2e;
-  --text-secondary: #6b6580;
-  --text-muted: #a09aac;
+  --bg-hover: #f3f2ee;
+  --bg-muted: #f7f5f1;
+  --text-primary: #1f1c18;
+  --text-secondary: #6f695f;
+  --text-muted: #a29a8f;
   --text-inverse: #ffffff;
   --brand-primary: #dc2626;
   --brand-hover: #ef4444;
@@ -38,8 +38,8 @@ body.light,
   --shadow-xl: 0 24px 48px rgba(0, 0, 0, 0.16);
   --input-bg: #ffffff;
   --input-border: rgba(0, 0, 0, 0.1);
-  --input-text: #1a1a2e;
-  --input-placeholder: #a09aac;
+  --input-text: #1f1c18;
+  --input-placeholder: #a29a8f;
   --scrollbar-track: transparent;
   --scrollbar-thumb: rgba(0, 0, 0, 0.1);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.16);
@@ -77,9 +77,31 @@ body.light,
   --modal-shell-border: rgba(0, 0, 0, 0.08);
   --modal-shell-shadow: 0 28px 120px rgba(15, 18, 24, 0.16);
   --modal-overlay: rgba(15, 18, 24, 0.35);
-  --modal-code-bg: #f3eff6;
-  --modal-code-text: #241f31;
+  --modal-code-bg: #f5f4f0;
+  --modal-code-text: #26211b;
   --overlay-strong: rgba(15, 18, 24, 0.56);
+  --workbench-shell-bg:
+    radial-gradient(circle at top right, rgba(220, 38, 38, 0.06) 0%, transparent 26%),
+    linear-gradient(180deg, #fffdfa 0%, #ffffff 18%, #f7f5f1 100%);
+  --workbench-panel-bg: linear-gradient(180deg, #ffffff 0%, #fbfaf7 100%);
+  --workbench-panel-bg-strong: linear-gradient(180deg, #ffffff 0%, #f7f4ef 100%);
+  --workbench-panel-hover: linear-gradient(180deg, #fcfbf8 0%, #f3efe9 100%);
+  --workbench-panel-active: linear-gradient(
+    180deg,
+    rgba(220, 38, 38, 0.035) 0%,
+    rgba(220, 38, 38, 0.085) 100%
+  );
+  --workbench-panel-border: rgba(31, 28, 24, 0.08);
+  --workbench-panel-border-strong: rgba(31, 28, 24, 0.14);
+  --workbench-card-shadow:
+    0 8px 18px rgba(15, 18, 24, 0.045),
+    inset 0 1px 0 rgba(255, 255, 255, 0.84);
+  --workbench-elevated-shadow:
+    0 14px 30px rgba(15, 18, 24, 0.075),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  --workbench-glass-bg: rgba(255, 252, 247, 0.84);
+  --workbench-pill-bg: rgba(247, 244, 239, 0.92);
+  --workbench-pill-border: rgba(31, 28, 24, 0.08);
 
   --bg: var(--bg-base);
   --bg-accent: var(--bg-sidebar);
@@ -235,15 +257,15 @@ html.dark,
 body.dark,
 .dark,
 [data-theme="dark"] {
-  --bg-base: #0d0a10;
-  --bg-sidebar: #100c14;
-  --bg-main: #161220;
-  --bg-elevated: #1e1a28;
-  --bg-hover: #252030;
-  --bg-muted: #1a1520;
-  --text-primary: #f0ecf4;
-  --text-secondary: #a09aac;
-  --text-muted: #6b6578;
+  --bg-base: #0f0e0b;
+  --bg-sidebar: #151310;
+  --bg-main: #1a1814;
+  --bg-elevated: #221f1a;
+  --bg-hover: #2a2721;
+  --bg-muted: #1d1a15;
+  --text-primary: #f4efe7;
+  --text-secondary: #ada59a;
+  --text-muted: #756d63;
   --text-inverse: #ffffff;
   --brand-primary: #dc2626;
   --brand-hover: #ef4444;
@@ -252,8 +274,8 @@ body.dark,
   --brand-glow: rgba(220, 38, 38, 0.2);
   --bubble-user-bg: #dc2626;
   --bubble-user-text: #ffffff;
-  --bubble-agent-bg: #1e1a28;
-  --bubble-agent-text: #f0ecf4;
+  --bubble-agent-bg: #221f1a;
+  --bubble-agent-text: #f4efe7;
   --border-color: rgba(255, 255, 255, 0.06);
   --border-strong: rgba(255, 255, 255, 0.12);
   --border-hover: rgba(255, 255, 255, 0.18);
@@ -262,10 +284,10 @@ body.dark,
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
   --shadow-xl: 0 24px 48px rgba(0, 0, 0, 0.58);
-  --input-bg: #1e1a28;
+  --input-bg: #221f1a;
   --input-border: rgba(255, 255, 255, 0.1);
-  --input-text: #f0ecf4;
-  --input-placeholder: #6b6578;
+  --input-text: #f4efe7;
+  --input-placeholder: #756d63;
   --scrollbar-track: transparent;
   --scrollbar-thumb: rgba(255, 255, 255, 0.1);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.18);
@@ -282,10 +304,10 @@ body.dark,
   --zone-idle: #6b7280;
   --surface-soft: rgba(255, 255, 255, 0.04);
   --surface-soft-strong: rgba(255, 255, 255, 0.08);
-  --surface-glass: rgba(30, 26, 40, 0.78);
-  --surface-glass-strong: rgba(30, 26, 40, 0.92);
-  --surface-overlay: rgba(16, 12, 20, 0.8);
-  --surface-overlay-strong: rgba(16, 12, 20, 0.92);
+  --surface-glass: rgba(34, 31, 26, 0.78);
+  --surface-glass-strong: rgba(34, 31, 26, 0.92);
+  --surface-overlay: rgba(21, 19, 16, 0.8);
+  --surface-overlay-strong: rgba(21, 19, 16, 0.92);
   --surface-inverse-soft: rgba(255, 255, 255, 0.16);
   --surface-danger-soft: rgba(239, 68, 68, 0.12);
   --surface-danger-border: rgba(239, 68, 68, 0.22);
@@ -299,13 +321,35 @@ body.dark,
   --surface-brand-soft: rgba(220, 38, 38, 0.14);
   --surface-brand-border: rgba(239, 68, 68, 0.22);
   --surface-brand-text: #fecaca;
-  --modal-shell-bg: rgba(16, 12, 20, 0.94);
+  --modal-shell-bg: rgba(21, 19, 16, 0.94);
   --modal-shell-border: rgba(255, 255, 255, 0.08);
   --modal-shell-shadow: 0 28px 120px rgba(0, 0, 0, 0.45);
   --modal-overlay: rgba(5, 7, 10, 0.62);
-  --modal-code-bg: #110d18;
-  --modal-code-text: #f0ecf4;
+  --modal-code-bg: #16130f;
+  --modal-code-text: #f4efe7;
   --overlay-strong: rgba(5, 7, 10, 0.78);
+  --workbench-shell-bg:
+    radial-gradient(circle at top right, rgba(239, 68, 68, 0.1) 0%, transparent 26%),
+    linear-gradient(180deg, #181511 0%, #151310 22%, #100f0c 100%);
+  --workbench-panel-bg: linear-gradient(180deg, #211d18 0%, #1a1713 100%);
+  --workbench-panel-bg-strong: linear-gradient(180deg, #26211c 0%, #1c1915 100%);
+  --workbench-panel-hover: linear-gradient(180deg, #2c2721 0%, #25211c 100%);
+  --workbench-panel-active: linear-gradient(
+    180deg,
+    rgba(239, 68, 68, 0.08) 0%,
+    rgba(239, 68, 68, 0.16) 100%
+  );
+  --workbench-panel-border: rgba(255, 255, 255, 0.09);
+  --workbench-panel-border-strong: rgba(255, 255, 255, 0.15);
+  --workbench-card-shadow:
+    0 10px 22px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --workbench-elevated-shadow:
+    0 16px 32px rgba(0, 0, 0, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --workbench-glass-bg: rgba(24, 21, 17, 0.84);
+  --workbench-pill-bg: rgba(36, 31, 26, 0.92);
+  --workbench-pill-border: rgba(255, 255, 255, 0.08);
 
   --bg: var(--bg-base);
   --bg-accent: var(--bg-sidebar);
@@ -457,7 +501,7 @@ body.dark,
 @keyframes panel-left-enter {
   from {
     opacity: 0;
-    transform: translateX(-20px);
+    transform: translateX(-8px);
   }
 
   to {
@@ -489,7 +533,7 @@ body.dark,
 @keyframes message-enter {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(6px);
   }
 
   to {
@@ -636,23 +680,32 @@ body.dark,
 }
 
 .panel-left-enter {
-  animation: panel-left-enter 400ms var(--ease-standard) both;
+  animation: panel-left-enter 240ms var(--ease-standard) both;
 }
 
 .panel-right-enter {
-  animation: panel-right-enter 600ms var(--ease-standard) 200ms both;
+  animation: panel-right-enter 280ms var(--ease-standard) 60ms both;
+}
+
+html[data-theme-switching="true"] *,
+html[data-theme-switching="true"] *::before,
+html[data-theme-switching="true"] *::after {
+  transition: none !important;
 }
 
 /* Fix: 问题5 - 聊天全屏通过布局 class 隐藏左侧栏，让右侧聊天区域覆盖整个页面。 */
 .app-layout__sidebar {
   flex: 0 0 var(--sidebar-w);
+  flex-basis: var(--sidebar-w);
   width: var(--sidebar-w);
   max-width: var(--sidebar-w);
   min-width: var(--sidebar-w);
   overflow: hidden;
   border-right: 1px solid var(--color-border);
   transition:
+    flex-basis var(--duration-normal) var(--ease-standard),
     width var(--duration-normal) var(--ease-standard),
+    max-width var(--duration-normal) var(--ease-standard),
     min-width var(--duration-normal) var(--ease-standard),
     opacity var(--duration-normal) var(--ease-standard),
     border-color var(--duration-normal) var(--ease-standard);
@@ -665,7 +718,10 @@ body.dark,
 }
 
 .app-layout--chat-fullscreen .app-layout__sidebar {
+  flex: 0 0 0;
+  flex-basis: 0;
   width: 0;
+  max-width: 0;
   min-width: 0;
   opacity: 0;
   pointer-events: none;
