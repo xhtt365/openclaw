@@ -6,7 +6,9 @@ import { ThemeToggle } from "@/components/chat/components/theme-toggle";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { UserProfilePopover } from "@/components/chat/UserProfilePopover";
 import { cn } from "@/lib/utils";
-import { type GroupArchive, type GroupChatMessage } from "@/stores/groupStore";
+import { useAgentStore } from "@/stores/agentStore";
+import { useDirectArchiveStore } from "@/stores/directArchiveStore";
+import { useGroupStore, type GroupArchive, type GroupChatMessage } from "@/stores/groupStore";
 import { getUserProfile, subscribeToUserProfile } from "@/utils/userProfile";
 
 const AVATAR_COLORS = [
@@ -21,6 +23,15 @@ const AVATAR_COLORS = [
 type GroupArchiveChatAreaProps = {
   archive: GroupArchive;
 };
+
+function formatArchiveTimeLabel(value: string) {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return "时间未知";
+  }
+
+  return new Date(timestamp).toLocaleString("zh-CN");
+}
 
 function hashText(value: string) {
   return Array.from(value).reduce((total, char) => total + char.charCodeAt(0), 0);
@@ -52,10 +63,16 @@ function resolveArchiveAvatarText(message: GroupChatMessage) {
 }
 
 function GroupArchiveChatAreaInner({ archive }: GroupArchiveChatAreaProps) {
+  const openDetail = useAgentStore((state) => state.openDetail);
+  const clearSelectedGroup = useGroupStore((state) => state.clearSelectedGroup);
+  const clearSelectedArchive = useGroupStore((state) => state.clearSelectedArchive);
+  const clearSelectedDirectArchive = useDirectArchiveStore(
+    (state) => state.clearSelectedDirectArchive,
+  );
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [userProfile, setUserProfile] = useState(() => getUserProfile());
   const [popoverAnchorRect, setPopoverAnchorRect] = useState<DOMRect | null>(null);
-  const archiveTime = new Date(archive.createdAt).toLocaleString("zh-CN");
+  const archiveTime = formatArchiveTimeLabel(archive.createdAt);
 
   useEffect(() => subscribeToUserProfile(setUserProfile), []);
 
@@ -76,7 +93,7 @@ function GroupArchiveChatAreaInner({ archive }: GroupArchiveChatAreaProps) {
     const url = window.URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${archive.groupName}-${message.id}.txt`;
+    anchor.download = `${archive.groupName || "项目组归档"}-${message.id}.txt`;
     anchor.click();
     window.URL.revokeObjectURL(url);
     console.log(`[Group] 导出归档消息: ${archive.groupName}`);
@@ -84,6 +101,13 @@ function GroupArchiveChatAreaInner({ archive }: GroupArchiveChatAreaProps) {
 
   function handleRefreshMessage(message: GroupChatMessage) {
     console.log(`[Group] 归档回看不支持刷新消息: ${message.id}`);
+  }
+
+  function handleOpenAgentDetail(agentId: string) {
+    clearSelectedGroup();
+    clearSelectedArchive();
+    clearSelectedDirectArchive();
+    void openDetail(agentId);
   }
 
   return (
@@ -98,7 +122,9 @@ function GroupArchiveChatAreaInner({ archive }: GroupArchiveChatAreaProps) {
               <Archive className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <div className="group-chat-header__title truncate">{archive.groupName}</div>
+              <div className="group-chat-header__title truncate">
+                {archive.groupName || "项目组归档"}
+              </div>
               <div className="group-chat-header__subtitle mt-1 flex flex-wrap items-center gap-3">
                 <span className="inline-flex items-center gap-1.5">
                   <Clock3 className="h-3.5 w-3.5" />
@@ -143,6 +169,9 @@ function GroupArchiveChatAreaInner({ archive }: GroupArchiveChatAreaProps) {
                     onTypingComplete={() => {}}
                     onUserAvatarClick={(target) => {
                       setPopoverAnchorRect(target.getBoundingClientRect());
+                    }}
+                    onAgentAvatarClick={(agentId) => {
+                      handleOpenAgentDetail(agentId);
                     }}
                     onCopy={handleCopyMessage}
                     onDownload={handleDownloadMessage}

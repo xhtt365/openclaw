@@ -296,6 +296,7 @@ void test("renderOriginalChatShell 在群聊模式下渲染项目组专属标题
       onGroupSelect: () => {},
       onSessionSelect: () => {},
       onModelSelect: () => {},
+      onGroupHeaderMemberClick: () => {},
       onArchiveConversationClick: () => {},
       onAnnouncementClick: () => {},
       onUrgeClick: () => {},
@@ -323,6 +324,7 @@ void test("renderOriginalChatShell 在群聊模式下渲染项目组专属标题
   assert.match(markup, /surface-group-more/);
   assert.match(markup, /更多操作/);
   assert.match(markup, /surface-group-more__dot/);
+  assert.match(markup, /surface-group-topbar__avatar-btn/);
   assert.match(markup, />关闭消息提醒</);
   assert.match(markup, />关闭音效</);
   assert.match(markup, />编辑项目组</);

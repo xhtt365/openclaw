@@ -50,6 +50,7 @@ import { toast } from "@/components/ui/use-toast";
 import { gateway, type GatewayChatEventPayload } from "@/services/gateway";
 import { useAgentStore, type Agent } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
+import { useDirectArchiveStore } from "@/stores/directArchiveStore";
 import {
   getGroupContextMetrics,
   useGroupStore,
@@ -464,9 +465,9 @@ function OpenClawChatSurfaceInner({
   const [pendingQuickAction, setPendingQuickAction] = useState<QuickActionKind | null>(null);
   const [isQuickActionLoading, setIsQuickActionLoading] = useState(false);
   const [groupCaretPosition, setGroupCaretPosition] = useState(0);
-  const [isGroupInputFocused, setIsGroupInputFocused] = useState(false);
-  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
-  const [dismissedMentionSignature, setDismissedMentionSignature] = useState<string | null>(null);
+  const [, setIsGroupInputFocused] = useState(false);
+  const [, setActiveMentionIndex] = useState(0);
+  const [, setDismissedMentionSignature] = useState<string | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile>(() => getUserProfile());
   const [agentAvatarVersion, setAgentAvatarVersion] = useState(0);
   const gatewayStatus = useChatStore((state) => state.status);
@@ -476,10 +477,14 @@ function OpenClawChatSurfaceInner({
   const archiveCurrentSession = useChatStore((state) => state.archiveCurrentSession);
   const agents = useAgentStore((state) => state.agents);
   const mainKey = useAgentStore((state) => state.mainKey);
+  const openDetail = useAgentStore((state) => state.openDetail);
   const closeDetail = useAgentStore((state) => state.closeDetail);
   const allGroups = useGroupStore((state) => state.groups);
   const clearSelectedArchive = useGroupStore((state) => state.clearSelectedArchive);
   const clearSelectedGroup = useGroupStore((state) => state.clearSelectedGroup);
+  const clearSelectedDirectArchive = useDirectArchiveStore(
+    (state) => state.clearSelectedDirectArchive,
+  );
   const groupId = group?.id ?? "";
   const groupMessages = useGroupStore(
     (state) => state.messagesByGroupId[groupId] ?? EMPTY_GROUP_MESSAGES,
@@ -703,15 +708,6 @@ function OpenClawChatSurfaceInner({
       matchesGroupMentionQuery(member.name, activeGroupMention.query),
     );
   }, [activeGroupMention, groupMembersForSurface]);
-  const normalizedMentionIndex =
-    groupMentionCandidates.length > 0
-      ? Math.min(activeMentionIndex, groupMentionCandidates.length - 1)
-      : 0;
-  const isGroupMentionOpen =
-    isGroupMode &&
-    isGroupInputFocused &&
-    activeGroupMention !== null &&
-    dismissedMentionSignature !== activeGroupMentionSignature;
   const groupPreviewHtml = useMemo(
     () => renderGroupMentionPreviewHtml(currentDraft, groupMemberNames),
     [currentDraft, groupMemberNames],
@@ -1498,6 +1494,17 @@ function OpenClawChatSurfaceInner({
     onChatFullscreenChange(nextFocusMode);
   }
 
+  function handleOpenAgentDetail(agentId: string) {
+    if (!agents.some((agent) => agent.id === agentId)) {
+      return;
+    }
+
+    clearSelectedGroup();
+    clearSelectedArchive();
+    clearSelectedDirectArchive();
+    void openDetail(agentId);
+  }
+
   useEffect(() => {
     const host = hostRef.current;
     const runtime = runtimeRef.current;
@@ -1512,6 +1519,9 @@ function OpenClawChatSurfaceInner({
         headerTitle: isGroupMode ? (group?.name ?? assistantName) : employee.name,
         isGroupMode,
         groupHeader,
+        onGroupHeaderMemberClick: (memberId) => {
+          handleOpenAgentDetail(memberId);
+        },
         hasAnnouncement: Boolean(group?.announcement?.trim().length),
         isUrging: group?.isUrging === true,
         isUrgePaused: group?.isUrgePaused === true,
@@ -1626,10 +1636,11 @@ function OpenClawChatSurfaceInner({
           assistantAvatarUrl,
           assistantAvatarText,
           assistantAvatarColor,
+          assistantAgentId: displayedAgentId,
           userAvatar: userProfile.avatar,
           userName: userProfile.name,
           draft: runtime.chatMessage,
-          inputPlaceholder: isGroupMode ? "输入消息，按 @ 提及成员" : undefined,
+          inputPlaceholder: isGroupMode ? "输入消息…" : undefined,
           messageTextDecorator:
             isGroupMode && groupMemberNames.length > 0
               ? (renderedHtml) => decorateGroupHtmlMentions(renderedHtml, groupMemberNames)
@@ -1653,19 +1664,10 @@ function OpenClawChatSurfaceInner({
             ? {
                 previewHtml: groupPreviewHtml,
                 mentionQuery: activeGroupMention?.query ?? "",
-                mentionOpen: isGroupMentionOpen,
-                mentionActiveIndex: normalizedMentionIndex,
-                mentionMembers: groupMentionCandidates.map((member) => ({
-                  id: member.id,
-                  name: member.name,
-                  avatarText: resolveMemberAvatarText(member),
-                  avatarUrl:
-                    member.avatarUrl ??
-                    resolveGroupMemberAvatarUrl(member, groupMemberAvatarCache) ??
-                    undefined,
-                  avatarColor: resolveChatAvatarColor(member.id || member.name),
-                  role: member.role,
-                })),
+                // 群聊已经有底部快捷 @，这里关闭输入框联想弹层，只保留点击快捷成员插入。
+                mentionOpen: false,
+                mentionActiveIndex: 0,
+                mentionMembers: [],
                 quickMentionMembers: groupMembersForSurface.map((member) => ({
                   id: member.id,
                   name: member.name,
@@ -1888,6 +1890,9 @@ function OpenClawChatSurfaceInner({
             await gateway.resetSession(sessionKey);
             await refreshCurrentSession(sessionKey);
           },
+          onAssistantAvatarClick: (agentId) => {
+            handleOpenAgentDetail(agentId);
+          },
           agentsList: {
             agents: agents.map((agent) => {
               const avatarInfo = getAgentAvatarInfo(
@@ -1978,7 +1983,6 @@ function OpenClawChatSurfaceInner({
     defaultModelValue,
     chatModelOptions,
     chatModelsLoading,
-    activeGroupMentionSignature,
     groupHeader,
     group?.id,
     group?.announcement,
@@ -1992,10 +1996,8 @@ function OpenClawChatSurfaceInner({
     groupPreviewHtml,
     hiddenCronCount,
     hideCronSessions,
-    isGroupMentionOpen,
     isQuickActionLoading,
     memberOptions,
-    normalizedMentionIndex,
     queue,
     renderNonce,
     sessionKey,

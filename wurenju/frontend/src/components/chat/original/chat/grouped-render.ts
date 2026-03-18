@@ -87,10 +87,14 @@ function extractImages(message: unknown): ImageBlock[] {
   return images;
 }
 
-export function renderReadingIndicatorGroup(assistant?: AssistantIdentity, basePath?: string) {
+export function renderReadingIndicatorGroup(
+  assistant?: AssistantIdentity,
+  basePath?: string,
+  onAssistantAvatarClick?: (agentId: string, target: HTMLElement) => void,
+) {
   return html`
     <div class="chat-group assistant">
-      ${renderAvatar("assistant", assistant, undefined, basePath)}
+      ${renderAvatar("assistant", assistant, undefined, basePath, undefined, onAssistantAvatarClick)}
       <div class="chat-group-messages">
         <div class="chat-bubble chat-reading-indicator" aria-hidden="true">
           <span class="chat-reading-indicator__dots">
@@ -108,6 +112,7 @@ export function renderStreamingGroup(
   onOpenSidebar?: (content: string) => void,
   assistant?: AssistantIdentity,
   basePath?: string,
+  onAssistantAvatarClick?: (agentId: string, target: HTMLElement) => void,
 ) {
   const timestamp = new Date(startedAt).toLocaleTimeString([], {
     hour: "numeric",
@@ -117,7 +122,7 @@ export function renderStreamingGroup(
 
   return html`
     <div class="chat-group assistant">
-      ${renderAvatar("assistant", assistant, undefined, basePath)}
+      ${renderAvatar("assistant", assistant, undefined, basePath, undefined, onAssistantAvatarClick)}
       <div class="chat-group-messages">
         ${renderGroupedMessage(
           {
@@ -147,18 +152,21 @@ export function renderMessageGroup(
     assistantAvatar?: string | null;
     assistantAvatarText?: string;
     assistantAvatarColor?: string;
+    assistantAgentId?: string | null;
     basePath?: string;
     contextWindow?: number | null;
     onDelete?: () => void;
     userAvatar?: string | null;
     userName?: string | null;
     onUserAvatarClick?: (target: HTMLElement) => void;
+    onAssistantAvatarClick?: (agentId: string, target: HTMLElement) => void;
   },
 ) {
   const normalizedRole = normalizeRoleForGrouping(group.role);
   const assistantName = opts.assistantName ?? "Assistant";
   const userLabel = group.senderLabel?.trim();
   const assistantIdentity = {
+    agentId: group.senderId ?? opts.assistantAgentId ?? null,
     name: userLabel ?? assistantName,
     avatar: resolveAssistantAvatar(group, opts.assistantAvatar),
     avatarText:
@@ -169,7 +177,7 @@ export function renderMessageGroup(
       group.senderId ?? userLabel ?? null,
       opts.assistantAvatarColor?.trim() || "var(--accent)",
     ),
-  } satisfies Pick<AssistantIdentity, "name" | "avatar" | "avatarText" | "avatarColor">;
+  } satisfies AssistantIdentity;
   const who =
     normalizedRole === "user"
       ? opts.userName?.trim() || userLabel || "你"
@@ -205,6 +213,7 @@ export function renderMessageGroup(
         },
         opts.basePath,
         opts.onUserAvatarClick,
+        opts.onAssistantAvatarClick,
       )}
       <div class="chat-group-messages">
         ${group.messages.map((item, index) =>
@@ -545,10 +554,11 @@ function renderTtsButton(group: MessageGroup) {
 
 function renderAvatar(
   role: string,
-  assistant?: Pick<AssistantIdentity, "name" | "avatar" | "avatarText" | "avatarColor">,
+  assistant?: AssistantIdentity,
   userProfile?: Pick<UserProfile, "avatar" | "name">,
   _basePath?: string,
   onUserAvatarClick?: (target: HTMLElement) => void,
+  onAssistantAvatarClick?: (agentId: string, target: HTMLElement) => void,
 ) {
   const normalized = normalizeRoleForGrouping(role);
   const assistantName = assistant?.name?.trim() || "Assistant";
@@ -641,7 +651,26 @@ function renderAvatar(
   }
 
   if (assistantAvatar && normalized === "assistant") {
+    const canOpenAgentDetail = Boolean(assistant?.agentId && onAssistantAvatarClick);
     if (isAvatarUrl(assistantAvatar)) {
+      if (canOpenAgentDetail) {
+        return html`<button
+          type="button"
+          class="chat-avatar ${className} chat-avatar--button"
+          aria-label="编辑 ${assistantName} 的资料"
+          title="编辑 ${assistantName} 的资料"
+          @click=${(event: Event) => {
+            onAssistantAvatarClick?.(assistant?.agentId ?? "", event.currentTarget as HTMLElement);
+          }}
+        >
+          <img
+            class="chat-avatar__image"
+            src="${assistantAvatar}"
+            alt="${assistantName}"
+          />
+        </button>`;
+      }
+
       return html`<img
         class="chat-avatar ${className}"
         src="${assistantAvatar}"
@@ -649,6 +678,19 @@ function renderAvatar(
       />`;
     }
     // Fix: 问题1 - 聊天气泡优先显示员工自定义头像文案/emoji，不再把非 URL 头像一律替换成默认 logo。
+    if (canOpenAgentDetail) {
+      return html`<button
+        type="button"
+        class="chat-avatar ${className} chat-avatar--button"
+        style="background:${assistantAvatarColor};"
+        aria-label="编辑 ${assistantName} 的资料"
+        title="编辑 ${assistantName} 的资料"
+        @click=${(event: Event) => {
+          onAssistantAvatarClick?.(assistant?.agentId ?? "", event.currentTarget as HTMLElement);
+        }}
+      >${assistantAvatar}</button>`;
+    }
+
     return html`<div
       class="chat-avatar ${className}"
       style="background:${assistantAvatarColor};"
@@ -657,6 +699,19 @@ function renderAvatar(
   }
 
   if (normalized === "assistant" && assistant?.avatarText?.trim()) {
+    if (assistant?.agentId && onAssistantAvatarClick) {
+      return html`<button
+        type="button"
+        class="chat-avatar ${className} chat-avatar--button"
+        style="background:${assistantAvatarColor};"
+        aria-label="编辑 ${assistantName} 的资料"
+        title="编辑 ${assistantName} 的资料"
+        @click=${(event: Event) => {
+          onAssistantAvatarClick(assistant.agentId ?? "", event.currentTarget as HTMLElement);
+        }}
+      >${assistantAvatarText}</button>`;
+    }
+
     return html`<div
       class="chat-avatar ${className}"
       style="background:${assistantAvatarColor};"

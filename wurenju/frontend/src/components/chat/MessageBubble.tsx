@@ -86,20 +86,61 @@ function AgentAvatar(props: {
   avatarText: string;
   avatarColor: string;
   avatarUrl?: string;
+  onClick?: (agentId: string, target: HTMLElement) => void;
 }) {
   const avatarInfo = getAgentAvatarInfo(
     props.agentId ?? props.name,
     props.avatarUrl ?? props.avatarText,
     props.name,
   );
+  const clickable = Boolean(props.agentId && props.onClick);
+
+  const handleClick = (target: HTMLElement) => {
+    if (!props.agentId || !props.onClick) {
+      return;
+    }
+
+    props.onClick(props.agentId, target);
+  };
+
+  if (avatarInfo.type === "image" && clickable) {
+    return (
+      <button
+        type="button"
+        onClick={(event) => {
+          handleClick(event.currentTarget);
+        }}
+        className="chat-avatar assistant chat-avatar--button"
+        aria-label={`编辑 ${props.name} 的资料`}
+        title={`编辑 ${props.name} 的资料`}
+      >
+        <img
+          alt={props.name}
+          className="h-full w-full rounded-[inherit] object-cover"
+          src={avatarInfo.value}
+        />
+      </button>
+    );
+  }
 
   if (avatarInfo.type === "image") {
+    return <img alt={props.name} className="chat-avatar assistant" src={avatarInfo.value} />;
+  }
+
+  if (clickable) {
     return (
-      <img
-        alt={props.name}
-        className="chat-avatar assistant chat-avatar-image"
-        src={avatarInfo.value}
-      />
+      <button
+        type="button"
+        onClick={(event) => {
+          handleClick(event.currentTarget);
+        }}
+        className="chat-avatar assistant chat-avatar--button"
+        style={{ backgroundColor: props.avatarColor }}
+        aria-label={`编辑 ${props.name} 的资料`}
+        title={`编辑 ${props.name} 的资料`}
+      >
+        {avatarInfo.value}
+      </button>
     );
   }
 
@@ -110,15 +151,19 @@ function AgentAvatar(props: {
   );
 }
 
-function UserAvatarButton(props: { profile: UserProfile; fallbackAvatar?: string | null }) {
+function UserAvatarButton(props: {
+  profile: UserProfile;
+  fallbackAvatar?: string | null;
+  onClick?: (target: HTMLElement) => void;
+}) {
   const avatarUrl = props.profile.avatar ?? props.fallbackAvatar ?? null;
 
   return (
     <button
       type="button"
       onClick={(event) => {
-        console.log("avatar clicked");
         openUserProfilePopover(event.currentTarget);
+        props.onClick?.(event.currentTarget);
       }}
       className="chat-avatar user chat-avatar-button"
       data-user-avatar="true"
@@ -197,6 +242,7 @@ export function MessageBubble(props: {
   isTyping: boolean;
   onTypingComplete: () => void;
   onUserAvatarClick?: (target: HTMLElement) => void;
+  onAgentAvatarClick?: (agentId: string, target: HTMLElement) => void;
   onCopy: (message: ChatMessage) => void;
   onDownload: (message: ChatMessage) => void;
   onRefresh: (message: ChatMessage) => void;
@@ -214,7 +260,11 @@ export function MessageBubble(props: {
   if (props.message.role === "user") {
     return (
       <div className="chat-group user">
-        <UserAvatarButton profile={props.userProfile} fallbackAvatar={props.userAvatar} />
+        <UserAvatarButton
+          profile={props.userProfile}
+          fallbackAvatar={props.userAvatar}
+          onClick={props.onUserAvatarClick}
+        />
         <div className="chat-group-messages">
           <div className={bubbleClassName} data-message-id={props.message.id}>
             <div className="chat-text">
@@ -238,6 +288,7 @@ export function MessageBubble(props: {
         avatarColor={props.agentAvatarColor}
         avatarText={props.agentAvatarText}
         avatarUrl={props.agentAvatarUrl}
+        onClick={props.onAgentAvatarClick}
       />
       <div className="chat-group-messages">
         <div className={bubbleClassName} data-message-id={props.message.id}>

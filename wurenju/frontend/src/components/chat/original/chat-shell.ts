@@ -46,6 +46,7 @@ type ChatShellProps = {
   currentGroupId?: string | null;
   isGroupMode?: boolean;
   groupHeader?: ChatGroupHeader | null;
+  onGroupHeaderMemberClick?: (memberId: string) => void;
   hasAnnouncement?: boolean;
   isUrging?: boolean;
   isUrgePaused?: boolean;
@@ -187,9 +188,63 @@ function renderTopbarThemeModeToggle(props: ChatShellProps) {
 function renderGroupIdentityAvatar(
   item: Pick<ChatGroupHeader, "avatarText" | "avatarUrl" | "name"> | ChatGroupHeaderMember,
   className: string,
+  onClick?: (target: HTMLElement) => void,
 ) {
+  const clickable = "id" in item && Boolean(onClick);
+  const label = "id" in item ? `编辑 ${item.name} 的资料` : item.name;
+
+  if (!item.avatarUrl?.trim() && clickable) {
+    return html`
+      <button
+        type="button"
+        class="surface-group-topbar__avatar-btn"
+        aria-label=${label}
+        title=${label}
+        @click=${(event: Event) => {
+          onClick?.(event.currentTarget as HTMLElement);
+        }}
+      >
+        ${renderGroupIdentityFallback(item, className)}
+      </button>
+    `;
+  }
+
   if (!item.avatarUrl?.trim()) {
     return renderGroupIdentityFallback(item, className);
+  }
+
+  if (clickable) {
+    return html`
+      <button
+        type="button"
+        class="surface-group-topbar__avatar-btn"
+        aria-label=${label}
+        title=${label}
+        @click=${(event: Event) => {
+          onClick?.(event.currentTarget as HTMLElement);
+        }}
+      >
+        <div class="surface-group-identity-avatar">
+          <div class="surface-group-identity-avatar__fallback" aria-hidden="true">
+            ${renderGroupIdentityFallback(item, className)}
+          </div>
+          <img
+            class="${className} surface-group-identity-avatar__image"
+            src=${item.avatarUrl}
+            alt=${item.name}
+            @error=${(event: Event) => {
+              const image = event.currentTarget as HTMLImageElement;
+              image.hidden = true;
+              const fallback = image.previousElementSibling as HTMLElement | null;
+              if (!fallback) {
+                return;
+              }
+              fallback.removeAttribute("aria-hidden");
+            }}
+          />
+        </div>
+      </button>
+    `;
   }
 
   return html`
@@ -253,7 +308,13 @@ function renderGroupTopbar(props: ChatShellProps) {
                       class="surface-group-topbar__stack-item"
                       style=${`--group-member-offset:${index * 16}px; z-index:${20 - index};`}
                     >
-                      ${renderGroupIdentityAvatar(member, "surface-group-topbar__member-avatar")}
+                      ${renderGroupIdentityAvatar(
+                        member,
+                        "surface-group-topbar__member-avatar",
+                        () => {
+                          props.onGroupHeaderMemberClick?.(member.id);
+                        },
+                      )}
                     </div>
                   `,
                 )}

@@ -78,6 +78,7 @@ export type ChatProps = {
   assistantAvatarUrl?: string | null;
   assistantAvatarText?: string;
   assistantAvatarColor?: string;
+  assistantAgentId?: string | null;
   userAvatar?: string | null;
   userName?: string | null;
   draft: string;
@@ -139,6 +140,7 @@ export type ChatProps = {
   onResetSession?: () => void;
   onClearHistory?: () => void;
   onUserAvatarClick?: (target: HTMLElement) => void;
+  onAssistantAvatarClick?: (agentId: string, target: HTMLElement) => void;
   quickActionDisabled?: boolean;
   agentsList: {
     agents: Array<{ id: string; name?: string; identity?: { name?: string; avatarUrl?: string } }>;
@@ -629,15 +631,6 @@ function tokenEstimate(draft: string): string | null {
   return `~${Math.ceil(draft.length / 4)} tokens`;
 }
 
-function openCommandPalette(requestUpdate: () => void): void {
-  vs.commandPaletteOpen = true;
-  vs.commandPaletteQuery = "";
-  vs.commandPaletteIndex = 0;
-  vs.slashMenuOpen = false;
-  resetSlashMenuState();
-  requestUpdate();
-}
-
 function closeCommandPalette(requestUpdate: () => void): void {
   vs.commandPaletteOpen = false;
   vs.commandPaletteQuery = "";
@@ -673,15 +666,23 @@ function exportMarkdown(props: ChatProps): void {
   exportChatMarkdown(props.messages, props.assistantName);
 }
 
-const WELCOME_SUGGESTIONS = [
-  "What can you do?",
-  "Summarize my recent sessions",
-  "Help me configure a channel",
-  "Check system health",
-];
+const DIRECT_WELCOME_SUGGESTIONS = [
+  "你现在能帮我做什么？",
+  "总结一下最近的会话",
+  "帮我检查当前状态",
+  "给我一个下一步建议",
+] as const;
+
+const GROUP_WELCOME_SUGGESTIONS = [
+  "先做个自我介绍",
+  "同步一下当前分工",
+  "总结最近讨论重点",
+  "安排下一步协作",
+] as const;
 
 function renderWelcomeState(props: ChatProps): TemplateResult {
   const name = props.assistantName || "Assistant";
+  const isGroupConversation = props.conversationMode === "group";
   const avatar = resolveAgentAvatarUrl({
     identity: {
       avatar: props.assistantAvatar ?? undefined,
@@ -689,6 +690,13 @@ function renderWelcomeState(props: ChatProps): TemplateResult {
     },
   });
   const logoUrl = agentLogoUrl(props.basePath ?? "");
+  const welcomeBadge = isGroupConversation ? "项目组已就位" : "随时开始对话";
+  const welcomeHint = isGroupConversation
+    ? "在下方输入消息，或点按快捷 @ 发起协作"
+    : "在下方输入消息，也可以按 / 使用命令";
+  const welcomeSuggestions = isGroupConversation
+    ? GROUP_WELCOME_SUGGESTIONS
+    : DIRECT_WELCOME_SUGGESTIONS;
 
   return html`
     <div class="agent-chat__welcome" style="--agent-color: var(--accent)">
@@ -700,13 +708,11 @@ function renderWelcomeState(props: ChatProps): TemplateResult {
       }
       <h2>${name}</h2>
       <div class="agent-chat__badges">
-        <span class="agent-chat__badge"><img src=${logoUrl} alt="" /> Ready to chat</span>
+        <span class="agent-chat__badge"><img src=${logoUrl} alt="" /> ${welcomeBadge}</span>
       </div>
-      <p class="agent-chat__hint">
-        Type a message below &middot; <kbd>/</kbd> for commands
-      </p>
+      <p class="agent-chat__hint">${welcomeHint}</p>
       <div class="agent-chat__suggestions">
-        ${WELCOME_SUGGESTIONS.map(
+        ${welcomeSuggestions.map(
           (text) => html`
             <button
               type="button"
@@ -752,26 +758,13 @@ function renderSearchBar(requestUpdate: () => void): TemplateResult | typeof not
   `;
 }
 
-function renderQuickActions(
-  props: ChatProps,
-  requestUpdate: () => void,
-): TemplateResult | typeof nothing {
+function renderQuickActions(props: ChatProps): TemplateResult | typeof nothing {
   const isGroupConversation = props.conversationMode === "group";
   const hasMessages = Array.isArray(props.messages) && props.messages.length > 0;
   const actionsDisabled = Boolean(props.quickActionDisabled);
 
   const actions = isGroupConversation
     ? [
-        {
-          key: "command",
-          label: "命令",
-          icon: icons.terminal,
-          tone: "neutral",
-          disabled: false,
-          onClick: () => {
-            openCommandPalette(requestUpdate);
-          },
-        },
         {
           key: "export",
           label: "导出",
@@ -796,7 +789,7 @@ function renderQuickActions(
           key: "reset",
           label: "重置",
           icon: icons.refresh,
-          tone: "danger",
+          tone: "neutral",
           disabled: !hasMessages || actionsDisabled || !props.onResetSession,
           onClick: () => {
             props.onResetSession?.();
@@ -804,16 +797,6 @@ function renderQuickActions(
         },
       ]
     : [
-        {
-          key: "command",
-          label: "命令",
-          icon: icons.terminal,
-          tone: "neutral",
-          disabled: false,
-          onClick: () => {
-            openCommandPalette(requestUpdate);
-          },
-        },
         {
           key: "compact",
           label: "压缩",
@@ -838,7 +821,7 @@ function renderQuickActions(
           key: "reset",
           label: "重置",
           icon: icons.refresh,
-          tone: "danger",
+          tone: "neutral",
           disabled: !hasMessages || actionsDisabled || !props.onResetSession,
           onClick: () => {
             props.onResetSession?.();
@@ -1007,75 +990,9 @@ function renderCommandPalette(
   `;
 }
 
-function renderGroupMentionPopover(props: NonNullable<ChatProps["groupCompose"]>) {
-  if (!props.mentionOpen) {
-    return nothing;
-  }
-
-  return html`
-    <div class="surface-group-mention-popover">
-      <div class="surface-group-mention-popover__header">
-        <span class="surface-group-mention-popover__label">
-          ${props.mentionQuery.trim() ? `筛选 @${props.mentionQuery}` : "选择要提及的成员"}
-        </span>
-        <span class="surface-group-mention-popover__meta">${props.mentionMembers.length} 位成员</span>
-      </div>
-
-      ${
-        props.mentionMembers.length > 0
-          ? html`
-              <div class="surface-group-mention-popover__list">
-                ${props.mentionMembers.map(
-                  (member, index) => html`
-                    <button
-                      type="button"
-                      class="surface-group-mention-popover__item ${
-                        index === props.mentionActiveIndex
-                          ? "surface-group-mention-popover__item--active"
-                          : ""
-                      }"
-                      @mousedown=${(event: MouseEvent) => {
-                        event.preventDefault();
-                      }}
-                      @mouseenter=${() => {
-                        props.onMentionActiveIndexChange(index);
-                      }}
-                      @click=${() => {
-                        props.onMentionSelect(member.id);
-                      }}
-                    >
-                      ${
-                        member.avatarUrl?.trim()
-                          ? html`<img
-                              class="surface-group-mention-popover__avatar"
-                              src=${member.avatarUrl}
-                              alt=${member.name}
-                            />`
-                          : html`<span
-                              class="surface-group-mention-popover__avatar surface-group-mention-popover__avatar--fallback"
-                              style=${member.avatarColor ? `background:${member.avatarColor};` : ""}
-                            >
-                              ${member.avatarText}
-                            </span>`
-                      }
-
-                      <span class="surface-group-mention-popover__body">
-                        <span class="surface-group-mention-popover__name">${member.name}</span>
-                        <span class="surface-group-mention-popover__role">${member.role?.trim() || "项目组成员"}</span>
-                      </span>
-
-                      <span class="surface-group-mention-popover__hint">回车</span>
-                    </button>
-                  `,
-                )}
-              </div>
-            `
-          : html`
-              <div class="surface-group-mention-popover__empty">没有匹配的成员</div>
-            `
-      }
-    </div>
-  `;
+function renderGroupMentionPopover(_props: NonNullable<ChatProps["groupCompose"]>) {
+  // 群聊已经有底部快捷 @，这里移除输入框联想弹层，避免一处输入出现两套提及入口。
+  return nothing;
 }
 
 function renderGroupQuickMentions(props: NonNullable<ChatProps["groupCompose"]>) {
@@ -1390,7 +1307,7 @@ export function renderChat(props: ChatProps) {
       ${
         isEmpty && vs.searchOpen
           ? html`
-              <div class="agent-chat__empty">No matching messages</div>
+              <div class="agent-chat__empty">没有找到匹配消息</div>
             `
           : nothing
       }
@@ -1408,7 +1325,11 @@ export function renderChat(props: ChatProps) {
             `;
           }
           if (item.kind === "reading-indicator") {
-            return renderReadingIndicatorGroup(assistantIdentity, props.basePath);
+            return renderReadingIndicatorGroup(
+              assistantIdentity,
+              props.basePath,
+              props.onAssistantAvatarClick,
+            );
           }
           if (item.kind === "stream") {
             return renderStreamingGroup(
@@ -1417,6 +1338,7 @@ export function renderChat(props: ChatProps) {
               props.onOpenSidebar,
               assistantIdentity,
               props.basePath,
+              props.onAssistantAvatarClick,
             );
           }
           if (item.kind === "group") {
@@ -1431,9 +1353,11 @@ export function renderChat(props: ChatProps) {
               assistantAvatar: assistantIdentity.avatar,
               assistantAvatarText: assistantIdentity.avatarText,
               assistantAvatarColor: assistantIdentity.avatarColor,
+              assistantAgentId: props.assistantAgentId ?? null,
               userAvatar: props.userAvatar ?? null,
               userName: props.userName ?? null,
               onUserAvatarClick: props.onUserAvatarClick,
+              onAssistantAvatarClick: props.onAssistantAvatarClick,
               basePath: props.basePath,
               contextWindow:
                 activeSession?.contextTokens ?? props.sessions?.defaults?.contextTokens ?? null,
@@ -1545,41 +1469,6 @@ export function renderChat(props: ChatProps) {
           vs.slashMenuOpen = false;
           resetSlashMenuState();
           requestUpdate();
-          return;
-      }
-    }
-
-    // GroupChat: 问题5 - 群聊输入框接入旧 @ 成员浮层，键盘导航和发送优先级与旧群聊一致。
-    if (props.groupCompose?.mentionOpen) {
-      switch (e.key) {
-        case "ArrowDown":
-          if (props.groupCompose.mentionMembers.length === 0) {
-            break;
-          }
-          e.preventDefault();
-          props.groupCompose.onMentionNavigate("next");
-          return;
-        case "ArrowUp":
-          if (props.groupCompose.mentionMembers.length === 0) {
-            break;
-          }
-          e.preventDefault();
-          props.groupCompose.onMentionNavigate("prev");
-          return;
-        case "Enter":
-          if (!e.shiftKey) {
-            const currentMember =
-              props.groupCompose.mentionMembers[props.groupCompose.mentionActiveIndex];
-            if (currentMember) {
-              e.preventDefault();
-              props.groupCompose.onMentionSelect(currentMember.id);
-              return;
-            }
-          }
-          break;
-        case "Escape":
-          e.preventDefault();
-          props.groupCompose.onMentionDismiss();
           return;
       }
     }
@@ -1753,7 +1642,7 @@ export function renderChat(props: ChatProps) {
 
       <!-- Input bar -->
       <div class="agent-chat__input">
-        ${renderQuickActions({ ...props, quickActionDisabled }, requestUpdate)}
+        ${renderQuickActions({ ...props, quickActionDisabled })}
         ${renderSlashMenu(requestUpdate, props)}
         ${props.groupCompose ? renderGroupMentionPopover(props.groupCompose) : nothing}
         ${renderAttachmentPreview(props)}

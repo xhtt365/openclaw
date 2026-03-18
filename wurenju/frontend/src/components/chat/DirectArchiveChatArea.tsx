@@ -6,6 +6,9 @@ import { ThemeToggle } from "@/components/chat/components/theme-toggle";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { UserProfilePopover } from "@/components/chat/UserProfilePopover";
 import { cn } from "@/lib/utils";
+import { useAgentStore } from "@/stores/agentStore";
+import { useDirectArchiveStore } from "@/stores/directArchiveStore";
+import { useGroupStore } from "@/stores/groupStore";
 import type { SidebarDirectArchive } from "@/utils/sidebarPersistence";
 import { getUserProfile, subscribeToUserProfile } from "@/utils/userProfile";
 
@@ -21,6 +24,15 @@ const AVATAR_COLORS = [
 type DirectArchiveChatAreaProps = {
   archive: SidebarDirectArchive;
 };
+
+function formatArchiveTimeLabel(value: string) {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return "时间未知";
+  }
+
+  return new Date(timestamp).toLocaleString("zh-CN");
+}
 
 function hashText(value: string) {
   return Array.from(value).reduce((total, char) => total + char.charCodeAt(0), 0);
@@ -40,10 +52,16 @@ function resolveArchiveAvatarText(archive: SidebarDirectArchive) {
 }
 
 function DirectArchiveChatAreaInner({ archive }: DirectArchiveChatAreaProps) {
+  const openDetail = useAgentStore((state) => state.openDetail);
+  const clearSelectedGroup = useGroupStore((state) => state.clearSelectedGroup);
+  const clearSelectedArchive = useGroupStore((state) => state.clearSelectedArchive);
+  const clearSelectedDirectArchive = useDirectArchiveStore(
+    (state) => state.clearSelectedDirectArchive,
+  );
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [userProfile, setUserProfile] = useState(() => getUserProfile());
   const [popoverAnchorRect, setPopoverAnchorRect] = useState<DOMRect | null>(null);
-  const archiveTime = new Date(archive.archivedAt).toLocaleString("zh-CN");
+  const archiveTime = formatArchiveTimeLabel(archive.archivedAt);
 
   useEffect(() => subscribeToUserProfile(setUserProfile), []);
 
@@ -64,9 +82,16 @@ function DirectArchiveChatAreaInner({ archive }: DirectArchiveChatAreaProps) {
     const url = window.URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${archive.agentName}-${messageId}.txt`;
+    anchor.download = `${archive.agentName || "1v1归档"}-${messageId}.txt`;
     anchor.click();
     window.URL.revokeObjectURL(url);
+  }
+
+  function handleOpenAgentDetail(agentId: string) {
+    clearSelectedGroup();
+    clearSelectedArchive();
+    clearSelectedDirectArchive();
+    void openDetail(agentId);
   }
 
   return (
@@ -81,7 +106,9 @@ function DirectArchiveChatAreaInner({ archive }: DirectArchiveChatAreaProps) {
               <Archive className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <div className="group-chat-header__title truncate">{archive.agentName}</div>
+              <div className="group-chat-header__title truncate">
+                {archive.agentName || "1v1 归档"}
+              </div>
               <div className="group-chat-header__subtitle mt-1 flex flex-wrap items-center gap-3">
                 {archive.agentRole ? <span>{archive.agentRole}</span> : null}
                 <span className="inline-flex items-center gap-1.5">
@@ -125,6 +152,9 @@ function DirectArchiveChatAreaInner({ archive }: DirectArchiveChatAreaProps) {
                     onTypingComplete={() => {}}
                     onUserAvatarClick={(target) => {
                       setPopoverAnchorRect(target.getBoundingClientRect());
+                    }}
+                    onAgentAvatarClick={(agentId) => {
+                      handleOpenAgentDetail(agentId);
                     }}
                     onCopy={(currentMessage) => {
                       void handleCopyMessage(currentMessage.id, currentMessage.content);
