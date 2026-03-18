@@ -1,6 +1,17 @@
 "use client";
 
-import { Check, GripVertical, Pencil, Plus, Trash2, X, type LucideIcon } from "lucide-react";
+import {
+  Building2,
+  Check,
+  GripVertical,
+  Layers3,
+  Pencil,
+  Plus,
+  Trash2,
+  Users,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { useState, type DragEvent, type KeyboardEvent } from "react";
 import { ConfirmModal } from "@/components/modals/ConfirmModal";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -259,6 +270,11 @@ export function DepartmentManageModal({
   const pendingDeleteCount = pendingDeleteDepartment
     ? (memberCountByDepartmentId[pendingDeleteDepartment.id] ?? 0)
     : 0;
+  const assignedCount = Object.values(memberCountByDepartmentId).reduce(
+    (total, count) => total + count,
+    0,
+  );
+  const unassignedCount = Math.max(agentIds.length - assignedCount, 0);
 
   function resetTransientState() {
     setDraft(null);
@@ -399,25 +415,72 @@ export function DepartmentManageModal({
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent
           showCloseButton={false}
-          className="w-[min(480px,calc(100vw-2rem))] max-w-[480px] gap-0 overflow-hidden rounded-[28px] border border-[var(--border)] bg-[var(--card)] p-0 text-[var(--text-strong)] shadow-[var(--shadow-xl)]"
+          className="w-[min(620px,calc(100vw-2rem))] max-w-[620px] gap-0 overflow-hidden rounded-[30px] border border-[var(--border)] bg-[var(--card)] p-0 text-[var(--text-strong)] shadow-[var(--shadow-xl)]"
         >
           <div className="flex max-h-[70vh] flex-col">
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-6 py-5">
-              <DialogTitle className="text-[22px] font-semibold tracking-tight">
-                部门管理
-              </DialogTitle>
-              <button
-                type="button"
-                onClick={closeModal}
-                className="flex h-9 w-9 items-center justify-center rounded-xl text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--color-text-primary)]"
-                aria-label="关闭部门管理"
-              >
-                <X className="h-5 w-5" />
-              </button>
+            <div
+              className="border-b border-[var(--border)] px-6 py-6"
+              style={{
+                background:
+                  "linear-gradient(135deg, color-mix(in srgb, var(--accent) 9%, transparent), transparent 42%, color-mix(in srgb, var(--accent-2) 10%, transparent))",
+              }}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full bg-[var(--accent-subtle)] px-3 py-1 text-xs font-semibold text-[var(--accent)]">
+                    <Building2 className="h-3.5 w-3.5" />
+                    部门管理
+                  </div>
+                  <DialogTitle className="mt-3 text-[26px] font-semibold tracking-tight">
+                    调整你的组织架构
+                  </DialogTitle>
+                  <div className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+                    支持新建、编辑、拖拽排序和删除部门，员工会按部门在侧栏自动归类。
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  className="flex h-10 w-10 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--card)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--color-text-primary)]"
+                  aria-label="关闭部门管理"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-[20px] border border-[var(--border)] bg-[var(--card)] px-4 py-4 shadow-[var(--shadow-sm)]">
+                  <div className="inline-flex items-center gap-2 text-xs font-medium text-[var(--color-text-secondary)]">
+                    <Layers3 className="h-3.5 w-3.5" />
+                    部门数
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold text-[var(--color-text-primary)]">
+                    {departments.length}
+                  </div>
+                </div>
+                <div className="rounded-[20px] border border-[var(--border)] bg-[var(--card)] px-4 py-4 shadow-[var(--shadow-sm)]">
+                  <div className="inline-flex items-center gap-2 text-xs font-medium text-[var(--color-text-secondary)]">
+                    <Users className="h-3.5 w-3.5" />
+                    已分配成员
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold text-[var(--color-text-primary)]">
+                    {assignedCount}
+                  </div>
+                </div>
+                <div className="rounded-[20px] border border-[var(--border)] bg-[var(--card)] px-4 py-4 shadow-[var(--shadow-sm)]">
+                  <div className="inline-flex items-center gap-2 text-xs font-medium text-[var(--color-text-secondary)]">
+                    <Users className="h-3.5 w-3.5" />
+                    未分组成员
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold text-[var(--color-text-primary)]">
+                    {unassignedCount}
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-              <div className="space-y-3">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+              <div className="space-y-4">
                 {departments.length > 0 ? (
                   departments.map((department) => {
                     const isEditing = draft?.id === department.id && !draft.isNew;
@@ -433,11 +496,14 @@ export function DepartmentManageModal({
                         onDragOver={(event) => handleDragOver(event, department.id)}
                         onDrop={(event) => handleDrop(event, department.id)}
                         className={cn(
-                          "rounded-2xl border border-[var(--border)] bg-[var(--card)] transition-[border-color,box-shadow,opacity]",
+                          "rounded-[24px] border border-[var(--border)] bg-[var(--card)] transition-[border-color,box-shadow,opacity,transform]",
                           isDropTarget &&
                             "border-[var(--accent)] shadow-[0_0_0_1px_var(--accent-glow)]",
                           draggingDepartmentId === department.id && "opacity-60",
                         )}
+                        style={{
+                          boxShadow: isDropTarget ? "var(--shadow-md)" : "var(--shadow-sm)",
+                        }}
                       >
                         {isEditing && draft ? (
                           <div className="p-2">
@@ -457,7 +523,7 @@ export function DepartmentManageModal({
                             />
                           </div>
                         ) : (
-                          <div className="group flex items-center gap-3 px-3 py-3">
+                          <div className="group flex items-center gap-3 px-4 py-4">
                             <div
                               draggable
                               onDragStart={(event) => handleDragStart(event, department.id)}
@@ -465,23 +531,23 @@ export function DepartmentManageModal({
                                 setDraggingDepartmentId(null);
                                 setDropTargetDepartmentId(null);
                               }}
-                              className="flex h-9 w-9 shrink-0 cursor-grab items-center justify-center rounded-xl text-[var(--muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)] active:cursor-grabbing"
+                              className="flex h-10 w-10 shrink-0 cursor-grab items-center justify-center rounded-2xl text-[var(--muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)] active:cursor-grabbing"
                               aria-label={`拖拽排序 ${department.name}`}
                               title="拖拽排序"
                             >
                               <GripVertical className="h-4 w-4" />
                             </div>
 
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--bg-hover)] text-[20px]">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[18px] border border-[var(--border)] bg-[var(--bg-hover)] text-[20px] shadow-[var(--shadow-sm)]">
                               <span aria-hidden="true">{department.icon}</span>
                             </div>
 
                             <div className="min-w-0 flex-1">
-                              <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
+                              <div className="truncate text-[15px] font-semibold text-[var(--color-text-primary)]">
                                 {department.name}
                               </div>
-                              <div className="mt-0.5 text-xs text-[var(--muted)]">
-                                {memberCount}人
+                              <div className="mt-1 text-xs text-[var(--muted)]">
+                                {memberCount} 人在该部门
                               </div>
                             </div>
 
@@ -506,12 +572,15 @@ export function DepartmentManageModal({
                     );
                   })
                 ) : (
-                  <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--bg-accent)] px-5 py-10 text-center">
-                    <div className="text-sm font-medium text-[var(--color-text-primary)]">
+                  <div className="rounded-[26px] border border-dashed border-[var(--border-strong)] bg-[var(--bg-accent)] px-5 py-12 text-center">
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-[18px] bg-[var(--card)] text-[var(--accent)] shadow-[var(--shadow-sm)]">
+                      <Building2 className="h-6 w-6" />
+                    </div>
+                    <div className="mt-4 text-base font-semibold text-[var(--color-text-primary)]">
                       还没有部门
                     </div>
-                    <div className="mt-2 text-sm text-[var(--color-text-secondary)]">
-                      先建一个，侧栏就会按部门显示员工。
+                    <div className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+                      先建一个部门，侧栏就会自动按部门展示员工，组织结构也会更清晰。
                     </div>
                   </div>
                 )}
@@ -534,7 +603,7 @@ export function DepartmentManageModal({
                 <button
                   type="button"
                   onClick={startCreateDepartment}
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-[var(--border-strong)] bg-[var(--bg-accent)] px-4 py-3 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-subtle)]"
+                  className="flex w-full items-center justify-center gap-2 rounded-[24px] border border-dashed border-[var(--border-strong)] bg-[var(--bg-accent)] px-4 py-4 text-sm font-semibold text-[var(--color-text-primary)] transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-subtle)]"
                 >
                   <Plus className="h-4 w-4" />
                   新建部门
