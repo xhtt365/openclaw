@@ -16,7 +16,12 @@ import {
 } from "@/utils/groupRelay";
 import { resolveAvatarImage } from "@/utils/groupSurface";
 import { buildUrgeMessage, resolveUrgeNextDelayMs, resolveUrgeTargets } from "@/utils/groupUrge";
-import { adaptHistoryMessages, type ChatMessage, type ChatUsage } from "@/utils/messageAdapter";
+import {
+  adaptHistoryMessage,
+  adaptHistoryMessages,
+  type ChatMessage,
+  type ChatUsage,
+} from "@/utils/messageAdapter";
 import { sanitizeAssistantText } from "@/utils/messageSanitizer";
 import {
   clearSidebarGroupUnreadCount,
@@ -48,6 +53,7 @@ export type AgentInfo = {
 export type Group = {
   id: string;
   name: string;
+  avatarUrl?: string;
   description?: string;
   announcement?: string;
   notificationsEnabled?: boolean;
@@ -86,6 +92,7 @@ export type GroupArchive = {
 
 type CreateGroupInput = {
   name: string;
+  avatarUrl?: string;
   description?: string;
   members: AgentInfo[];
   leaderId: string;
@@ -125,6 +132,7 @@ type GroupState = GroupPersistence & {
     groupId: string,
     payload: {
       name: string;
+      avatarUrl?: string | null;
       description?: string;
     },
   ) => void;
@@ -155,6 +163,7 @@ type GroupState = GroupPersistence & {
   archiveGroupMessages: (groupId: string) => Promise<GroupArchiveActionResult>;
   archiveGroupSession: (groupId: string) => Promise<GroupArchiveActionResult>;
   resetGroupMessages: (groupId: string) => Promise<GroupActionResult>;
+  removeAgentData: (agentId: string) => void;
 };
 
 type GroupDispatchSource = {
@@ -320,6 +329,7 @@ function normalizeGroup(item: unknown): Group | null {
   return {
     id: maybeGroup.id,
     name: maybeGroup.name.trim(),
+    avatarUrl: resolveAvatarImage(maybeGroup) ?? undefined,
     description:
       typeof maybeGroup.description === "string"
         ? maybeGroup.description.trim() || undefined
@@ -356,69 +366,27 @@ function normalizeGroup(item: unknown): Group | null {
   };
 }
 
-function normalizeUsage(usage: unknown): ChatUsage | undefined {
-  if (!usage || typeof usage !== "object") {
-    return undefined;
-  }
-
-  const maybeUsage = usage as Partial<ChatUsage>;
-  const input = typeof maybeUsage.input === "number" ? maybeUsage.input : 0;
-  const output = typeof maybeUsage.output === "number" ? maybeUsage.output : 0;
-  const cacheRead = typeof maybeUsage.cacheRead === "number" ? maybeUsage.cacheRead : 0;
-  const cacheWrite = typeof maybeUsage.cacheWrite === "number" ? maybeUsage.cacheWrite : 0;
-  const totalTokens =
-    typeof maybeUsage.totalTokens === "number"
-      ? maybeUsage.totalTokens
-      : input + output + cacheRead + cacheWrite;
-
-  return {
-    input,
-    output,
-    cacheRead,
-    cacheWrite,
-    totalTokens,
-  };
-}
-
 function normalizeMessage(item: unknown): GroupChatMessage | null {
   if (!item || typeof item !== "object") {
     return null;
   }
 
-  const maybeMessage = item as Partial<GroupChatMessage>;
-  if (maybeMessage.role !== "user" && maybeMessage.role !== "assistant") {
+  const maybeMessage = item as Partial<GroupChatMessage> & {
+    senderAvatar?: unknown;
+    senderImage?: unknown;
+  };
+  const adapted = adaptHistoryMessage(item);
+  if (!adapted) {
     return null;
   }
-
-  if (typeof maybeMessage.content !== "string") {
-    return null;
-  }
-
-  const content =
-    maybeMessage.role === "assistant"
-      ? sanitizeAssistantText(maybeMessage.content)
-      : maybeMessage.content;
-  const thinking =
-    maybeMessage.role === "assistant" && typeof maybeMessage.thinking === "string"
-      ? sanitizeAssistantText(maybeMessage.thinking)
-      : typeof maybeMessage.thinking === "string"
-        ? maybeMessage.thinking
-        : undefined;
 
   return {
-    id:
-      typeof maybeMessage.id === "string" && maybeMessage.id.trim()
-        ? maybeMessage.id
-        : crypto.randomUUID(),
-    role: maybeMessage.role,
-    content,
-    thinking,
-    model: typeof maybeMessage.model === "string" ? maybeMessage.model : undefined,
-    usage: normalizeUsage(maybeMessage.usage),
-    timestamp:
-      typeof maybeMessage.timestamp === "number" && Number.isFinite(maybeMessage.timestamp)
-        ? maybeMessage.timestamp
-        : Date.now(),
+    ...adapted,
+    thinking:
+      adapted.thinking ??
+      (typeof maybeMessage.thinking === "string"
+        ? sanitizeAssistantText(maybeMessage.thinking)
+        : undefined),
     timestampLabel:
       typeof maybeMessage.timestampLabel === "string" ? maybeMessage.timestampLabel : undefined,
     isLoading: false,
@@ -444,25 +412,80 @@ function normalizeArchive(item: unknown): GroupArchive | null {
     return null;
   }
 
-  const maybeArchive = item as Partial<GroupArchive>;
-  if (
-    typeof maybeArchive.id !== "string" ||
-    typeof maybeArchive.groupId !== "string" ||
-    typeof maybeArchive.groupName !== "string" ||
-    typeof maybeArchive.createdAt !== "string" ||
-    !Array.isArray(maybeArchive.messages)
-  ) {
+  const maybeArchive = item as Partial<GroupArchive> &
+    Record<string, unknown> & {
+      archiveId?: unknown;
+      archivedAt?: unknown;
+      history?: unknown;
+      items?: unknown;
+      name?: unknown;
+      group?: unknown;
+    };
+  const messagesSource = Array.isArray(maybeArchive.messages)
+    ? maybeArchive.messages
+    : Array.isArray(maybeArchive.history)
+      ? maybeArchive.history
+      : Array.isArray(maybeArchive.items)
+        ? maybeArchive.items
+        : [];
+  const normalizedMessages = messagesSource
+    .map(normalizeMessage)
+    .filter((message): message is GroupChatMessage => message !== null);
+  const id =
+    typeof maybeArchive.id === "string" && maybeArchive.id.trim()
+      ? maybeArchive.id.trim()
+      : typeof maybeArchive.archiveId === "string" && maybeArchive.archiveId.trim()
+        ? maybeArchive.archiveId.trim()
+        : "";
+  const nestedGroup =
+    maybeArchive.group && typeof maybeArchive.group === "object"
+      ? (maybeArchive.group as Record<string, unknown>)
+      : null;
+  const groupId =
+    typeof maybeArchive.groupId === "string" && maybeArchive.groupId.trim()
+      ? maybeArchive.groupId.trim()
+      : nestedGroup && typeof nestedGroup.id === "string" && nestedGroup.id.trim()
+        ? nestedGroup.id.trim()
+        : id
+          ? `legacy-group:${id}`
+          : "";
+  const groupName =
+    typeof maybeArchive.groupName === "string" && maybeArchive.groupName.trim()
+      ? maybeArchive.groupName.trim()
+      : typeof maybeArchive.name === "string" && maybeArchive.name.trim()
+        ? maybeArchive.name.trim()
+        : nestedGroup && typeof nestedGroup.name === "string" && nestedGroup.name.trim()
+          ? nestedGroup.name.trim()
+          : "项目组归档";
+  const createdAt =
+    typeof maybeArchive.createdAt === "string" && maybeArchive.createdAt.trim()
+      ? maybeArchive.createdAt.trim()
+      : typeof maybeArchive.archivedAt === "string" && maybeArchive.archivedAt.trim()
+        ? maybeArchive.archivedAt.trim()
+        : (() => {
+            const latestTimestamp = normalizedMessages
+              .map((message) => message.timestamp)
+              .filter(
+                (timestamp): timestamp is number =>
+                  typeof timestamp === "number" && Number.isFinite(timestamp),
+              )
+              .reduce<number | null>(
+                (latest, current) => (latest === null || current > latest ? current : latest),
+                null,
+              );
+            return latestTimestamp !== null ? new Date(latestTimestamp).toISOString() : "";
+          })();
+
+  if (!id || !groupId || !createdAt) {
     return null;
   }
 
   return {
-    id: maybeArchive.id,
-    groupId: maybeArchive.groupId,
-    groupName: maybeArchive.groupName,
-    createdAt: maybeArchive.createdAt,
-    messages: maybeArchive.messages
-      .map(normalizeMessage)
-      .filter((message): message is GroupChatMessage => message !== null),
+    id,
+    groupId,
+    groupName,
+    createdAt,
+    messages: normalizedMessages,
   };
 }
 
@@ -2589,11 +2612,13 @@ export const useGroupStore = create<GroupState>((set, get) => {
 
     createGroup: (data) => {
       const name = data.name.trim();
+      const avatarUrl = resolveAvatarImage(data.avatarUrl) ?? undefined;
       const description = data.description?.trim() || undefined;
       const members = normalizeMembers(data.members);
       const group: Group = {
         id: crypto.randomUUID(),
         name,
+        avatarUrl,
         description,
         announcement: undefined,
         notificationsEnabled: true,
@@ -2679,12 +2704,17 @@ export const useGroupStore = create<GroupState>((set, get) => {
       }
 
       const nextDescription = payload.description?.trim() || undefined;
+      const hasAvatarUpdate = Object.prototype.hasOwnProperty.call(payload, "avatarUrl");
+      const nextAvatarUrl = hasAvatarUpdate
+        ? (resolveAvatarImage(payload.avatarUrl) ?? undefined)
+        : undefined;
       const committed = updateState((state) => ({
         groups: state.groups.map((item) =>
           item.id === groupId
             ? {
                 ...item,
                 name: nextName,
+                avatarUrl: hasAvatarUpdate ? nextAvatarUrl : item.avatarUrl,
                 description: nextDescription,
               }
             : item,
@@ -2694,6 +2724,101 @@ export const useGroupStore = create<GroupState>((set, get) => {
       if (committed) {
         console.log(`[Group] 已更新项目组信息: ${group.name} -> ${nextName}`);
       }
+    },
+
+    removeAgentData: (agentId) => {
+      const normalizedAgentId = agentId.trim();
+      if (!normalizedAgentId) {
+        return;
+      }
+
+      const removedGroupIds: string[] = [];
+      const touchedGroupIds: string[] = [];
+      const committed = updateState((state) => {
+        let nextSelectedGroupId = state.selectedGroupId;
+        let nextSelectedArchiveId = state.selectedArchiveId;
+        const nextMessagesByGroupId = { ...state.messagesByGroupId };
+        const nextIsSendingByGroupId = { ...state.isSendingByGroupId };
+        const nextThinkingAgentsByGroupId = new Map(state.thinkingAgentsByGroupId);
+        const nextGroups: Group[] = [];
+
+        for (const group of state.groups) {
+          const leaderRemoved = group.leaderId === normalizedAgentId;
+          const memberRemoved = group.members.some((member) => member.id === normalizedAgentId);
+          if (!leaderRemoved && !memberRemoved) {
+            nextGroups.push(group);
+            continue;
+          }
+
+          touchedGroupIds.push(group.id);
+
+          const nextThinkingGroup = nextThinkingAgentsByGroupId.get(group.id);
+          if (nextThinkingGroup?.has(normalizedAgentId)) {
+            const trimmedThinkingGroup = new Map(nextThinkingGroup);
+            trimmedThinkingGroup.delete(normalizedAgentId);
+            if (trimmedThinkingGroup.size > 0) {
+              nextThinkingAgentsByGroupId.set(group.id, trimmedThinkingGroup);
+            } else {
+              nextThinkingAgentsByGroupId.delete(group.id);
+            }
+          }
+
+          const nextMembers = group.members.filter((member) => member.id !== normalizedAgentId);
+          if (leaderRemoved && nextMembers.length === 0) {
+            removedGroupIds.push(group.id);
+            delete nextMessagesByGroupId[group.id];
+            delete nextIsSendingByGroupId[group.id];
+            nextThinkingAgentsByGroupId.delete(group.id);
+            if (nextSelectedGroupId === group.id) {
+              nextSelectedGroupId = null;
+            }
+            continue;
+          }
+
+          nextGroups.push({
+            ...group,
+            leaderId: leaderRemoved ? (nextMembers[0]?.id ?? group.leaderId) : group.leaderId,
+            members: nextMembers,
+          });
+        }
+
+        const removedGroupIdSet = new Set(removedGroupIds);
+        const nextArchives = state.archives.filter(
+          (archive) => !removedGroupIdSet.has(archive.groupId),
+        );
+        if (
+          nextSelectedArchiveId &&
+          !nextArchives.some((archive) => archive.id === nextSelectedArchiveId)
+        ) {
+          nextSelectedArchiveId = null;
+        }
+
+        return {
+          groups: nextGroups,
+          selectedGroupId: nextSelectedGroupId,
+          selectedArchiveId: nextSelectedArchiveId,
+          messagesByGroupId: ensureMessageBuckets(nextGroups, nextMessagesByGroupId),
+          archives: nextArchives,
+          thinkingAgentsByGroupId: nextThinkingAgentsByGroupId,
+          isSendingByGroupId: nextIsSendingByGroupId,
+        };
+      });
+
+      if (!committed) {
+        return;
+      }
+
+      touchedGroupIds.forEach((groupId) => {
+        clearGroupRoundState(groupId, `员工已删除: ${normalizedAgentId}`);
+      });
+      removedGroupIds.forEach((groupId) => {
+        clearGroupUrgeTimer(groupId, `项目组已删除: ${normalizedAgentId}`);
+        clearSidebarGroupUnreadCount(groupId);
+      });
+
+      console.log(
+        `[Group] 已清理员工关联项目组数据: ${normalizedAgentId}，影响项目组=${touchedGroupIds.length}，删除项目组=${removedGroupIds.length}`,
+      );
     },
 
     updateGroupAnnouncement: (groupId, announcement) => {

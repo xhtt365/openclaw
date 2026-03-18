@@ -1,6 +1,6 @@
 "use client";
 
-import type { ChatMessage, ChatUsage } from "@/utils/messageAdapter";
+import { adaptSidebarSyncMessage, type ChatMessage, type ChatUsage } from "@/utils/messageAdapter";
 
 export type SidebarDepartment = {
   id: string;
@@ -36,6 +36,8 @@ export type SidebarUnreadState = {
   groupById: Record<string, number>;
 };
 
+export type SidebarVisualPreset = "default" | "compact" | "comfort";
+
 export const SIDEBAR_DEPARTMENTS_STORAGE_KEY = "xiaban.sidebar.departments";
 export const SIDEBAR_AGENT_META_STORAGE_KEY = "xiaban.sidebar.agentMeta";
 export const EMPLOYEE_DEPARTMENT_MAP_STORAGE_KEY = "employeeDepartmentMap";
@@ -43,6 +45,7 @@ export const PINNED_EMPLOYEES_STORAGE_KEY = "pinnedEmployees";
 export const SIDEBAR_COLLAPSED_SECTIONS_STORAGE_KEY = "xiaban.sidebar.collapsedSections.v2";
 export const SIDEBAR_DIRECT_ARCHIVES_STORAGE_KEY = "xiaban.sidebar.directArchives";
 export const SIDEBAR_UNREAD_STORAGE_KEY = "xiaban.sidebar.unreadState";
+export const SIDEBAR_VISUAL_PRESET_STORAGE_KEY = "xiaban.sidebar.visualPreset";
 const SIDEBAR_STORAGE_CHANGE_EVENT = "xiaban:sidebar-storage-change";
 
 // 这几类数据当前都先走本地 mock，后续接后端时统一从这里替换读写入口。
@@ -137,38 +140,20 @@ function normalizeArchivedMessages(value: unknown) {
   }
 
   const normalizedMessages: Array<ChatMessage | null> = value.map((item) => {
-    if (!isRecord(item)) {
+    const adapted = adaptSidebarSyncMessage(item);
+    if (!adapted) {
       return null;
     }
 
-    const id = typeof item.id === "string" ? item.id.trim() : "";
-    const role = item.role === "user" || item.role === "assistant" ? item.role : null;
-    const content = typeof item.content === "string" ? item.content : "";
-    const thinking =
-      typeof item.thinking === "string" && item.thinking.trim() ? item.thinking : undefined;
-    const model = typeof item.model === "string" && item.model.trim() ? item.model : undefined;
-    const timestamp =
-      typeof item.timestamp === "number" && Number.isFinite(item.timestamp)
-        ? item.timestamp
-        : undefined;
-    const timestampLabel =
-      typeof item.timestampLabel === "string" && item.timestampLabel.trim()
-        ? item.timestampLabel.trim()
-        : undefined;
-
-    if (!id || role === null) {
-      return null;
-    }
+    const rawThinking =
+      item && typeof item === "object" && "thinking" in item && typeof item.thinking === "string"
+        ? item.thinking.trim()
+        : "";
 
     return {
-      id,
-      role,
-      content,
-      thinking,
-      model,
-      usage: normalizeUsage(item.usage),
-      timestamp,
-      timestampLabel,
+      ...adapted,
+      thinking: adapted.thinking ?? (rawThinking || undefined),
+      usage: normalizeUsage(adapted.usage) ?? undefined,
       isLoading: false,
       isNew: false,
       isHistorical: true,
@@ -176,6 +161,44 @@ function normalizeArchivedMessages(value: unknown) {
   });
 
   return normalizedMessages.filter((message): message is ChatMessage => message !== null);
+}
+
+function readTrimmedString(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return "";
+}
+
+function pickArchiveMessages(record: Record<string, unknown>) {
+  const candidates = [record.messages, record.history, record.items, record.session];
+  return candidates.find(Array.isArray);
+}
+
+function resolveArchivedAt(record: Record<string, unknown>, messages: ChatMessage[]) {
+  const explicitTime = readTrimmedString(record, ["archivedAt", "createdAt", "updatedAt"]);
+  if (explicitTime) {
+    return explicitTime;
+  }
+
+  const latestTimestamp = [...messages]
+    .map((message) => message.timestamp)
+    .filter(
+      (timestamp): timestamp is number =>
+        typeof timestamp === "number" && Number.isFinite(timestamp),
+    )
+    .reduce<number | null>(
+      (latest, current) => (latest === null || current > latest ? current : latest),
+      null,
+    );
+
+  return latestTimestamp !== null
+    ? new Date(latestTimestamp).toISOString()
+    : new Date(0).toISOString();
 }
 
 function sortDirectArchivesByNewest(archives: SidebarDirectArchive[]) {
@@ -431,6 +454,22 @@ export function clearSidebarDepartmentAssignments(
   return writeSidebarAgentMetaMap(nextValue);
 }
 
+export function removeSidebarAgentMeta(agentId: string) {
+  const normalizedAgentId = agentId.trim();
+  if (!normalizedAgentId) {
+    return readSidebarAgentMetaMap();
+  }
+
+  const currentValue = readSidebarAgentMetaMap();
+  if (!(normalizedAgentId in currentValue)) {
+    return currentValue;
+  }
+
+  const nextValue = { ...currentValue };
+  delete nextValue[normalizedAgentId];
+  return writeSidebarAgentMetaMap(nextValue);
+}
+
 export function subscribeSidebarStorage(listener: () => void, keys?: string[]) {
   if (typeof window === "undefined") {
     return () => undefined;
@@ -489,6 +528,21 @@ export function writeSidebarCollapsedSections(value: SidebarCollapsedSections) {
   writeStorageItem(SIDEBAR_COLLAPSED_SECTIONS_STORAGE_KEY, JSON.stringify(value));
 }
 
+export function readSidebarVisualPreset(): SidebarVisualPreset {
+  const raw = readStorageItem(SIDEBAR_VISUAL_PRESET_STORAGE_KEY);
+  if (raw === "compact" || raw === "comfort" || raw === "default") {
+    return raw;
+  }
+
+  return "default";
+}
+
+export function writeSidebarVisualPreset(value: SidebarVisualPreset) {
+  writeStorageItem(SIDEBAR_VISUAL_PRESET_STORAGE_KEY, value);
+  emitStorageChange(SIDEBAR_VISUAL_PRESET_STORAGE_KEY);
+  return value;
+}
+
 export function readSidebarDirectArchives(): SidebarDirectArchive[] {
   const parsed = parseStorageValue(SIDEBAR_DIRECT_ARCHIVES_STORAGE_KEY);
   if (!Array.isArray(parsed)) {
@@ -500,27 +554,17 @@ export function readSidebarDirectArchives(): SidebarDirectArchive[] {
       return null;
     }
 
-    const id = typeof item.id === "string" ? item.id.trim() : "";
-    const agentId = typeof item.agentId === "string" ? item.agentId.trim() : "";
-    const agentName = typeof item.agentName === "string" ? item.agentName.trim() : "";
-    const preview = typeof item.preview === "string" ? item.preview.trim() : "";
-    const archivedAt = typeof item.archivedAt === "string" ? item.archivedAt.trim() : "";
-    const agentRole =
-      typeof item.agentRole === "string" && item.agentRole.trim()
-        ? item.agentRole.trim()
-        : undefined;
+    const messages = normalizeArchivedMessages(pickArchiveMessages(item));
+    const id = readTrimmedString(item, ["id", "archiveId"]);
+    const agentId = readTrimmedString(item, ["agentId", "employeeId", "targetAgentId"]);
+    const agentName = readTrimmedString(item, ["agentName", "employeeName", "name"]) || agentId;
+    const preview = readTrimmedString(item, ["preview", "summary"]);
+    const archivedAt = resolveArchivedAt(item, messages);
+    const agentRole = readTrimmedString(item, ["agentRole", "role"]) || undefined;
     const agentAvatarUrl =
-      typeof item.agentAvatarUrl === "string" && item.agentAvatarUrl.trim()
-        ? item.agentAvatarUrl.trim()
-        : undefined;
-    const agentAvatarText =
-      typeof item.agentAvatarText === "string" && item.agentAvatarText.trim()
-        ? item.agentAvatarText.trim()
-        : undefined;
-    const agentEmoji =
-      typeof item.agentEmoji === "string" && item.agentEmoji.trim()
-        ? item.agentEmoji.trim()
-        : undefined;
+      readTrimmedString(item, ["agentAvatarUrl", "avatarUrl", "avatar"]) || undefined;
+    const agentAvatarText = readTrimmedString(item, ["agentAvatarText", "avatarText"]) || undefined;
+    const agentEmoji = readTrimmedString(item, ["agentEmoji", "emoji"]) || undefined;
 
     if (!id || !agentId || !agentName || !archivedAt) {
       return null;
@@ -536,7 +580,7 @@ export function readSidebarDirectArchives(): SidebarDirectArchive[] {
       agentEmoji,
       preview: preview || "已归档，可稍后回看",
       archivedAt,
-      messages: normalizeArchivedMessages(item.messages),
+      messages,
     };
   });
 
@@ -581,6 +625,21 @@ export function writeSidebarDirectArchives(value: SidebarDirectArchive[]) {
 
 export function appendSidebarDirectArchive(archive: SidebarDirectArchive) {
   return writeSidebarDirectArchives([archive, ...readSidebarDirectArchives()]);
+}
+
+export function removeSidebarDirectArchivesByAgentId(agentId: string) {
+  const normalizedAgentId = agentId.trim();
+  if (!normalizedAgentId) {
+    return readSidebarDirectArchives();
+  }
+
+  const currentArchives = readSidebarDirectArchives();
+  const nextArchives = currentArchives.filter((archive) => archive.agentId !== normalizedAgentId);
+  if (nextArchives.length === currentArchives.length) {
+    return currentArchives;
+  }
+
+  return writeSidebarDirectArchives(nextArchives);
 }
 
 export function readSidebarUnreadState(): SidebarUnreadState {
@@ -677,4 +736,10 @@ export function clearSidebarGroupUnreadCount(groupId: string) {
     ...current,
     groupById: nextGroupById,
   });
+}
+
+export function purgeSidebarAgentData(agentId: string) {
+  removeSidebarAgentMeta(agentId);
+  removeSidebarDirectArchivesByAgentId(agentId);
+  clearSidebarDirectUnreadCount(agentId);
 }

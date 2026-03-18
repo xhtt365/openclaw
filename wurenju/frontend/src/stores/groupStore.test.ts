@@ -298,6 +298,7 @@ before(() => {
   Object.defineProperty(globalThis, "window", {
     value: {
       localStorage: memoryStorage,
+      dispatchEvent: () => true,
       setTimeout: (handler: TimerHandler) => {
         const timerId = nextWindowTimerId++;
         pendingWindowTimers.set(timerId, () => {
@@ -366,6 +367,90 @@ after(() => {
     configurable: true,
     writable: true,
   });
+});
+
+void test("createGroup 会保存群头像并写入本地持久化", () => {
+  useAgentStore.setState({
+    agents: [DEV_AGENT, QA_AGENT],
+    mainKey: "main-key",
+    defaultModelLabel: null,
+  });
+
+  const group = useGroupStore.getState().createGroup({
+    name: "品牌项目组",
+    avatarUrl: "data:image/png;base64,avatar",
+    description: "负责品牌内容",
+    members: [toGroupMember(DEV_AGENT), toGroupMember(QA_AGENT)],
+    leaderId: DEV_AGENT.id,
+  });
+
+  assert.equal(group.avatarUrl, "data:image/png;base64,avatar");
+  assert.equal(useGroupStore.getState().selectedGroupId, group.id);
+
+  const persisted = JSON.parse(memoryStorage.getItem(GROUP_STORAGE_KEY) ?? "{}") as {
+    groups?: Group[];
+  };
+  assert.equal(persisted.groups?.[0]?.avatarUrl, "data:image/png;base64,avatar");
+});
+
+void test("removeAgentData 会清掉员工关联的项目组空间数据", () => {
+  const keepGroup = createGroup({
+    id: "group-keep",
+    name: "保留组",
+    members: [toGroupMember(DEV_AGENT), toGroupMember(QA_AGENT)],
+    leaderId: DEV_AGENT.id,
+  });
+  const removedGroup = createGroup({
+    id: "group-remove",
+    name: "待删除组",
+    members: [toGroupMember(DEV_AGENT)],
+    leaderId: DEV_AGENT.id,
+  });
+
+  useGroupStore.setState({
+    groups: [keepGroup, removedGroup],
+    selectedGroupId: removedGroup.id,
+    selectedArchiveId: "archive-remove",
+    messagesByGroupId: {
+      [keepGroup.id]: [createMessage()],
+      [removedGroup.id]: [createMessage()],
+    },
+    archives: [
+      {
+        id: "archive-keep",
+        groupId: keepGroup.id,
+        groupName: keepGroup.name,
+        createdAt: "2026-03-16T10:00:00.000Z",
+        messages: [createMessage()],
+      },
+      {
+        id: "archive-remove",
+        groupId: removedGroup.id,
+        groupName: removedGroup.name,
+        createdAt: "2026-03-16T11:00:00.000Z",
+        messages: [createMessage()],
+      },
+    ],
+    thinkingAgentsByGroupId: new Map(),
+    isSendingByGroupId: {},
+  });
+
+  useGroupStore.getState().removeAgentData(DEV_AGENT.id);
+
+  const state = useGroupStore.getState();
+  assert.equal(state.groups.length, 1);
+  assert.equal(state.groups[0]?.id, keepGroup.id);
+  assert.equal(state.groups[0]?.leaderId, QA_AGENT.id);
+  assert.deepEqual(
+    state.groups[0]?.members.map((member) => member.id),
+    [QA_AGENT.id],
+  );
+  assert.deepEqual(
+    state.archives.map((archive) => archive.id),
+    ["archive-keep"],
+  );
+  assert.equal(state.selectedGroupId, null);
+  assert.equal(state.selectedArchiveId, null);
 });
 
 void test("项目组提醒、音效与基础信息会同步持久化", () => {
@@ -552,6 +637,51 @@ void test("archiveGroupMessages 会保存归档、关闭督促并重置 session"
   } finally {
     gateway.resetSession = originalResetSession;
   }
+});
+
+void test("fetchGroups 会兼容旧版归档消息块格式并保留选中态", () => {
+  const group = createGroup();
+
+  memoryStorage.setItem(
+    GROUP_STORAGE_KEY,
+    JSON.stringify({
+      groups: [group],
+      selectedGroupId: null,
+      selectedArchiveId: "archive-legacy",
+      messagesByGroupId: {
+        [group.id]: [],
+      },
+      archives: [
+        {
+          id: "archive-legacy",
+          groupId: group.id,
+          groupName: group.name,
+          createdAt: "2026-03-16T08:00:00.000Z",
+          messages: [
+            {
+              id: "legacy-msg-1",
+              role: "assistant",
+              content: [{ type: "text", text: "旧版归档内容" }],
+              thinking: "旧版思考过程",
+              timestamp: 1_742_000_000_000,
+              senderId: "qa",
+              senderName: "小李",
+              senderEmoji: "🧪",
+            },
+          ],
+        },
+      ],
+    }),
+  );
+
+  useGroupStore.getState().fetchGroups();
+
+  const state = useGroupStore.getState();
+  assert.equal(state.selectedArchiveId, "archive-legacy");
+  assert.equal(state.archives.length, 1);
+  assert.equal(state.archives[0]?.messages[0]?.content, "旧版归档内容");
+  assert.equal(state.archives[0]?.messages[0]?.thinking, "旧版思考过程");
+  assert.equal(state.archives[0]?.messages[0]?.senderId, "qa");
 });
 
 void test("接力成员失败后会跳过并转给下一位，不会重试失败成员", async () => {
