@@ -10,7 +10,7 @@ import {
 void test("isScrollNearBottom 会识别接近底部的滚动位置", () => {
   assert.equal(
     isScrollNearBottom({
-      scrollTop: 552,
+      scrollTop: 250,
       clientHeight: 400,
       scrollHeight: 1000,
     }),
@@ -21,7 +21,7 @@ void test("isScrollNearBottom 会识别接近底部的滚动位置", () => {
 void test("isScrollNearBottom 会识别正在查看历史消息的滚动位置", () => {
   assert.equal(
     isScrollNearBottom({
-      scrollTop: 400,
+      scrollTop: 100,
       clientHeight: 400,
       scrollHeight: 1000,
     }),
@@ -68,7 +68,7 @@ void test("getShouldStickToBottomOnWheel 会在底部附近向下滚动时保持
   assert.equal(
     getShouldStickToBottomOnWheel(
       {
-        scrollTop: 552,
+        scrollTop: 250,
         clientHeight: 400,
         scrollHeight: 1000,
       },
@@ -76,4 +76,8 @@ void test("getShouldStickToBottomOnWheel 会在底部附近向下滚动时保持
     ),
     true,
   );
+});
+
+void test("CHAT_AUTO_SCROLL_THRESHOLD_PX 与原版贴底阈值保持一致", () => {
+  assert.equal(CHAT_AUTO_SCROLL_THRESHOLD_PX, 450);
 });

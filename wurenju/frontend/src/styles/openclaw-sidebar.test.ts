@@ -76,3 +76,20 @@ void test("EmployeeList 侧栏头部改为官网龙虾动画和中文 slogan", (
     /\.workspace-sidebar__brand-lobster \.workspace-sidebar__brand-lobster-claw-left\s*\{/,
   );
 });
+
+void test("归档分区默认折叠并使用紧凑单行归档样式", () => {
+  assert.match(
+    employeeListSource,
+    /const DEFAULT_COLLAPSED_SECTIONS = \{[\s\S]*SECTION_KEYS\.groupArchives]: true,[\s\S]*SECTION_KEYS\.directArchives]: true,[\s\S]*\} satisfies SidebarCollapsedSections;/,
+  );
+  assert.match(employeeListSource, /function mergeCollapsedSectionDefaults\(/);
+  assert.match(employeeListSource, /variant="archive"/);
+  assert.match(employeeListSource, /data-archive-kind={icon}/);
+  assert.match(css, /\.workspace-sidebar__section-header--archive\s*\{/);
+  assert.match(css, /\.workspace-sidebar__section-count--inline\s*\{/);
+  assert.match(css, /\.workspace-sidebar__section-items--archive\s*\{/);
+  assert.match(css, /\.workspace-sidebar__archive-row\s*\{[\s\S]*min-height:\s*36px;/);
+  assert.match(css, /\.workspace-sidebar__archive-row-icon\s*\{/);
+  assert.match(css, /\.workspace-sidebar__archive-row-name\s*\{/);
+  assert.match(css, /\.workspace-sidebar__archive-row-time\s*\{/);
+});

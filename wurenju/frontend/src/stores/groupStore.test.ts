@@ -264,6 +264,7 @@ function seedRelayState(group: Group, agents: Agent[]) {
     },
     archives: [],
     thinkingAgentsByGroupId: new Map(),
+    announcementSyncStatus: new Map(),
     isSendingByGroupId: {},
   });
 }
@@ -276,6 +277,7 @@ function resetGroupStore() {
     messagesByGroupId: {},
     archives: [],
     thinkingAgentsByGroupId: new Map(),
+    announcementSyncStatus: new Map(),
     isSendingByGroupId: {},
   });
   useAgentStore.setState({
@@ -420,6 +422,7 @@ void test("removeAgentData 会清掉员工关联的项目组空间数据", () =>
         id: "archive-keep",
         groupId: keepGroup.id,
         groupName: keepGroup.name,
+        title: "保留组 - 2026.03.16",
         createdAt: "2026-03-16T10:00:00.000Z",
         messages: [createMessage()],
       },
@@ -427,6 +430,7 @@ void test("removeAgentData 会清掉员工关联的项目组空间数据", () =>
         id: "archive-remove",
         groupId: removedGroup.id,
         groupName: removedGroup.name,
+        title: "待删除组 - 2026.03.16",
         createdAt: "2026-03-16T11:00:00.000Z",
         messages: [createMessage()],
       },
@@ -608,7 +612,7 @@ void test("archiveGroupMessages 会保存归档、关闭督促并重置 session"
       },
     });
 
-    const result = await useGroupStore.getState().archiveGroupMessages(group.id);
+    const result = await useGroupStore.getState().archiveGroupMessages(group.id, "需求复盘");
 
     assert.equal(result.success, true);
     assert.equal(typeof result.archiveId, "string");
@@ -622,6 +626,7 @@ void test("archiveGroupMessages 会保存归档、关闭督促并重置 session"
     assert.equal(useGroupStore.getState().groups[0]?.urgeLastCheckedAt, undefined);
     assert.equal(useGroupStore.getState().archives.length, 1);
     assert.equal(useGroupStore.getState().archives[0]?.groupName, group.name);
+    assert.equal(useGroupStore.getState().archives[0]?.title, "需求复盘");
     assert.equal(useGroupStore.getState().archives[0]?.messages[0]?.id, "message-1");
     assert.equal(useGroupStore.getState().archives[0]?.messages[0]?.content, "历史消息");
     assert.equal(useGroupStore.getState().archives[0]?.messages[0]?.senderName, "小王");
@@ -637,6 +642,179 @@ void test("archiveGroupMessages 会保存归档、关闭督促并重置 session"
   } finally {
     gateway.resetSession = originalResetSession;
   }
+});
+
+void test("dissolveGroup 会删除群聊、清理运行时并保留项目组归档", async () => {
+  const groupA = createGroup({
+    id: "group-a",
+    name: "A 项目组",
+  });
+  const groupB = createGroup({
+    id: "group-b",
+    name: "B 项目组",
+  });
+  const originalAbortSession = gateway.abortSession.bind(gateway);
+  const originalDeleteSession = gateway.deleteSession.bind(gateway);
+  const abortCalls: string[] = [];
+  const deleteCalls: string[] = [];
+
+  gateway.abortSession = (async (sessionKey: string) => {
+    abortCalls.push(sessionKey);
+    return { ok: true, aborted: true };
+  }) as typeof gateway.abortSession;
+  gateway.deleteSession = (async (sessionKey: string) => {
+    deleteCalls.push(sessionKey);
+    return {};
+  }) as typeof gateway.deleteSession;
+
+  try {
+    useGroupStore.setState({
+      groups: [groupA, groupB],
+      selectedGroupId: groupA.id,
+      selectedArchiveId: null,
+      messagesByGroupId: {
+        [groupA.id]: [createMessage()],
+        [groupB.id]: [createMessage()],
+      },
+      archives: [
+        {
+          id: "archive-a",
+          groupId: groupA.id,
+          groupName: groupA.name,
+          title: "A 组归档",
+          createdAt: "2026-03-16T08:00:00.000Z",
+          messages: [createMessage()],
+        },
+      ],
+      thinkingAgentsByGroupId: new Map([
+        [
+          groupA.id,
+          new Map([
+            [
+              DEV_AGENT.id,
+              {
+                id: DEV_AGENT.id,
+                name: DEV_AGENT.name,
+                pendingCount: 1,
+              },
+            ],
+          ]),
+        ],
+      ]),
+      announcementSyncStatus: new Map([
+        [
+          groupA.id,
+          {
+            [DEV_AGENT.id]: 1,
+            [QA_AGENT.id]: 1,
+          },
+        ],
+      ]),
+      isSendingByGroupId: {
+        [groupA.id]: true,
+      },
+    });
+
+    useGroupStore.getState().startGroupUrging(groupA.id, 5);
+    useGroupStore.getState().startGroupUrging(groupB.id, 10);
+    memoryStorage.setItem(`compacted:${groupA.id}:${DEV_AGENT.id}:1`, JSON.stringify({ ok: true }));
+    memoryStorage.setItem(`compacted:${groupB.id}:${QA_AGENT.id}:1`, JSON.stringify({ ok: true }));
+
+    const result = await useGroupStore.getState().dissolveGroup(groupA.id);
+
+    assert.equal(result.success, true);
+    assert.deepEqual(abortCalls.toSorted(), ["agent:dev:group:group-a", "agent:qa:group:group-a"]);
+    assert.deepEqual(deleteCalls.toSorted(), ["agent:dev:group:group-a", "agent:qa:group:group-a"]);
+    assert.deepEqual(
+      useGroupStore.getState().groups.map((group) => group.id),
+      [groupB.id],
+    );
+    assert.equal(useGroupStore.getState().selectedGroupId, groupB.id);
+    assert.equal(groupA.id in useGroupStore.getState().messagesByGroupId, false);
+    assert.equal(useGroupStore.getState().thinkingAgentsByGroupId.has(groupA.id), false);
+    assert.equal(useGroupStore.getState().announcementSyncStatus.has(groupA.id), false);
+    assert.equal(groupA.id in useGroupStore.getState().isSendingByGroupId, false);
+    assert.equal(useGroupStore.getState().archives.length, 1);
+    assert.equal(useGroupStore.getState().archives[0]?.groupId, groupA.id);
+    assert.equal(memoryStorage.getItem(`compacted:${groupA.id}:${DEV_AGENT.id}:1`), null);
+    assert.notEqual(memoryStorage.getItem(`compacted:${groupB.id}:${QA_AGENT.id}:1`), null);
+    assert.equal(pendingWindowTimers.size, 1);
+
+    const persisted = JSON.parse(memoryStorage.getItem(GROUP_STORAGE_KEY) ?? "{}");
+    assert.deepEqual(
+      persisted.groups.map((group: Group) => group.id),
+      [groupB.id],
+    );
+    assert.equal(groupA.id in persisted.messagesByGroupId, false);
+    assert.equal(persisted.archives.length, 1);
+    assert.equal(persisted.archives[0].groupId, groupA.id);
+  } finally {
+    gateway.abortSession = originalAbortSession;
+    gateway.deleteSession = originalDeleteSession;
+  }
+});
+
+void test("dissolveGroup 在没有其他项目组时会清空当前选中", async () => {
+  const group = createGroup();
+  const originalAbortSession = gateway.abortSession.bind(gateway);
+  const originalDeleteSession = gateway.deleteSession.bind(gateway);
+
+  gateway.abortSession = (async () => ({ ok: true, aborted: true })) as typeof gateway.abortSession;
+  gateway.deleteSession = (async () => ({})) as typeof gateway.deleteSession;
+
+  try {
+    useGroupStore.setState({
+      groups: [group],
+      selectedGroupId: group.id,
+      selectedArchiveId: null,
+      messagesByGroupId: {
+        [group.id]: [createMessage()],
+      },
+      archives: [],
+      thinkingAgentsByGroupId: new Map(),
+      announcementSyncStatus: new Map(),
+      isSendingByGroupId: {},
+    });
+
+    const result = await useGroupStore.getState().dissolveGroup(group.id);
+
+    assert.equal(result.success, true);
+    assert.equal(useGroupStore.getState().groups.length, 0);
+    assert.equal(useGroupStore.getState().selectedGroupId, null);
+  } finally {
+    gateway.abortSession = originalAbortSession;
+    gateway.deleteSession = originalDeleteSession;
+  }
+});
+
+void test("renameArchive 会同步更新项目组归档标题和本地缓存", () => {
+  const group = createGroup();
+  useGroupStore.setState({
+    groups: [group],
+    selectedGroupId: null,
+    selectedArchiveId: "archive-1",
+    messagesByGroupId: {
+      [group.id]: [],
+    },
+    archives: [
+      {
+        id: "archive-1",
+        groupId: group.id,
+        groupName: group.name,
+        title: `${group.name} - 2026.03.16`,
+        createdAt: "2026-03-16T08:00:00.000Z",
+        messages: [createMessage()],
+      },
+    ],
+  });
+
+  const renamed = useGroupStore.getState().renameArchive("archive-1", "新的归档标题");
+
+  assert.equal(renamed, true);
+  assert.equal(useGroupStore.getState().archives[0]?.title, "新的归档标题");
+
+  const persisted = JSON.parse(memoryStorage.getItem(GROUP_STORAGE_KEY) ?? "{}");
+  assert.equal(persisted.archives[0]?.title, "新的归档标题");
 });
 
 void test("fetchGroups 会兼容旧版归档消息块格式并保留选中态", () => {
@@ -679,9 +857,44 @@ void test("fetchGroups 会兼容旧版归档消息块格式并保留选中态", 
   const state = useGroupStore.getState();
   assert.equal(state.selectedArchiveId, "archive-legacy");
   assert.equal(state.archives.length, 1);
+  assert.equal(state.archives[0]?.title, `${group.name} - 2026.03.16`);
   assert.equal(state.archives[0]?.messages[0]?.content, "旧版归档内容");
   assert.equal(state.archives[0]?.messages[0]?.thinking, "旧版思考过程");
   assert.equal(state.archives[0]?.messages[0]?.senderId, "qa");
+});
+
+void test("fetchGroups 会保留缺少 archiveId 和 createdAt 的旧项目组归档", () => {
+  const group = createGroup();
+
+  memoryStorage.setItem(
+    GROUP_STORAGE_KEY,
+    JSON.stringify({
+      groups: [group],
+      selectedGroupId: null,
+      selectedArchiveId: group.id,
+      messagesByGroupId: {
+        [group.id]: [],
+      },
+      archives: [
+        {
+          groupId: group.id,
+          groupName: group.name,
+          messages: [],
+        },
+      ],
+    }),
+  );
+
+  useGroupStore.getState().fetchGroups();
+
+  const state = useGroupStore.getState();
+  assert.equal(state.selectedArchiveId, group.id);
+  assert.equal(state.archives.length, 1);
+  assert.equal(state.archives[0]?.id, group.id);
+  assert.equal(state.archives[0]?.groupId, group.id);
+  assert.equal(state.archives[0]?.title, `${group.name} - 1970.01.01`);
+  assert.equal(state.archives[0]?.createdAt, new Date(0).toISOString());
+  assert.deepEqual(state.archives[0]?.messages, []);
 });
 
 void test("接力成员失败后会跳过并转给下一位，不会重试失败成员", async () => {
@@ -1213,5 +1426,604 @@ void test("visibilitychange 会对所有活跃群执行过期督促补偿", asyn
     );
   } finally {
     scenario.restore();
+  }
+});
+
+void test("保存群公告后会广播给全员，后续同版本 dispatch 不再重复注入公告", async () => {
+  const group = createGroup({
+    leaderId: LEADER_AGENT.id,
+    members: [toGroupMember(DEV_AGENT), toGroupMember(QA_AGENT)],
+  });
+  const scenario = installGatewayScenario({
+    dev: [{ type: "success", content: "已知悉公告" }],
+    qa: [
+      { type: "success", content: "已知悉公告" },
+      { type: "success", content: "我已经按新规范继续处理。" },
+    ],
+    lead: [{ type: "success", content: "已知悉公告" }],
+  });
+
+  try {
+    seedRelayState(group, [DEV_AGENT, QA_AGENT, LEADER_AGENT]);
+
+    useGroupStore.getState().updateGroupAnnouncement(group.id, "第一条规范\n第二条规范");
+    await flushAsyncWork();
+    await flushAsyncWork();
+
+    assert.deepEqual(scenario.sentMessages.map((item) => item.agentId).toSorted(), [
+      "dev",
+      "lead",
+      "qa",
+    ]);
+    assert.equal(
+      scenario.sentMessages.every((item) => item.message.includes("📢 群公告已更新：")),
+      true,
+    );
+    assert.equal(
+      scenario.sentMessages.every((item) => !item.message.includes("【群公告】")),
+      true,
+    );
+
+    const broadcastMessages = useGroupStore.getState().messagesByGroupId[group.id] ?? [];
+    assert.equal(
+      broadcastMessages.some((message) => message.content.includes("📢 群公告已更新：")),
+      true,
+    );
+    const visibleAcknowledgements = broadcastMessages.filter(
+      (message) =>
+        message.role === "assistant" &&
+        ["dev", "lead", "qa"].includes(message.senderId ?? "") &&
+        message.content.includes("已知悉公告"),
+    );
+    assert.equal(visibleAcknowledgements.length, 3);
+
+    await useGroupStore.getState().sendGroupMessage(group.id, "@小李 请继续执行最新规范");
+    await flushAsyncWork();
+
+    const qaDispatch = scenario.sentMessages.find(
+      (item, index) => item.agentId === "qa" && index >= 3,
+    );
+    assert.equal(typeof qaDispatch?.message, "string");
+    assert.equal(qaDispatch?.message.includes("【群公告】"), false);
+    assert.equal(qaDispatch?.message.includes("请继续执行最新规范"), true);
+  } finally {
+    scenario.restore();
+  }
+});
+
+void test("智能督促在群主判断无需催促时不会发送可见催促消息", async () => {
+  const group = createGroup({
+    leaderId: LEADER_AGENT.id,
+    members: [toGroupMember(DEV_AGENT), toGroupMember(QA_AGENT)],
+    isUrging: true,
+    urgeIntervalMinutes: 5,
+    urgeStartedAt: nextTimestamp - 10 * 60 * 1_000,
+    urgeCount: 0,
+    isUrgePaused: false,
+    urgeLastCheckedAt: nextTimestamp - 10 * 60 * 1_000,
+  });
+  const scenario = installGatewayScenario({
+    lead: [
+      {
+        type: "success",
+        content: '{"needUrge":false,"targets":[],"reason":"当前没有未完成任务"}',
+      },
+    ],
+  });
+
+  try {
+    seedRelayState(group, [DEV_AGENT, QA_AGENT, LEADER_AGENT]);
+
+    useGroupStore.getState().compensateGroupUrge(group.id);
+    await flushAsyncWork();
+
+    assert.deepEqual(
+      scenario.sentMessages.map((item) => item.agentId),
+      ["lead"],
+    );
+    assert.deepEqual(useGroupStore.getState().messagesByGroupId[group.id] ?? [], []);
+    assert.equal(useGroupStore.getState().groups[0]?.urgeCount, 0);
+    assert.equal(typeof useGroupStore.getState().groups[0]?.urgeLastCheckedAt, "number");
+  } finally {
+    scenario.restore();
+  }
+});
+
+void test("智能督促在群主判断需要催促时只催 targets 中的成员", async () => {
+  const group = createGroup({
+    leaderId: LEADER_AGENT.id,
+    members: [toGroupMember(DEV_AGENT), toGroupMember(QA_AGENT)],
+    isUrging: true,
+    urgeIntervalMinutes: 5,
+    urgeStartedAt: nextTimestamp - 10 * 60 * 1_000,
+    urgeCount: 0,
+    isUrgePaused: false,
+    urgeLastCheckedAt: nextTimestamp - 10 * 60 * 1_000,
+  });
+  const scenario = installGatewayScenario({
+    lead: [
+      {
+        type: "success",
+        content: '{"needUrge":true,"targets":["小李"],"reason":"小李负责的任务还没回复"}',
+      },
+    ],
+    qa: [{ type: "success", content: "我现在补充最新进度。" }],
+  });
+
+  try {
+    seedRelayState(group, [DEV_AGENT, QA_AGENT, LEADER_AGENT]);
+
+    useGroupStore.getState().compensateGroupUrge(group.id);
+    await flushAsyncWork();
+
+    assert.deepEqual(
+      scenario.sentMessages.map((item) => item.agentId),
+      ["lead", "qa"],
+    );
+    const messages = useGroupStore.getState().messagesByGroupId[group.id] ?? [];
+    assert.equal(
+      messages.some((message) => message.content === "@小李 请汇报当前进度"),
+      true,
+    );
+    assert.equal(
+      messages.some((message) => message.content === "@小王 请汇报当前进度"),
+      false,
+    );
+    assert.equal(useGroupStore.getState().groups[0]?.urgeCount, 1);
+  } finally {
+    scenario.restore();
+  }
+});
+
+void test("智能督促在群主回复格式异常时会降级为默认催促", async () => {
+  const group = createGroup({
+    leaderId: LEADER_AGENT.id,
+    members: [toGroupMember(DEV_AGENT), toGroupMember(QA_AGENT)],
+    isUrging: true,
+    urgeIntervalMinutes: 5,
+    urgeStartedAt: nextTimestamp - 10 * 60 * 1_000,
+    urgeCount: 0,
+    isUrgePaused: false,
+    urgeLastCheckedAt: nextTimestamp - 10 * 60 * 1_000,
+  });
+  const scenario = installGatewayScenario({
+    lead: [{ type: "success", content: "我觉得你自己判断吧" }],
+    dev: [{ type: "success", content: "我补一下我的进度。" }],
+    qa: [{ type: "success", content: "我也补一下我的进度。" }],
+  });
+
+  try {
+    seedRelayState(group, [DEV_AGENT, QA_AGENT, LEADER_AGENT]);
+
+    useGroupStore.getState().compensateGroupUrge(group.id);
+    await flushAsyncWork();
+
+    assert.deepEqual(scenario.sentMessages.map((item) => item.agentId).toSorted(), [
+      "dev",
+      "lead",
+      "qa",
+    ]);
+    const messages = useGroupStore.getState().messagesByGroupId[group.id] ?? [];
+    assert.equal(
+      messages.some((message) => message.content === "@小王 请汇报当前进度"),
+      true,
+    );
+    assert.equal(
+      messages.some((message) => message.content === "@小李 请汇报当前进度"),
+      true,
+    );
+    assert.equal(useGroupStore.getState().groups[0]?.urgeCount, 1);
+  } finally {
+    scenario.restore();
+  }
+});
+
+void test("督促检查不会打断正在进行的接力任务", async () => {
+  const group = createGroup({
+    leaderId: LEADER_AGENT.id,
+    members: [toGroupMember(DEV_AGENT), toGroupMember(QA_AGENT)],
+    isUrging: true,
+    urgeIntervalMinutes: 5,
+    urgeStartedAt: nextTimestamp - 10 * 60 * 1_000,
+    urgeCount: 0,
+    isUrgePaused: false,
+    urgeLastCheckedAt: nextTimestamp - 10 * 60 * 1_000,
+  });
+  const scenario = installGatewayScenario({
+    dev: [{ type: "success", content: "我先完成这一段，不艾特别人。" }],
+    lead: [
+      {
+        type: "success",
+        content: '{"needUrge":false,"targets":[],"reason":"接力还会继续"}',
+      },
+      { type: "success", content: "我来接手并继续安排 @小李 你接着汇报。" },
+    ],
+    qa: [{ type: "success", content: "收到，我继续汇报当前进度。" }],
+  });
+
+  try {
+    seedRelayState(group, [DEV_AGENT, QA_AGENT, LEADER_AGENT]);
+
+    await useGroupStore
+      .getState()
+      .sendGroupMessage(group.id, "请所有人接力汇报当前进度，@小王 先开始");
+    await flushAsyncWork();
+
+    useGroupStore.getState().compensateGroupUrge(group.id);
+    await flushAsyncWork();
+    useGroupStore.getState().stopGroupUrging(group.id);
+
+    await flushWindowTimers();
+
+    assert.equal(
+      scenario.sentMessages.some(
+        (item) => item.agentId === "lead" && item.message.includes("[群内接力兜底]"),
+      ),
+      false,
+    );
+    assert.equal(
+      scenario.sentMessages.some((item) => item.agentId === "dev"),
+      true,
+    );
+    assert.equal(
+      scenario.sentMessages.some((item) => item.agentId === "qa"),
+      true,
+    );
+    const messages = useGroupStore.getState().messagesByGroupId[group.id] ?? [];
+    assert.equal(
+      messages.some((message) => message.content.includes("我先完成这一段，不艾特别人。")),
+      true,
+    );
+    assert.equal(
+      messages.some((message) => message.content.includes("收到，我继续汇报当前进度。")),
+      true,
+    );
+  } finally {
+    scenario.restore();
+  }
+});
+
+void test("消息超过阈值时会先压缩上下文，再发送新消息", async () => {
+  const group = createGroup({
+    members: [toGroupMember(DEV_AGENT)],
+    leaderId: DEV_AGENT.id,
+  });
+  const originalSendAgentTurn = gateway.sendAgentTurn.bind(gateway);
+  const originalWaitForAgentRun = gateway.waitForAgentRun.bind(gateway);
+  const originalLoadHistory = gateway.loadHistory.bind(gateway);
+  const originalResetSession = gateway.resetSession.bind(gateway);
+  const originalSendCompactCommand = gateway.sendCompactCommand.bind(gateway);
+  const sentMessages: Array<{ runId: string; message: string }> = [];
+  const completedRuns = new Set<string>();
+  let nextRunId = 1;
+  const summaryRunController: { resolve: (() => void) | null } = {
+    resolve: null,
+  };
+
+  const initialHistory = Array.from({ length: 31 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: [{ type: "text", text: `历史消息 ${index + 1}` }],
+    timestamp: 1_742_000_000_000 + index,
+  }));
+
+  gateway.sendCompactCommand = (async () => {
+    return {
+      type: "res",
+      id: "compact-unsupported",
+      ok: false,
+      error: { message: "unsupported" },
+    };
+  }) as typeof gateway.sendCompactCommand;
+
+  gateway.resetSession = (async () => {
+    return {};
+  }) as typeof gateway.resetSession;
+
+  gateway.sendAgentTurn = (async (params) => {
+    const runId = `run-${nextRunId++}`;
+    sentMessages.push({
+      runId,
+      message: params.message ?? "",
+    });
+    return { runId };
+  }) as typeof gateway.sendAgentTurn;
+
+  gateway.waitForAgentRun = (async (runId: string) => {
+    const currentMessage = sentMessages.find((item) => item.runId === runId)?.message ?? "";
+    if (currentMessage.includes("请总结以下群聊记录的关键信息")) {
+      await new Promise<void>((resolve) => {
+        summaryRunController.resolve = () => {
+          completedRuns.add(runId);
+          resolve();
+        };
+      });
+      return { status: "ok" };
+    }
+
+    completedRuns.add(runId);
+    return { status: "ok" };
+  }) as typeof gateway.waitForAgentRun;
+
+  gateway.loadHistory = (async () => {
+    if (completedRuns.has("run-3")) {
+      return {
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "新的回复已经正常返回。" }],
+            timestamp: Date.now(),
+          },
+        ],
+      };
+    }
+
+    if (completedRuns.has("run-2")) {
+      return {
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "已整理" }],
+            timestamp: Date.now(),
+          },
+        ],
+      };
+    }
+
+    if (completedRuns.has("run-1")) {
+      return {
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "这是压缩后的摘要，保留关键任务和待办。" }],
+            timestamp: Date.now(),
+          },
+        ],
+      };
+    }
+
+    return {
+      messages: initialHistory,
+    };
+  }) as typeof gateway.loadHistory;
+
+  try {
+    seedRelayState(group, [DEV_AGENT]);
+    useGroupStore.setState({
+      messagesByGroupId: {
+        [group.id]: Array.from({ length: 31 }, (_, index) => ({
+          id: `history-${index}`,
+          role: "assistant",
+          content: `历史消息 ${index + 1}`,
+          timestamp: 1_742_000_000_000 + index,
+          isNew: false,
+          isHistorical: true,
+          senderId: DEV_AGENT.id,
+          senderName: DEV_AGENT.name,
+        })),
+      },
+    });
+
+    const sendPromise = useGroupStore.getState().sendGroupMessage(group.id, "请继续处理新的任务");
+    await flushAsyncWork();
+
+    assert.equal(
+      useGroupStore.getState().getThinkingAgentsForGroup(group.id)[0]?.detail,
+      "📋 整理记忆中...",
+    );
+
+    if (summaryRunController.resolve) {
+      summaryRunController.resolve();
+    }
+    await flushAsyncWork();
+    await sendPromise;
+
+    const messages = useGroupStore.getState().messagesByGroupId[group.id] ?? [];
+    const relatedMessages = messages.filter(
+      (message) =>
+        message.senderId === DEV_AGENT.id || message.sessionTargetIds?.includes(DEV_AGENT.id),
+    );
+
+    assert.equal(
+      sentMessages.some((item) => item.message.includes("请总结以下群聊记录的关键信息")),
+      true,
+    );
+    assert.equal(
+      sentMessages.some((item) => item.message.includes("[系统-上下文压缩同步]")),
+      true,
+    );
+    assert.equal(
+      relatedMessages.some((message) => message.content.startsWith("📋 [上下文摘要]")),
+      true,
+    );
+    assert.equal(
+      relatedMessages.some((message) => message.content === "历史消息 1"),
+      false,
+    );
+    assert.equal(
+      relatedMessages.some((message) => message.content === "历史消息 31"),
+      true,
+    );
+    assert.equal(relatedMessages.length, 8);
+    assert.equal(
+      relatedMessages.some((message) => message.content.includes("新的回复已经正常返回。")),
+      true,
+    );
+    assert.deepEqual(useGroupStore.getState().getThinkingAgentsForGroup(group.id), []);
+  } finally {
+    gateway.sendAgentTurn = originalSendAgentTurn;
+    gateway.waitForAgentRun = originalWaitForAgentRun;
+    gateway.loadHistory = originalLoadHistory;
+    gateway.resetSession = originalResetSession;
+    gateway.sendCompactCommand = originalSendCompactCommand;
+  }
+});
+
+void test("消息达到阈值时发送下一条也会先压缩上下文", async () => {
+  const group = createGroup({
+    members: [toGroupMember(DEV_AGENT)],
+    leaderId: DEV_AGENT.id,
+  });
+  const originalSendAgentTurn = gateway.sendAgentTurn.bind(gateway);
+  const originalWaitForAgentRun = gateway.waitForAgentRun.bind(gateway);
+  const originalLoadHistory = gateway.loadHistory.bind(gateway);
+  const originalResetSession = gateway.resetSession.bind(gateway);
+  const originalSendCompactCommand = gateway.sendCompactCommand.bind(gateway);
+  const sentMessages: Array<{ runId: string; message: string }> = [];
+  const completedRuns = new Set<string>();
+  let nextRunId = 1;
+  const summaryRunController: { resolve: (() => void) | null } = {
+    resolve: null,
+  };
+
+  const initialHistory = Array.from({ length: 30 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: [{ type: "text", text: `边界历史消息 ${index + 1}` }],
+    timestamp: 1_742_000_000_000 + index,
+  }));
+
+  gateway.sendCompactCommand = (async () => {
+    return {
+      type: "res",
+      id: "compact-threshold",
+      ok: false,
+      error: { message: "unsupported" },
+    };
+  }) as typeof gateway.sendCompactCommand;
+
+  gateway.resetSession = (async () => {
+    return {};
+  }) as typeof gateway.resetSession;
+
+  gateway.sendAgentTurn = (async (params) => {
+    const runId = `run-threshold-${nextRunId++}`;
+    sentMessages.push({
+      runId,
+      message: params.message ?? "",
+    });
+    return { runId };
+  }) as typeof gateway.sendAgentTurn;
+
+  gateway.waitForAgentRun = (async (runId: string) => {
+    const currentMessage = sentMessages.find((item) => item.runId === runId)?.message ?? "";
+    if (currentMessage.includes("请总结以下群聊记录的关键信息")) {
+      await new Promise<void>((resolve) => {
+        summaryRunController.resolve = () => {
+          completedRuns.add(runId);
+          resolve();
+        };
+      });
+      return { status: "ok" };
+    }
+
+    completedRuns.add(runId);
+    return { status: "ok" };
+  }) as typeof gateway.waitForAgentRun;
+
+  gateway.loadHistory = (async () => {
+    if (completedRuns.has("run-threshold-3")) {
+      return {
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "边界场景的新回复已返回。" }],
+            timestamp: Date.now(),
+          },
+        ],
+      };
+    }
+
+    if (completedRuns.has("run-threshold-2")) {
+      return {
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "边界场景已整理" }],
+            timestamp: Date.now(),
+          },
+        ],
+      };
+    }
+
+    if (completedRuns.has("run-threshold-1")) {
+      return {
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "这是边界值压缩后的摘要。" }],
+            timestamp: Date.now(),
+          },
+        ],
+      };
+    }
+
+    return {
+      messages: initialHistory,
+    };
+  }) as typeof gateway.loadHistory;
+
+  try {
+    seedRelayState(group, [DEV_AGENT]);
+    useGroupStore.setState({
+      messagesByGroupId: {
+        [group.id]: Array.from({ length: 30 }, (_, index) => ({
+          id: `threshold-history-${index}`,
+          role: "assistant",
+          content: `边界历史消息 ${index + 1}`,
+          timestamp: 1_742_000_000_000 + index,
+          isNew: false,
+          isHistorical: true,
+          senderId: DEV_AGENT.id,
+          senderName: DEV_AGENT.name,
+        })),
+      },
+    });
+
+    const sendPromise = useGroupStore.getState().sendGroupMessage(group.id, "请继续处理边界值任务");
+    await flushAsyncWork();
+
+    assert.equal(
+      useGroupStore.getState().getThinkingAgentsForGroup(group.id)[0]?.detail,
+      "📋 整理记忆中...",
+    );
+
+    if (summaryRunController.resolve) {
+      summaryRunController.resolve();
+    }
+    await flushAsyncWork();
+    await sendPromise;
+
+    const messages = useGroupStore.getState().messagesByGroupId[group.id] ?? [];
+    const relatedMessages = messages.filter(
+      (message) =>
+        message.senderId === DEV_AGENT.id || message.sessionTargetIds?.includes(DEV_AGENT.id),
+    );
+
+    assert.equal(
+      sentMessages.some((item) => item.message.includes("请总结以下群聊记录的关键信息")),
+      true,
+    );
+    assert.equal(
+      relatedMessages.some((message) => message.content.startsWith("📋 [上下文摘要]")),
+      true,
+    );
+    assert.equal(
+      relatedMessages.some((message) => message.content === "边界历史消息 1"),
+      false,
+    );
+    assert.equal(
+      relatedMessages.some((message) => message.content === "边界历史消息 30"),
+      true,
+    );
+    assert.equal(relatedMessages.length, 8);
+    assert.equal(
+      relatedMessages.some((message) => message.content.includes("边界场景的新回复已返回。")),
+      true,
+    );
+  } finally {
+    gateway.sendAgentTurn = originalSendAgentTurn;
+    gateway.waitForAgentRun = originalWaitForAgentRun;
+    gateway.loadHistory = originalLoadHistory;
+    gateway.resetSession = originalResetSession;
+    gateway.sendCompactCommand = originalSendCompactCommand;
   }
 });

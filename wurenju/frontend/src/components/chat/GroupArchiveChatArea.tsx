@@ -24,6 +24,23 @@ type GroupArchiveChatAreaProps = {
   archive: GroupArchive;
 };
 
+function readTrimmedText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isRenderableArchiveMessage(message: unknown): message is GroupChatMessage {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+
+  const candidate = message as Record<string, unknown>;
+  return (
+    typeof candidate.id === "string" &&
+    (candidate.role === "user" || candidate.role === "assistant") &&
+    typeof candidate.content === "string"
+  );
+}
+
 function formatArchiveTimeLabel(value: string) {
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) {
@@ -46,8 +63,9 @@ function resolveArchiveSenderName(message: GroupChatMessage) {
     return "你";
   }
 
-  if (message.senderName?.trim()) {
-    return message.senderName.trim();
+  const senderName = readTrimmedText(message.senderName);
+  if (senderName) {
+    return senderName;
   }
 
   return "项目组成员";
@@ -59,7 +77,7 @@ function resolveArchiveAvatarText(message: GroupChatMessage) {
   }
 
   const senderName = resolveArchiveSenderName(message);
-  return message.senderEmoji?.trim() || senderName.charAt(0).toUpperCase() || "#";
+  return readTrimmedText(message.senderEmoji) || senderName.charAt(0).toUpperCase() || "#";
 }
 
 function GroupArchiveChatAreaInner({ archive }: GroupArchiveChatAreaProps) {
@@ -72,7 +90,13 @@ function GroupArchiveChatAreaInner({ archive }: GroupArchiveChatAreaProps) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [userProfile, setUserProfile] = useState(() => getUserProfile());
   const [popoverAnchorRect, setPopoverAnchorRect] = useState<DOMRect | null>(null);
-  const archiveTime = formatArchiveTimeLabel(archive.createdAt);
+  const archiveTitle =
+    readTrimmedText(archive.title) || readTrimmedText(archive.groupName) || "项目组归档";
+  const archiveName = readTrimmedText(archive.groupName) || "项目组归档";
+  const archiveMessages = Array.isArray(archive.messages)
+    ? archive.messages.filter(isRenderableArchiveMessage)
+    : [];
+  const archiveTime = formatArchiveTimeLabel(readTrimmedText(archive.createdAt));
 
   useEffect(() => subscribeToUserProfile(setUserProfile), []);
 
@@ -84,7 +108,7 @@ function GroupArchiveChatAreaInner({ archive }: GroupArchiveChatAreaProps) {
         setCopiedMessageId((current) => (current === message.id ? null : current));
       }, 1000);
     } catch (error) {
-      console.error("[Group] 复制归档消息失败:", error);
+      console.error("[Archive] 复制项目组归档消息失败:", error);
     }
   }
 
@@ -93,14 +117,14 @@ function GroupArchiveChatAreaInner({ archive }: GroupArchiveChatAreaProps) {
     const url = window.URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${archive.groupName || "项目组归档"}-${message.id}.txt`;
+    anchor.download = `${archiveTitle}-${message.id}.txt`;
     anchor.click();
     window.URL.revokeObjectURL(url);
-    console.log(`[Group] 导出归档消息: ${archive.groupName}`);
+    console.log(`[Archive] 导出项目组单条消息: ${archiveTitle}`);
   }
 
   function handleRefreshMessage(message: GroupChatMessage) {
-    console.log(`[Group] 归档回看不支持刷新消息: ${message.id}`);
+    console.log(`[Archive] 归档回看不支持刷新消息: ${message.id}`);
   }
 
   function handleOpenAgentDetail(agentId: string) {
@@ -122,15 +146,14 @@ function GroupArchiveChatAreaInner({ archive }: GroupArchiveChatAreaProps) {
               <Archive className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <div className="group-chat-header__title truncate">
-                {archive.groupName || "项目组归档"}
-              </div>
+              <div className="group-chat-header__title truncate">{archiveTitle}</div>
               <div className="group-chat-header__subtitle mt-1 flex flex-wrap items-center gap-3">
+                <span>{archiveName}</span>
                 <span className="inline-flex items-center gap-1.5">
                   <Clock3 className="h-3.5 w-3.5" />
                   归档于 {archiveTime}
                 </span>
-                <span>{archive.messages.length} 条消息</span>
+                <span>{archiveMessages.length} 条消息</span>
               </div>
             </div>
           </div>
@@ -149,9 +172,9 @@ function GroupArchiveChatAreaInner({ archive }: GroupArchiveChatAreaProps) {
         </div>
 
         <div className="chat-thread im-scroll">
-          {archive.messages.length > 0 ? (
+          {archiveMessages.length > 0 ? (
             <div className="flex w-full flex-col gap-6">
-              {archive.messages.map((message) => (
+              {archiveMessages.map((message) => (
                 <div key={message.id} className={cn("rounded-[22px] transition-all duration-200")}>
                   <MessageBubble
                     message={message}

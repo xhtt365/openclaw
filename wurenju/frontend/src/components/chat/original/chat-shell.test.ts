@@ -300,6 +300,7 @@ void test("renderOriginalChatShell 在群聊模式下渲染项目组专属标题
       onArchiveConversationClick: () => {},
       onAnnouncementClick: () => {},
       onUrgeClick: () => {},
+      onDissolveGroupClick: () => {},
       onRefresh: () => {},
       onToggleThinking: () => {},
       onToggleFocusMode: () => {},
@@ -330,5 +331,8 @@ void test("renderOriginalChatShell 在群聊模式下渲染项目组专属标题
   assert.match(markup, />编辑项目组</);
   assert.match(markup, />成员管理</);
   assert.match(markup, />重置对话</);
+  assert.match(markup, /surface-group-more__separator/);
+  assert.match(markup, />解散群聊</);
+  assert.match(markup, />🗑</);
   assert.doesNotMatch(markup, /搜索消息/);
 });

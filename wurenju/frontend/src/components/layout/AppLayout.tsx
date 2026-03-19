@@ -7,6 +7,8 @@ import { EmployeeList, type Employee } from "@/components/layout/EmployeeList";
 import { Toaster } from "@/components/ui/toaster";
 import { cn } from "@/lib/utils";
 import { useAgentStore } from "@/stores/agentStore";
+import { useArchiveViewStore } from "@/stores/archiveViewStore";
+import { useCronStore } from "@/stores/cronStore";
 import { useDirectArchiveStore } from "@/stores/directArchiveStore";
 import { useGroupStore } from "@/stores/groupStore";
 import { AGENT_AVATAR_STORAGE_KEY } from "@/utils/agentAvatar";
@@ -37,6 +39,8 @@ function AppLayoutInner() {
   const [avatarVersion, setAvatarVersion] = useState(0);
   const agents = useAgentStore((state) => state.agents);
   const showDetailFor = useAgentStore((state) => state.showDetailFor);
+  const archiveEmptyState = useArchiveViewStore((state) => state.emptyState);
+  const clearArchiveEmptyState = useArchiveViewStore((state) => state.clearArchiveEmptyState);
   const groups = useGroupStore((state) => state.groups);
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
   const selectedArchiveId = useGroupStore((state) => state.selectedArchiveId);
@@ -48,6 +52,7 @@ function AppLayoutInner() {
   const clearSelectedDirectArchive = useDirectArchiveStore(
     (state) => state.clearSelectedDirectArchive,
   );
+  const initializeCron = useCronStore((state) => state.initialize);
 
   const selectedGroup = groups.find((group) => group.id === selectedGroupId) ?? null;
   const selectedArchive = archives.find((archive) => archive.id === selectedArchiveId) ?? null;
@@ -71,6 +76,10 @@ function AppLayoutInner() {
   useEffect(() => {
     fetchGroups();
   }, [fetchGroups]);
+
+  useEffect(() => {
+    initializeCron();
+  }, [initializeCron]);
 
   useEffect(() => {
     return subscribeSidebarStorage(() => {
@@ -112,6 +121,23 @@ function AppLayoutInner() {
       clearSelectedDirectArchive();
     }
   }, [clearSelectedDirectArchive, selectedDirectArchive, selectedDirectArchiveId]);
+
+  useEffect(() => {
+    if (
+      showDetailFor !== null ||
+      selectedGroup !== null ||
+      selectedArchive !== null ||
+      selectedDirectArchive !== null
+    ) {
+      clearArchiveEmptyState();
+    }
+  }, [
+    clearArchiveEmptyState,
+    selectedArchive,
+    selectedDirectArchive,
+    selectedGroup,
+    showDetailFor,
+  ]);
 
   useEffect(() => {
     writeChatFullscreenPreference(isChatFullscreen);
@@ -183,6 +209,19 @@ function AppLayoutInner() {
                 </div>
                 <div className="mt-3 text-sm leading-7 text-[var(--color-text-secondary)]">
                   当前归档数据还在同步或已失效。系统会自动尝试恢复；如果是历史旧缓存，也会优先按只读模式兼容展示。
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : archiveEmptyState ? (
+          <div className="flex h-full min-h-0 flex-col bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
+            <div className="mx-auto flex h-full w-full max-w-[960px] flex-1 items-center justify-center px-6 py-6">
+              <div className="w-full rounded-[28px] border border-[var(--color-border)] bg-[var(--color-bg-soft)] px-8 py-10 text-center shadow-[var(--shadow-md)] backdrop-blur-xl">
+                <div className="text-lg font-semibold text-[var(--color-text-primary)]">
+                  {archiveEmptyState.title}
+                </div>
+                <div className="mt-3 text-sm leading-7 text-[var(--color-text-secondary)]">
+                  {archiveEmptyState.description}
                 </div>
               </div>
             </div>

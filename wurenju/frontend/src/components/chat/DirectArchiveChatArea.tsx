@@ -25,6 +25,25 @@ type DirectArchiveChatAreaProps = {
   archive: SidebarDirectArchive;
 };
 
+function readTrimmedText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isRenderableArchiveMessage(
+  message: unknown,
+): message is SidebarDirectArchive["messages"][number] {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+
+  const candidate = message as Record<string, unknown>;
+  return (
+    typeof candidate.id === "string" &&
+    (candidate.role === "user" || candidate.role === "assistant") &&
+    typeof candidate.content === "string"
+  );
+}
+
 function formatArchiveTimeLabel(value: string) {
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) {
@@ -44,9 +63,9 @@ function getAvatarColor(value: string) {
 
 function resolveArchiveAvatarText(archive: SidebarDirectArchive) {
   return (
-    archive.agentEmoji?.trim() ||
-    archive.agentAvatarText?.trim() ||
-    archive.agentName.trim().charAt(0).toUpperCase() ||
+    readTrimmedText(archive.agentEmoji) ||
+    readTrimmedText(archive.agentAvatarText) ||
+    readTrimmedText(archive.agentName).charAt(0).toUpperCase() ||
     "A"
   );
 }
@@ -61,7 +80,14 @@ function DirectArchiveChatAreaInner({ archive }: DirectArchiveChatAreaProps) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [userProfile, setUserProfile] = useState(() => getUserProfile());
   const [popoverAnchorRect, setPopoverAnchorRect] = useState<DOMRect | null>(null);
-  const archiveTime = formatArchiveTimeLabel(archive.archivedAt);
+  const archiveTitle =
+    readTrimmedText(archive.title) || readTrimmedText(archive.agentName) || "1v1 归档";
+  const archiveName = readTrimmedText(archive.agentName) || "1v1 归档";
+  const archiveRole = readTrimmedText(archive.agentRole);
+  const archiveMessages = Array.isArray(archive.messages)
+    ? archive.messages.filter(isRenderableArchiveMessage)
+    : [];
+  const archiveTime = formatArchiveTimeLabel(readTrimmedText(archive.archivedAt));
 
   useEffect(() => subscribeToUserProfile(setUserProfile), []);
 
@@ -82,7 +108,7 @@ function DirectArchiveChatAreaInner({ archive }: DirectArchiveChatAreaProps) {
     const url = window.URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${archive.agentName || "1v1归档"}-${messageId}.txt`;
+    anchor.download = `${archiveTitle}-${messageId}.txt`;
     anchor.click();
     window.URL.revokeObjectURL(url);
   }
@@ -106,16 +132,15 @@ function DirectArchiveChatAreaInner({ archive }: DirectArchiveChatAreaProps) {
               <Archive className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <div className="group-chat-header__title truncate">
-                {archive.agentName || "1v1 归档"}
-              </div>
+              <div className="group-chat-header__title truncate">{archiveTitle}</div>
               <div className="group-chat-header__subtitle mt-1 flex flex-wrap items-center gap-3">
-                {archive.agentRole ? <span>{archive.agentRole}</span> : null}
+                <span>{archiveName}</span>
+                {archiveRole ? <span>{archiveRole}</span> : null}
                 <span className="inline-flex items-center gap-1.5">
                   <Clock3 className="h-3.5 w-3.5" />
                   归档于 {archiveTime}
                 </span>
-                <span>{archive.messages.length} 条消息</span>
+                <span>{archiveMessages.length} 条消息</span>
               </div>
             </div>
           </div>
@@ -134,16 +159,18 @@ function DirectArchiveChatAreaInner({ archive }: DirectArchiveChatAreaProps) {
         </div>
 
         <div className="chat-thread im-scroll">
-          {archive.messages.length > 0 ? (
+          {archiveMessages.length > 0 ? (
             <div className="flex w-full flex-col gap-6">
-              {archive.messages.map((message) => (
+              {archiveMessages.map((message) => (
                 <div key={message.id} className={cn("rounded-[22px] transition-all duration-200")}>
                   <MessageBubble
                     message={message}
-                    agentId={archive.agentId}
-                    agentName={archive.agentName}
+                    agentId={readTrimmedText(archive.agentId) || undefined}
+                    agentName={archiveName}
                     agentAvatarText={resolveArchiveAvatarText(archive)}
-                    agentAvatarColor={getAvatarColor(archive.agentId || archive.agentName)}
+                    agentAvatarColor={getAvatarColor(
+                      readTrimmedText(archive.agentId) || archiveName,
+                    )}
                     agentAvatarUrl={archive.agentAvatarUrl}
                     userAvatar={userProfile.avatar}
                     userProfile={userProfile}

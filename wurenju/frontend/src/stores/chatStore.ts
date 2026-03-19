@@ -1,8 +1,12 @@
 import { create } from "zustand";
 import { gateway, type GatewayMessage, type GatewayMessageMeta } from "@/services/gateway";
 import { useAgentStore } from "@/stores/agentStore";
+import { useCronStore } from "@/stores/cronStore";
 import { useDirectArchiveStore } from "@/stores/directArchiveStore";
 import { useGroupStore } from "@/stores/groupStore";
+import { useHealthStore } from "@/stores/healthStore";
+import { resolveArchiveTitle } from "@/utils/archiveTitle";
+import { isCronSessionKey } from "@/utils/cronTask";
 import {
   adaptHistoryMessages,
   adaptRealtimeMessage,
@@ -42,7 +46,7 @@ interface ChatState {
   refreshTokenUsage: () => Promise<SessionActionResult>;
   compactCurrentSession: () => Promise<SessionActionResult>;
   resetCurrentSession: () => Promise<SessionActionResult>;
-  archiveCurrentSession: () => Promise<SessionActionResult>;
+  archiveCurrentSession: (title?: string) => Promise<SessionActionResult>;
   removeAgentLocalState: (agentId: string) => void;
   getMessagesForAgent: (agentId: string) => ChatMessage[];
   getUsageForAgent: (agentId: string) => ChatUsage;
@@ -109,21 +113,37 @@ function buildDirectArchivePreview(messages: ChatMessage[]) {
   return latestVisibleMessage.role === "user" ? `你：${previewText}` : previewText;
 }
 
-function createSidebarDirectArchive(agentId: string, messages: ChatMessage[]) {
+function createSidebarDirectArchive(
+  agentId: string,
+  messages: ChatMessage[],
+  previousArchives: SidebarDirectArchive[],
+  title?: string,
+) {
   const agent = useAgentStore.getState().agents.find((entry) => entry.id === agentId);
   const agentName = agent?.name?.trim() || agentId;
   const archivedMessages = cloneArchivedMessages(messages);
+  const archivedAt = new Date().toISOString();
 
   return {
     id: crypto.randomUUID(),
     agentId,
     agentName,
+    title: resolveArchiveTitle({
+      title,
+      sourceName: agentName,
+      archivedAt,
+      siblingArchives: previousArchives.map((archive) => ({
+        title: archive.title,
+        sourceName: archive.agentName,
+        archivedAt: archive.archivedAt,
+      })),
+    }),
     agentRole: agent?.role?.trim() || undefined,
     agentAvatarUrl: agent?.avatarUrl?.trim() || undefined,
     agentAvatarText: agentName.charAt(0).toUpperCase() || "A",
     agentEmoji: agent?.emoji?.trim() || undefined,
     preview: buildDirectArchivePreview(archivedMessages),
-    archivedAt: new Date().toISOString(),
+    archivedAt,
     messages: archivedMessages,
   } satisfies SidebarDirectArchive;
 }
@@ -394,6 +414,16 @@ export const useChatStore = create<ChatState>((set, get) => {
         return;
       }
 
+      if (isCronSessionKey(meta?.sessionKey)) {
+        const cronMeta = useCronStore.getState().resolveMetaBySessionKey(meta?.sessionKey);
+        if (cronMeta && cronMeta.replyMode !== "direct") {
+          console.log(
+            `[Cron] ignore non-direct cron reply in direct store: sessionKey=${meta?.sessionKey}, replyMode=${cronMeta.replyMode}`,
+          );
+          return;
+        }
+      }
+
       const replyAgentId =
         resolveAgentIdFromSessionKey(meta?.sessionKey) ?? get().activeReplyAgentId;
       if (!replyAgentId) {
@@ -550,6 +580,18 @@ export const useChatStore = create<ChatState>((set, get) => {
         historyLoadedByAgentId: withBoolean(state.historyLoadedByAgentId, agentId, true),
         historyLoadingByAgentId: withBoolean(state.historyLoadingByAgentId, agentId, false),
       }));
+
+      useHealthStore.getState().recordHistorySnapshot({
+        agentId,
+        sessionKey,
+        currentContextUsed,
+        contextWindowSize,
+        model:
+          [...mappedMessages]
+            .toReversed()
+            .find((message) => message.role === "assistant" && message.model?.trim())?.model ??
+          null,
+      });
 
       console.log(
         `[Store] refreshTokenUsage: history ready for ${agentId}, messages=${mappedMessages.length}, contextWindowSize=${contextWindowSize}, currentContextUsed=${currentContextUsed}`,
@@ -824,15 +866,15 @@ export const useChatStore = create<ChatState>((set, get) => {
       }
     },
 
-    archiveCurrentSession: async () => {
+    archiveCurrentSession: async (title) => {
       const target = resolveCurrentSessionTarget();
       console.log(
-        `[Store] archiveCurrentSession: agent=${target?.agentId || "none"}, sessionKey=${target?.sessionKey || "none"}`,
+        `[Archive] 准备归档 1v1 会话: agent=${target?.agentId || "none"}, sessionKey=${target?.sessionKey || "none"}`,
       );
 
       if (!target) {
         const error = "当前 Agent 未就绪";
-        console.error(`[Store] archiveCurrentSession failed: ${error}`);
+        console.error(`[Archive] 归档 1v1 会话失败: ${error}`);
         return {
           success: false,
           error,
@@ -848,8 +890,13 @@ export const useChatStore = create<ChatState>((set, get) => {
           };
         }
 
-        const archive = createSidebarDirectArchive(target.agentId, currentMessages);
         const previousArchives = readSidebarDirectArchives();
+        const archive = createSidebarDirectArchive(
+          target.agentId,
+          currentMessages,
+          previousArchives,
+          title,
+        );
         writeSidebarDirectArchives([archive, ...previousArchives]);
 
         try {
@@ -877,12 +924,10 @@ export const useChatStore = create<ChatState>((set, get) => {
             state.activeReplyAgentId === target.agentId ? null : state.activeReplyAgentId,
         }));
         clearSidebarDirectUnreadCount(target.agentId);
-        console.log(
-          `[Store] archiveCurrentSession: archived ${target.sessionKey}, next chat.send will create a new session`,
-        );
+        console.log(`[Archive] 已归档 1v1 会话: ${archive.title}`);
         return { success: true };
       } catch (error) {
-        console.error("[Store] archiveCurrentSession failed:", error);
+        console.error("[Archive] 归档 1v1 会话失败:", error);
         return {
           success: false,
           error: getErrorMessage(error, "归档会话失败"),

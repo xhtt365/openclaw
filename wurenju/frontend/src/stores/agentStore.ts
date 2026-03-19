@@ -36,6 +36,11 @@ import {
 } from "@/types/model";
 import { parseAgentIdentityContent, pickAgentCreatedAtMs } from "@/utils/agentIdentity";
 import { parseJSONWithComments } from "@/utils/json5Parse";
+import {
+  getProviderDisplayName,
+  readStoredProviderMetaMap,
+  saveStoredProviderMetaMap,
+} from "@/utils/modelProviders";
 
 export type { Agent } from "@/types/agent";
 
@@ -667,6 +672,30 @@ function hasConfiguredModel(snapshot: GatewayConfigSnapshot, provider: string, m
       typeof model?.id === "string" &&
       model.id.trim().toLowerCase() === modelId.trim().toLowerCase(),
   );
+}
+
+function syncStoredProviderMetaFromParsedConfig(parsedConfig: ParsedModelJSON) {
+  const providerMetaMap = readStoredProviderMetaMap();
+  const existingProviderMeta = providerMetaMap[parsedConfig.provider];
+  providerMetaMap[parsedConfig.provider] = {
+    displayName:
+      existingProviderMeta?.displayName ||
+      getProviderDisplayName(parsedConfig.provider, providerMetaMap),
+    baseUrl: parsedConfig.baseUrl,
+    api: parsedConfig.api ?? existingProviderMeta?.api,
+    apiKey: parsedConfig.apiKey || existingProviderMeta?.apiKey,
+    models: {
+      ...existingProviderMeta?.models,
+      [parsedConfig.model.id]: {
+        displayName: parsedConfig.model.name?.trim() || parsedConfig.model.id,
+        costTier: existingProviderMeta?.models?.[parsedConfig.model.id]?.costTier ?? "paid",
+        ...(typeof parsedConfig.model.contextWindow === "number"
+          ? { contextWindow: parsedConfig.model.contextWindow }
+          : {}),
+      },
+    },
+  };
+  saveStoredProviderMetaMap(providerMetaMap);
 }
 
 function isConfigRecord(value: unknown): value is GatewayConfigRecord {
@@ -1610,6 +1639,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       console.log("[Store] config.set 发送...");
       await gateway.setConfig(nextConfig, { baseHash });
       console.log("[Store] config.set 成功");
+      syncStoredProviderMetaFromParsedConfig(parsedConfig);
 
       console.log("[Store] 触发配置热加载...");
       console.log(

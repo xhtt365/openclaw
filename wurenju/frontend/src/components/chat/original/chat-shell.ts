@@ -36,10 +36,17 @@ type ChatGroupHeader = {
   memberCount: number;
 };
 
+type ChatCronHint = {
+  count: number;
+  tooltip: string;
+};
+
 type ChatShellProps = {
   activeAgentId: string;
   assistantName: string;
   headerTitle: string;
+  healthAlertSymbol?: string | null;
+  healthAlertTitle?: string | null;
   agentNamesById?: Record<string, string>;
   members: ChatMemberOption[];
   groups: ChatGroupOption[];
@@ -62,6 +69,8 @@ type ChatShellProps = {
   focusMode: boolean;
   hideCronSessions: boolean;
   hiddenCronCount: number;
+  directCronHint?: ChatCronHint | null;
+  groupCronHint?: ChatCronHint | null;
   sessions: SessionsListResult | null;
   sessionKey: string;
   modelValue: string;
@@ -82,6 +91,9 @@ type ChatShellProps = {
   onManageMembersClick?: () => void;
   onArchiveConversationClick?: () => void;
   onResetConversationClick?: () => void;
+  onDissolveGroupClick?: () => void;
+  onDirectCronClick?: () => void;
+  onGroupCronClick?: () => void;
   onRefresh: () => void;
   onToggleThinking: () => void;
   onToggleFocusMode: () => void;
@@ -275,8 +287,36 @@ function renderGroupTopbar(props: ChatShellProps) {
   if (!props.isGroupMode || !header) {
     return html`
       <div class="dashboard-header">
-        <div class="dashboard-header__title" title=${props.headerTitle}>
-          ${props.headerTitle}
+        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+          <div class="dashboard-header__title" title=${props.headerTitle}>
+            ${props.headerTitle}
+          </div>
+          ${
+            props.healthAlertSymbol && props.healthAlertTitle
+              ? html`<span
+                  class="dashboard-header__health"
+                  title=${props.healthAlertTitle}
+                  aria-label=${props.healthAlertTitle}
+                >
+                  ${props.healthAlertSymbol}
+                </span>`
+              : nothing
+          }
+          ${
+            props.directCronHint
+              ? html`
+                  <button
+                    class="btn btn--sm btn--icon"
+                    type="button"
+                    title=${props.directCronHint.tooltip}
+                    aria-label=${props.directCronHint.tooltip}
+                    @click=${props.onDirectCronClick}
+                  >
+                    <span style="font-size:15px; line-height:1;">📅</span>
+                  </button>
+                `
+              : nothing
+          }
         </div>
       </div>
     `;
@@ -716,6 +756,20 @@ function renderGroupMoreMenu(props: ChatShellProps, rootStyle = "") {
           <span class="surface-group-more__item-icon">${renderResetMenuIcon()}</span>
           <span class="surface-group-more__item-label">重置对话</span>
         </button>
+        <div class="surface-group-more__separator" role="separator" aria-hidden="true"></div>
+        <button
+          class="surface-group-more__item surface-group-more__item--destructive"
+          type="button"
+          role="menuitem"
+          ?disabled=${!props.onDissolveGroupClick}
+          @click=${(event: Event) => {
+            closeGroupMenu(event.currentTarget);
+            props.onDissolveGroupClick?.();
+          }}
+        >
+          <span class="surface-group-more__item-icon surface-group-more__item-icon--emoji">🗑</span>
+          <span class="surface-group-more__item-label">解散群聊</span>
+        </button>
       </div>
     </div>
   `;
@@ -831,6 +885,41 @@ function renderChatControls(props: ChatShellProps) {
         >
           ${urgeIcon}
           <span>${urgeLabel}</span>
+        </button>
+        <button
+          class="btn btn--sm btn--icon"
+          type="button"
+          title=${props.groupCronHint?.tooltip || "管理当前群聊的定时任务"}
+          aria-label=${props.groupCronHint?.tooltip || "管理当前群聊的定时任务"}
+          @click=${props.onGroupCronClick}
+        >
+          <span style="font-size:15px; line-height:1; position:relative; display:inline-flex; align-items:center;">
+            ⏰
+            ${
+              (props.groupCronHint?.count ?? 0) > 0
+                ? html`
+                    <span
+                      style="
+                        position:absolute;
+                        top:-6px;
+                        right:-10px;
+                        min-width:14px;
+                        height:14px;
+                        display:inline-flex;
+                        align-items:center;
+                        justify-content:center;
+                        border-radius:999px;
+                        background:var(--accent);
+                        color:var(--text-inverse);
+                        font-size:9px;
+                        line-height:1;
+                        padding:0 4px;
+                      "
+                    >${props.groupCronHint?.count}</span>
+                  `
+                : nothing
+            }
+          </span>
         </button>
         <button
           class="btn btn--sm btn--icon"

@@ -1,25 +1,22 @@
 "use client";
 
-import {
-  ArrowLeft,
-  Bot,
-  BriefcaseBusiness,
-  FileText,
-  ImagePlus,
-  Loader2,
-  Save,
-  Settings2,
-  Sparkles,
-} from "lucide-react";
-import { type ChangeEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { ArrowLeft, Bot, BriefcaseBusiness, FileText, Loader2, Save } from "lucide-react";
+import { type ChangeEvent, useEffect, useRef, useState } from "react";
+import { ChannelConfigModal } from "@/components/channel/ChannelConfigModal";
+import { CronTaskList } from "@/components/cron/CronTaskList";
+import { HealthStatusPanel } from "@/components/health/HealthWidgets";
+import { PromptWorkbenchGuideCard } from "@/components/layout/PromptWorkbenchGuideCard";
 import { ConfirmModal } from "@/components/modals/ConfirmModal";
 import { ModelSelectModal } from "@/components/modals/ModelSelectModal";
 import { Button } from "@/components/ui/button";
+import { PROMPT_WORKBENCH_FILE_NAMES } from "@/constants/promptWorkbenchGuides";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { gateway } from "@/services/gateway";
 import { useAgentStore } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
+import { useCronStore } from "@/stores/cronStore";
+import { useHealthStore } from "@/stores/healthStore";
 import type { AgentFile } from "@/types/agent";
 import { getAgentAvatarInfo, saveAgentAvatarMapping } from "@/utils/agentAvatar";
 import {
@@ -28,29 +25,14 @@ import {
   parseAgentIdentityContent,
   pickAgentCreatedAtMs,
 } from "@/utils/agentIdentity";
-
-type MetadataItem = {
-  label: string;
-  value: string;
-};
+import { filterCronJobsByAgent } from "@/utils/cronTask";
+import { EMPTY_HEALTH_SUMMARY } from "@/utils/health";
 
 const EMPTY_FILES: AgentFile[] = [];
 const EMPTY_MESSAGES: Array<{ id?: string }> = [];
-const PRIORITY_FILE_NAMES = ["IDENTITY.md", "SOUL.md", "USER.md"] as const;
+const VISIBLE_FILE_NAMES = PROMPT_WORKBENCH_FILE_NAMES;
 const AVATAR_UPLOAD_ACCEPT = "image/png,image/jpeg,image/webp,image/svg+xml";
 const AVATAR_UPLOAD_MAX_BYTES = 2 * 1024 * 1024;
-
-function formatFileSize(size: number) {
-  if (size < 1024) {
-    return `${size} B`;
-  }
-
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(size >= 10 * 1024 ? 0 : 1)} KB`;
-  }
-
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function resolveIdentityRole(content: string) {
   if (!content.trim()) {
@@ -82,15 +64,11 @@ function resolveIdentityRole(content: string) {
   return null;
 }
 
-function resolvePreferredFile(files: AgentFile[]) {
-  for (const name of PRIORITY_FILE_NAMES) {
+function getVisibleFiles(files: AgentFile[]) {
+  return VISIBLE_FILE_NAMES.flatMap((name) => {
     const matched = files.find((file) => file.name === name);
-    if (matched) {
-      return matched.name;
-    }
-  }
-
-  return files[0]?.name ?? null;
+    return matched ? [matched] : [];
+  });
 }
 
 function formatModelShortName(modelRef: string | null | undefined) {
@@ -138,77 +116,20 @@ function readFileAsDataUrl(file: File) {
   });
 }
 
-function MetadataCard({ item }: { item: MetadataItem }) {
-  return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-soft)] px-4 py-3">
-      <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--color-text-secondary)]">
-        {item.label}
-      </div>
-      <div className="mt-2 truncate text-sm font-medium text-[var(--color-text-primary)]">
-        {item.value}
-      </div>
-    </div>
-  );
+function formatFileTabLabel(fileName: string) {
+  return fileName.replace(/\.md$/iu, "");
 }
 
-function ActionCard({
-  emoji,
-  title,
-  icon,
-  disabled = true,
-  badge,
-  hint,
-  value,
-  onClick,
-}: {
-  emoji: string;
-  title: string;
-  icon: ReactNode;
-  disabled?: boolean;
-  badge?: string;
-  hint: string;
-  value?: string;
-  onClick?: () => void;
-}) {
+function ProfileMetaRow({ label, value }: { label: string; value: string }) {
   return (
-    <button
-      type="button"
-      aria-disabled={disabled ? "true" : undefined}
-      onClick={(event) => {
-        if (disabled) {
-          event.preventDefault();
-          return;
-        }
-        onClick?.();
-      }}
-      className={cn(
-        "group flex items-center gap-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-5 text-left backdrop-blur-xl transition-transform duration-200 hover:scale-[1.01]",
-        disabled ? "cursor-not-allowed" : "cursor-pointer hover:bg-[var(--color-bg-hover)]",
-      )}
-    >
-      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--color-bg-soft-strong)] text-xl">
-        <span aria-hidden="true">{emoji}</span>
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-3">
-          <span className="text-base font-semibold text-[var(--color-text-primary)]">{title}</span>
-          {badge ? (
-            <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-card)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]">
-              {badge}
-            </span>
-          ) : null}
-        </div>
-        <div className="mt-2 flex items-center justify-between gap-3 text-sm text-[var(--color-text-secondary)]">
-          <div className="flex min-w-0 items-center gap-2">
-            {icon}
-            <span className="truncate">{hint}</span>
-          </div>
-          {value ? (
-            <span className="shrink-0 text-xs text-[var(--color-text-secondary)]">{value}</span>
-          ) : null}
-        </div>
-      </div>
-    </button>
+    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-start gap-3 py-2">
+      <dt className="text-xs font-medium tracking-[0.08em] text-[var(--color-text-secondary)]">
+        {label}
+      </dt>
+      <dd className="min-w-0 truncate text-sm font-medium text-[var(--color-text-primary)]">
+        {value}
+      </dd>
+    </div>
   );
 }
 
@@ -228,9 +149,18 @@ export function EmployeeDetailPage() {
   const updateFileContent = useAgentStore((state) => state.updateFileContent);
   const saveFile = useAgentStore((state) => state.saveFile);
   const messagesByAgentId = useChatStore((state) => state.messagesByAgentId);
+  const healthSummary = useHealthStore(
+    (state) =>
+      (showDetailFor ? state.recordsByAgentId[showDetailFor]?.summary : undefined) ??
+      EMPTY_HEALTH_SUMMARY,
+  );
+  const cronJobs = useCronStore((state) => state.jobs);
+  const focusRequest = useCronStore((state) => state.focusRequest);
+  const clearAgentScheduleFocus = useCronStore((state) => state.clearAgentScheduleFocus);
 
   const [showSavedToast, setShowSavedToast] = useState(false);
   const [showModelModal, setShowModelModal] = useState(false);
+  const [showChannelModal, setShowChannelModal] = useState(false);
   const [showUnsavedChangesModal, setShowUnsavedChangesModal] = useState(false);
   const [pendingFileName, setPendingFileName] = useState<string | null>(null);
   const [switchingFile, setSwitchingFile] = useState(false);
@@ -250,6 +180,7 @@ export function EmployeeDetailPage() {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const toastTimerRef = useRef<number | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const scheduleSectionRef = useRef<HTMLDivElement | null>(null);
 
   const agent = agents.find((item) => item.id === showDetailFor) ?? null;
   const files = showDetailFor ? (agentFiles.get(showDetailFor) ?? EMPTY_FILES) : EMPTY_FILES;
@@ -264,16 +195,8 @@ export function EmployeeDetailPage() {
     resolveIdentityRole(identityFile?.content ?? "") ||
     "AI 员工";
   const createdAtMs = agent?.createdAtMs ?? pickAgentCreatedAtMs(files);
-  const metadataItems: MetadataItem[] = [
-    {
-      label: "模型名",
-      value: currentAgentModel?.trim() || agent?.modelName?.trim() || defaultModelLabel || "—",
-    },
-    { label: "Agent ID", value: agent?.id ?? "—" },
-    { label: "创建时间", value: formatAgentCreatedAt(createdAtMs) },
-    { label: "上下文消息条数", value: String(messages.length) },
-    { label: "状态", value: "在线" },
-  ];
+  const modelName =
+    currentAgentModel?.trim() || agent?.modelName?.trim() || defaultModelLabel || "—";
   const profileDirty =
     profileDraft.name.trim() !== profileBaseline.name ||
     profileDraft.role.trim() !== profileBaseline.role ||
@@ -286,12 +209,11 @@ export function EmployeeDetailPage() {
         profileDraft.name.trim() || agent.name,
       )
     : null;
-  const priorityFiles = files.filter((file) =>
-    PRIORITY_FILE_NAMES.includes(file.name as (typeof PRIORITY_FILE_NAMES)[number]),
-  );
-  const secondaryFiles = files.filter(
-    (file) => !PRIORITY_FILE_NAMES.includes(file.name as (typeof PRIORITY_FILE_NAMES)[number]),
-  );
+  const visibleFiles = getVisibleFiles(files);
+  const activeFileVisible = activeFileName
+    ? visibleFiles.some((file) => file.name === activeFileName)
+    : false;
+  const agentCronJobs = agent ? filterCronJobsByAgent(cronJobs, agent.id) : [];
 
   useEffect(() => {
     return () => {
@@ -302,17 +224,16 @@ export function EmployeeDetailPage() {
   }, []);
 
   useEffect(() => {
-    if (!showDetailFor || activeFileName || fileLoading || files.length === 0) {
+    if (!showDetailFor || fileLoading || visibleFiles.length === 0) {
       return;
     }
 
-    const preferredFileName = resolvePreferredFile(files);
-    if (!preferredFileName) {
+    if (activeFileName && activeFileVisible) {
       return;
     }
 
-    void selectFile(preferredFileName);
-  }, [activeFileName, fileLoading, files, selectFile, showDetailFor]);
+    void selectFile(visibleFiles[0].name);
+  }, [activeFileName, activeFileVisible, fileLoading, selectFile, showDetailFor, visibleFiles]);
 
   useEffect(() => {
     if (!showDetailFor) {
@@ -331,14 +252,27 @@ export function EmployeeDetailPage() {
         return;
       }
 
-      void handleSave();
+      void (async () => {
+        const ok = await saveFile();
+        if (!ok) {
+          return;
+        }
+
+        setShowSavedToast(true);
+        if (toastTimerRef.current !== null) {
+          window.clearTimeout(toastTimerRef.current);
+        }
+        toastTimerRef.current = window.setTimeout(() => {
+          setShowSavedToast(false);
+        }, 3000);
+      })();
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [activeFileName, fileLoading, fileSaving, showDetailFor]);
+  }, [activeFileName, fileLoading, fileSaving, saveFile, showDetailFor]);
 
   useEffect(() => {
     if (!agent) {
@@ -377,6 +311,25 @@ export function EmployeeDetailPage() {
       window.removeEventListener("xiaban-agent-avatar-updated", handleAvatarRefresh);
     };
   }, []);
+
+  useEffect(() => {
+    if (!agent || !focusRequest || focusRequest.agentId !== agent.id) {
+      return;
+    }
+
+    const token = focusRequest.token;
+    const timerId = window.setTimeout(() => {
+      scheduleSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+      clearAgentScheduleFocus(token);
+    }, 120);
+
+    return () => {
+      window.clearTimeout(timerId);
+    };
+  }, [agent, clearAgentScheduleFocus, focusRequest]);
 
   if (!showDetailFor) {
     return null;
@@ -640,7 +593,7 @@ export function EmployeeDetailPage() {
                     "linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 40%, color-mix(in srgb, var(--accent-2) 12%, transparent))",
                 }}
               >
-                <div className="flex items-start gap-4">
+                <div className="flex items-start justify-between gap-3">
                   <div className="relative shrink-0">
                     <button
                       type="button"
@@ -675,38 +628,61 @@ export function EmployeeDetailPage() {
                     />
                   </div>
 
-                  <div className="min-w-0 flex-1">
-                    <div className="inline-flex items-center gap-2 rounded-full bg-[var(--color-bg-brand-soft)] px-3 py-1 text-xs font-semibold text-[var(--color-brand)]">
-                      <BriefcaseBusiness className="h-3.5 w-3.5" />
-                      编辑资料
-                    </div>
-                    <div className="mt-3 text-2xl font-bold tracking-tight text-[var(--color-text-primary)]">
-                      {profileDraft.name || agent.name}
-                    </div>
-                    <div className="mt-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-1 text-sm font-medium text-[var(--color-text-secondary)]">
-                      {profileDraft.role.trim() || roleLabel}
-                    </div>
-                    <div className="mt-3 text-sm leading-7 text-[var(--color-text-secondary)]">
-                      {profileDraft.description.trim() || "为董事长处理复杂工作，保持持续在线。"}
-                    </div>
+                  <div className="inline-flex shrink-0 items-center gap-2 rounded-full bg-[var(--color-bg-brand-soft)] px-3 py-1 text-xs font-semibold text-[var(--color-brand)]">
+                    <BriefcaseBusiness className="h-3.5 w-3.5" />
+                    编辑资料
                   </div>
                 </div>
 
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-6 space-y-4">
+                  <div className="text-3xl font-bold tracking-tight text-[var(--color-text-primary)]">
+                    {profileDraft.name || agent.name}
+                  </div>
+                  <div className="text-base font-medium text-[var(--color-text-secondary)]">
+                    {profileDraft.role.trim() || roleLabel}
+                  </div>
+                  <div className="text-sm leading-7 text-[var(--color-text-secondary)]">
+                    {profileDraft.description.trim() || "为董事长处理复杂工作，保持持续在线。"}
+                  </div>
+                </div>
+
+                <div className="mt-5 flex flex-wrap gap-2">
                   <div className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)]">
-                    <Sparkles className="h-3.5 w-3.5 text-[var(--accent)]" />
-                    在线待命
+                    <span className="h-2 w-2 rounded-full bg-[var(--ok)]" />
+                    在线
                   </div>
                   <div className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)]">
                     <Bot className="h-3.5 w-3.5 text-[var(--accent-2)]" />
-                    {formatModelShortName(
-                      currentAgentModel || agent?.modelName || defaultModelLabel,
-                    )}
+                    {formatModelShortName(modelName)}
                   </div>
                 </div>
+
+                <dl className="mt-5 rounded-[22px] border border-[var(--color-border)] bg-[color:color-mix(in_srgb,var(--color-bg-card)_86%,transparent)] px-4 py-3">
+                  <ProfileMetaRow label="模型名" value={modelName} />
+                  <ProfileMetaRow label="Agent ID" value={agent.id || "—"} />
+                  <ProfileMetaRow label="创建时间" value={formatAgentCreatedAt(createdAtMs)} />
+                  <ProfileMetaRow label="上下文" value={`${messages.length} 条`} />
+                </dl>
               </section>
 
+              <HealthStatusPanel summary={healthSummary} />
+
               <section className="rounded-[24px] border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-4 shadow-[var(--shadow-sm)] backdrop-blur-xl">
+                <div
+                  ref={scheduleSectionRef}
+                  className="mb-4 rounded-[22px] border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-4"
+                >
+                  <CronTaskList
+                    jobs={agentCronJobs}
+                    title="工作日程"
+                    description="员工的定时任务会统一在这里展示和管理。"
+                    createLabel="添加定时任务"
+                    emptyText="这个员工还没有定时任务"
+                    lockedAgentId={agent.id}
+                    className="h-full"
+                  />
+                </div>
+
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-sm font-semibold text-[var(--color-text-primary)]">
@@ -786,41 +762,25 @@ export function EmployeeDetailPage() {
                     />
                   </label>
                 </div>
-              </section>
 
-              <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-2">
-                {metadataItems.map((item) => (
-                  <MetadataCard key={item.label} item={item} />
-                ))}
-              </section>
-
-              <section className="grid gap-3">
-                <ActionCard
-                  emoji="🤖"
-                  title="配置模型"
-                  icon={<Bot className="h-4 w-4" />}
-                  disabled={false}
-                  hint="已接入 Gateway，可直接切换当前员工模型"
-                  value={formatModelShortName(
-                    currentAgentModel || agent?.modelName || defaultModelLabel,
-                  )}
-                  onClick={() => setShowModelModal(true)}
-                />
-                <ActionCard
-                  emoji="🖼️"
-                  title="修改头像"
-                  icon={<ImagePlus className="h-4 w-4" />}
-                  disabled={false}
-                  hint="头像立即本地生效，不影响网关文件"
-                  onClick={handleTriggerAvatarUpload}
-                />
-                <ActionCard
-                  emoji="🔗"
-                  title="配置渠道"
-                  icon={<Settings2 className="h-4 w-4" />}
-                  badge="开发中"
-                  hint="功能入口预留，下一轮接交互"
-                />
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowModelModal(true)}
+                    className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-2 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-hover)]"
+                  >
+                    <Bot className="h-4 w-4 text-[var(--color-brand)]" />
+                    <span>配置模型</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowChannelModal(true)}
+                    className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-2 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-hover)]"
+                  >
+                    <span aria-hidden="true">🔗</span>
+                    <span>配置渠道</span>
+                  </button>
+                </div>
               </section>
             </aside>
 
@@ -855,55 +815,28 @@ export function EmployeeDetailPage() {
                 </Button>
               </div>
 
-              <div className="mt-4 flex flex-wrap gap-2">
-                {(priorityFiles.length > 0 ? priorityFiles : files).map((file) => {
-                  const isActive = file.name === activeFileName;
-                  return (
-                    <button
-                      key={file.name}
-                      type="button"
-                      onClick={() => void handleSelectFile(file.name)}
-                      className={cn(
-                        "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors",
-                        isActive
-                          ? "border-[var(--color-brand)] bg-[var(--color-bg-brand-soft)] text-[var(--color-brand)]"
-                          : "border-[var(--color-border)] bg-[var(--color-bg-card)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]",
-                      )}
-                    >
-                      <FileText className="h-3.5 w-3.5" />
-                      {file.name}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {secondaryFiles.length > 0 ? (
-                <div className="mt-4 rounded-[22px] border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-3">
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-text-secondary)]">
-                    其他文件
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {secondaryFiles.map((file) => {
-                      const isActive = file.name === activeFileName;
-                      return (
-                        <button
-                          key={file.name}
-                          type="button"
-                          onClick={() => void handleSelectFile(file.name)}
-                          className={cn(
-                            "rounded-full border px-3 py-1.5 text-xs transition-colors",
-                            isActive
-                              ? "border-[var(--color-brand)] bg-[var(--color-bg-brand-soft)] text-[var(--color-brand)]"
-                              : "border-[var(--color-border)] bg-[var(--color-bg-soft)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]",
-                          )}
-                        >
-                          {file.name} · {formatFileSize(file.size)}
-                        </button>
-                      );
-                    })}
-                  </div>
+              <div className="mt-4 overflow-x-auto pb-1">
+                <div className="flex min-w-max flex-nowrap gap-2">
+                  {visibleFiles.map((file) => {
+                    const isActive = file.name === activeFileName;
+                    return (
+                      <button
+                        key={file.name}
+                        type="button"
+                        onClick={() => void handleSelectFile(file.name)}
+                        className={cn(
+                          "shrink-0 rounded-full border px-3 py-1.5 text-sm transition-colors",
+                          isActive
+                            ? "border-[var(--color-brand)] bg-[var(--color-bg-brand-soft)] text-[var(--color-brand)]"
+                            : "border-[var(--color-border)] bg-[var(--color-bg-card)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]",
+                        )}
+                      >
+                        {formatFileTabLabel(file.name)}
+                      </button>
+                    );
+                  })}
                 </div>
-              ) : null}
+              </div>
 
               <div className="mt-4 flex min-h-[calc(100vh-220px)] min-w-0 flex-col rounded-[24px] border border-[var(--color-border)] bg-[var(--color-bg-card)]">
                 <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] px-4 py-3">
@@ -922,6 +855,11 @@ export function EmployeeDetailPage() {
                     <span>{activeFileName ? "Markdown" : "未选中"}</span>
                   </div>
                 </div>
+
+                <PromptWorkbenchGuideCard
+                  key={activeFileName ?? "no-active-file"}
+                  fileName={activeFileName}
+                />
 
                 <div className="relative flex min-h-0 flex-1">
                   {fileLoading ? (
@@ -957,6 +895,13 @@ export function EmployeeDetailPage() {
       <ModelSelectModal
         open={showModelModal}
         onOpenChange={setShowModelModal}
+        agentId={agent.id}
+        agentName={agent.name}
+      />
+
+      <ChannelConfigModal
+        open={showChannelModal}
+        onOpenChange={setShowChannelModal}
         agentId={agent.id}
         agentName={agent.name}
       />

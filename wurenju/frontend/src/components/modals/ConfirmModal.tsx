@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,7 @@ export interface ConfirmModalProps {
   cancelClassName?: string;
   confirmText: string;
   confirmColor: string;
+  children?: ReactNode;
 }
 
 export function ConfirmModal({
@@ -36,6 +38,7 @@ export function ConfirmModal({
   cancelClassName,
   confirmText,
   confirmColor,
+  children,
 }: ConfirmModalProps) {
   function handleOpenChange(nextOpen: boolean) {
     if (loading) {
@@ -71,6 +74,8 @@ export function ConfirmModal({
           </div>
 
           <p className="text-sm leading-6 text-[var(--text)]">{description}</p>
+
+          {children ? <div className="space-y-3">{children}</div> : null}
 
           <div className="flex items-center justify-end gap-3">
             <button

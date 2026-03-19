@@ -1,4 +1,4 @@
-export const GROUP_URGE_INTERVAL_OPTIONS = [3, 5, 10, 30] as const;
+export const GROUP_URGE_INTERVAL_OPTIONS = [1, 3, 5, 10, 30] as const;
 
 export type GroupUrgeIntervalMinutes = (typeof GROUP_URGE_INTERVAL_OPTIONS)[number];
 

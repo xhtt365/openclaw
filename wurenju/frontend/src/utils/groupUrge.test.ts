@@ -8,7 +8,7 @@ import {
 } from "./groupUrge";
 
 void test("GROUP_URGE_INTERVAL_OPTIONS 保持预设档位不变", () => {
-  assert.deepEqual(GROUP_URGE_INTERVAL_OPTIONS, [3, 5, 10, 30]);
+  assert.deepEqual(GROUP_URGE_INTERVAL_OPTIONS, [1, 3, 5, 10, 30]);
 });
 
 void test("buildUrgeMessage 支持单人和多人督促文案", () => {

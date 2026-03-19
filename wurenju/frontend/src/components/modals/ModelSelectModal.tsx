@@ -1,7 +1,8 @@
 "use client";
 
-import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Reorder } from "framer-motion";
+import { GripVertical, Loader2, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -11,163 +12,33 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { gateway } from "@/services/gateway";
 import { useAgentStore } from "@/stores/agentStore";
-import type { ModelGroupItem, ModelProviderGroup } from "@/types/model";
+import { readAgentModelChain, writeAgentModelChain } from "@/utils/modelChain";
+import {
+  MODEL_PROVIDERS_UPDATED_EVENT,
+  MODEL_PROVIDER_STATUS_UPDATED_EVENT,
+  getProviderStatusBadge,
+  readModelProviderStatusMap,
+  readStoredProviderMetaMap,
+} from "@/utils/modelProviders";
+import {
+  areModelRefArraysEqual,
+  buildCandidateModelCatalog,
+  buildVisibleCandidateModels,
+  filterCandidateModels,
+  formatContextWindow,
+  formatPriorityIndex,
+  normalizeUniqueModelRefs,
+  reorderVisibleModelRefs,
+  toggleCandidateModelSelection,
+} from "@/utils/modelSelection";
 
-type ModalTab = "switch" | "add";
-
-const ADD_MODEL_TEMPLATE = `{
-  // provider 名称。
-  // 官方 OpenAI 可写 "openai"；第三方 OpenAI 兼容中转站不要写 "openai"，建议写站点名，例如 "vpsairobot"
-  "provider": "my-openai-proxy",
-
-  // API 地址。
-  // 官方 OpenAI 用 https://api.openai.com/v1；第三方中转站填自己的 baseUrl
-  "baseUrl": "https://api.openai.com/v1",
-
-  // API 协议：openai-responses / openai-completions / anthropic-messages
-  "api": "openai-responses",
-
-  // 你的 API Key
-  "apiKey": "",
-
-  // 模型配置
-  "model": {
-    "id": "gpt-4o",
-    "name": "GPT-4o",
-    "contextWindow": 128000,
-    "maxTokens": 8192
-  }
-}`;
-
-function splitModelRef(modelRef: string) {
-  const trimmed = modelRef.trim();
-  const separatorIndex = trimmed.indexOf("/");
-  if (separatorIndex === -1) {
-    return {
-      provider: "",
-      modelId: trimmed,
-    };
-  }
-
-  return {
-    provider: trimmed.slice(0, separatorIndex),
-    modelId: trimmed.slice(separatorIndex + 1),
-  };
-}
-
-function formatCompactNumber(value: number) {
-  if (value >= 1_000_000) {
-    return `${Number((value / 1_000_000).toFixed(1)).toString()}M`;
-  }
-  if (value >= 1_000) {
-    return `${Number((value / 1_000).toFixed(1)).toString()}K`;
-  }
-  return String(value);
-}
-
-function formatContextWindow(value?: number) {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return null;
-  }
-
-  return `${formatCompactNumber(value)} context`;
-}
-
-function flattenModelGroups(groups: ModelProviderGroup[]) {
-  return groups.flatMap((group) =>
-    group.models.map((model) => ({
-      provider: group.provider,
-      model,
-      modelRef: `${group.provider}/${model.id}`,
-    })),
-  );
-}
-
-function findModelEntry(groups: ModelProviderGroup[], modelRef: string | null) {
-  if (!modelRef?.trim()) {
-    return null;
-  }
-
-  const { provider, modelId } = splitModelRef(modelRef);
-  const matchedGroup = groups.find((group) => group.provider === provider);
-  const matchedModel = matchedGroup?.models.find((model) => model.id === modelId);
-
-  if (!matchedGroup || !matchedModel) {
-    return null;
-  }
-
-  return {
-    provider,
-    model: matchedModel,
-  };
-}
-
-function resolveCurrentModelInfo(modelRef: string | null, groups: ModelProviderGroup[]) {
-  if (!modelRef?.trim()) {
-    return {
-      title: "未配置",
-      metadata: "未配置",
-    };
-  }
-
-  const matched = findModelEntry(groups, modelRef);
-  if (matched) {
-    const contextWindow = formatContextWindow(matched.model.contextWindow);
-    return {
-      title: matched.model.name,
-      metadata: contextWindow ? `${matched.provider} · ${contextWindow}` : matched.provider,
-    };
-  }
-
-  const { provider, modelId } = splitModelRef(modelRef);
-  return {
-    title: modelId || modelRef,
-    metadata: provider || modelRef,
-  };
-}
-
-function ModelOptionCard({
-  provider,
-  model,
-  selected,
-  current,
-  onClick,
-}: {
-  provider: string;
-  model: ModelGroupItem;
-  selected: boolean;
-  current: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex w-full items-start justify-between gap-4 rounded-2xl border px-4 py-4 text-left transition-all",
-        selected
-          ? "border-[var(--brand-primary)] bg-[var(--brand-subtle)] shadow-[0_0_0_1px_var(--surface-brand-border)]"
-          : "border-transparent bg-[var(--color-bg-card)] hover:border-[var(--surface-brand-border)] hover:bg-[var(--color-bg-hover)]",
-      )}
-      aria-pressed={selected}
-    >
-      <div className="min-w-0">
-        <div className="truncate text-base font-semibold text-[var(--color-text-primary)]">
-          {model.name}
-        </div>
-        <div className="mt-1 truncate text-sm text-[var(--color-text-secondary)]">{provider}</div>
-      </div>
-
-      {current ? (
-        <span className="shrink-0 rounded-full border border-[var(--surface-brand-border)] bg-[var(--surface-brand-soft)] px-2.5 py-1 text-[11px] text-[var(--surface-brand-text)]">
-          当前使用
-        </span>
-      ) : null}
-    </button>
-  );
+function arePlainObjectsEqual(left: Record<string, unknown>, right: Record<string, unknown>) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 export function ModelSelectModal({
@@ -182,316 +53,405 @@ export function ModelSelectModal({
   agentName: string;
 }) {
   const availableModels = useAgentStore((state) => state.availableModels);
-  const currentAgentModel = useAgentStore((state) => state.currentAgentModel);
   const modelLoading = useAgentStore((state) => state.modelLoading);
-  const modelSaving = useAgentStore((state) => state.modelSaving);
-  const configLoading = useAgentStore((state) => state.configLoading);
-  const modelAdding = useAgentStore((state) => state.modelAdding);
   const fetchModels = useAgentStore((state) => state.fetchModels);
-  const setAgentModel = useAgentStore((state) => state.setAgentModel);
-  const addModelFromJSON = useAgentStore((state) => state.addModelFromJSON);
+  const fetchAgentModel = useAgentStore((state) => state.fetchAgentModel);
 
-  const [activeTab, setActiveTab] = useState<ModalTab>("switch");
-  const [selectedModel, setSelectedModel] = useState("");
   const [loadError, setLoadError] = useState("");
   const [saveError, setSaveError] = useState("");
-  const [addError, setAddError] = useState("");
-  const [collapsedProviders, setCollapsedProviders] = useState<Record<string, boolean>>({});
-  const [jsonInput, setJsonInput] = useState(ADD_MODEL_TEMPLATE);
-  const effectiveSelectedModel = selectedModel || currentAgentModel || "";
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [hasLoadedSelection, setHasLoadedSelection] = useState(false);
+  const [selectedModelRefs, setSelectedModelRefs] = useState<string[]>([]);
+  const [providerMetaMap, setProviderMetaMap] = useState(() => readStoredProviderMetaMap());
+  const [providerStatusMap, setProviderStatusMap] = useState(() => readModelProviderStatusMap());
+  const availableModelsCountRef = useRef(availableModels.length);
 
-  const currentModelInfo = resolveCurrentModelInfo(currentAgentModel, availableModels);
-  const allModels = flattenModelGroups(availableModels);
-  const useFlatLayout = allModels.length <= 3;
-  const isAddSubmitting = modelAdding || configLoading;
+  useEffect(() => {
+    availableModelsCountRef.current = availableModels.length;
+  }, [availableModels.length]);
+
+  const catalog = useMemo(
+    () => buildCandidateModelCatalog(availableModels, providerMetaMap),
+    [availableModels, providerMetaMap],
+  );
+  const allCandidateModels = useMemo(
+    () => buildVisibleCandidateModels(catalog, selectedModelRefs, providerMetaMap),
+    [catalog, providerMetaMap, selectedModelRefs],
+  );
+  const selectedModelRefSet = useMemo(() => new Set(selectedModelRefs), [selectedModelRefs]);
+  const filteredModels = useMemo(
+    () => filterCandidateModels(allCandidateModels, searchQuery),
+    [allCandidateModels, searchQuery],
+  );
+  const filteredSelectedModels = useMemo(
+    () => filteredModels.filter((model) => selectedModelRefSet.has(model.modelRef)),
+    [filteredModels, selectedModelRefSet],
+  );
+  const filteredUnselectedModels = useMemo(
+    () => filteredModels.filter((model) => !selectedModelRefSet.has(model.modelRef)),
+    [filteredModels, selectedModelRefSet],
+  );
+  const filteredSelectedModelRefs = useMemo(
+    () => filteredSelectedModels.map((model) => model.modelRef),
+    [filteredSelectedModels],
+  );
+  const chainValidationError =
+    hasLoadedSelection && selectedModelRefs.length === 0 ? "至少勾选 1 个模型" : "";
 
   function resetModalState() {
-    setActiveTab("switch");
-    setSelectedModel("");
     setLoadError("");
     setSaveError("");
-    setAddError("");
-    setCollapsedProviders({});
-    setJsonInput(ADD_MODEL_TEMPLATE);
+    setSearchQuery("");
+    setIsSaving(false);
+    setHasLoadedSelection(false);
+    setSelectedModelRefs([]);
   }
 
   function handleDialogOpenChange(nextOpen: boolean) {
     if (!nextOpen) {
       resetModalState();
     }
+
     onOpenChange(nextOpen);
   }
 
-  function switchTab(tab: ModalTab) {
-    setActiveTab(tab);
-    setSaveError("");
-    setAddError("");
-  }
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
 
-  function toggleProvider(provider: string) {
-    setCollapsedProviders((current) => ({
-      ...current,
-      [provider]: !current[provider],
-    }));
-  }
+    setProviderMetaMap((current) => {
+      const next = readStoredProviderMetaMap();
+      return arePlainObjectsEqual(current, next) ? current : next;
+    });
+    setProviderStatusMap((current) => {
+      const next = readModelProviderStatusMap();
+      return arePlainObjectsEqual(current, next) ? current : next;
+    });
+
+    function handleMetaRefresh() {
+      setProviderMetaMap((current) => {
+        const next = readStoredProviderMetaMap();
+        return arePlainObjectsEqual(current, next) ? current : next;
+      });
+    }
+
+    function handleStatusRefresh() {
+      setProviderStatusMap((current) => {
+        const next = readModelProviderStatusMap();
+        return arePlainObjectsEqual(current, next) ? current : next;
+      });
+    }
+
+    window.addEventListener(MODEL_PROVIDERS_UPDATED_EVENT, handleMetaRefresh);
+    window.addEventListener(MODEL_PROVIDER_STATUS_UPDATED_EVENT, handleStatusRefresh);
+    return () => {
+      window.removeEventListener(MODEL_PROVIDERS_UPDATED_EVENT, handleMetaRefresh);
+      window.removeEventListener(MODEL_PROVIDER_STATUS_UPDATED_EVENT, handleStatusRefresh);
+    };
+  }, [open]);
 
   useEffect(() => {
-    if (!open || availableModels.length > 0) {
+    if (!open) {
       return;
     }
 
     let isActive = true;
 
-    const loadModels = async () => {
+    const loadModalData = async () => {
       setLoadError("");
+      setHasLoadedSelection(false);
+
       try {
-        await fetchModels();
-      } catch {
+        if (availableModelsCountRef.current === 0) {
+          await fetchModels();
+        }
+
+        const snapshot = await gateway.getConfig();
+        const fallbackModelRef = useAgentStore.getState().currentAgentModel?.trim() || "";
+        const chain = readAgentModelChain(snapshot.config, agentId, fallbackModelRef);
+        const nextSelectedModelRefs = normalizeUniqueModelRefs(
+          [chain.primary, ...chain.fallbacks].filter(Boolean),
+        );
+
         if (!isActive) {
           return;
         }
-        setLoadError("加载模型列表失败，请检查 Gateway 连接");
+
+        setSelectedModelRefs((current) =>
+          areModelRefArraysEqual(current, nextSelectedModelRefs) ? current : nextSelectedModelRefs,
+        );
+        setHasLoadedSelection(true);
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+
+        console.error("[Model] 加载模型配置失败:", error);
+        setLoadError("加载模型配置失败，请检查 Gateway 连接");
       }
     };
 
-    void loadModels();
+    void loadModalData();
 
     return () => {
       isActive = false;
     };
-  }, [availableModels.length, fetchModels, open]);
+  }, [agentId, fetchModels, open]);
+
+  function toggleModel(modelRef: string, checked: boolean) {
+    setSelectedModelRefs((current) => toggleCandidateModelSelection(current, modelRef, checked));
+    setSaveError("");
+  }
+
+  function reorderSelectedModels(nextVisibleModelRefs: string[]) {
+    setSelectedModelRefs((current) =>
+      reorderVisibleModelRefs(current, filteredSelectedModelRefs, nextVisibleModelRefs),
+    );
+  }
 
   async function handleSave() {
-    if (!effectiveSelectedModel || effectiveSelectedModel === currentAgentModel) {
-      handleDialogOpenChange(false);
+    const normalizedSelectedModelRefs = normalizeUniqueModelRefs(selectedModelRefs);
+    if (normalizedSelectedModelRefs.length === 0) {
+      setSaveError("至少勾选 1 个模型");
       return;
     }
 
     setSaveError("");
+    setIsSaving(true);
 
     try {
-      await setAgentModel(agentId, effectiveSelectedModel);
+      const snapshot = await gateway.getConfig();
+      const nextConfig = structuredClone(snapshot.config ?? {});
+      writeAgentModelChain(nextConfig, agentId, normalizedSelectedModelRefs);
+      await gateway.setConfig(nextConfig as Record<string, unknown>, { baseHash: snapshot.hash });
+      await fetchAgentModel(agentId);
+
       toast({
-        title: "✅ 模型已切换",
-        description: `${agentName} 已切换到 ${resolveCurrentModelInfo(effectiveSelectedModel, availableModels).title}`,
+        title: "✅ 模型配置已保存",
+        description: `${agentName} 的主模型和备用链已更新`,
       });
       handleDialogOpenChange(false);
     } catch (error) {
       const message =
-        error instanceof Error && error.message.trim() ? error.message : "模型切换失败，请稍后重试";
+        error instanceof Error && error.message.trim() ? error.message : "保存失败，请重试";
+      console.error("[Model] 保存模型配置失败:", error);
       setSaveError(message);
-    }
-  }
-
-  async function handleAddModel() {
-    setAddError("");
-
-    try {
-      await addModelFromJSON(jsonInput);
-      setJsonInput(ADD_MODEL_TEMPLATE);
-      setActiveTab("switch");
       toast({
-        title: "✅ 模型已添加",
-        description: "新模型已经写入 Gateway 配置，并刷新到可选列表。",
+        title: "❌ 保存失败，请重试",
+        description: message,
       });
-    } catch (error) {
-      const message =
-        error instanceof Error && error.message.trim()
-          ? error.message
-          : "新增模型失败，请检查配置后重试";
-      setAddError(message);
+    } finally {
+      setIsSaving(false);
     }
   }
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-      <DialogContent className="overflow-hidden rounded-[20px] border-[var(--modal-shell-border)] bg-[var(--modal-shell-bg)] p-0 text-[var(--color-text-primary)] shadow-[var(--modal-shell-shadow)] backdrop-blur-xl sm:max-w-3xl">
+      <DialogContent className="overflow-hidden rounded-[20px] border-[var(--modal-shell-border)] bg-[var(--modal-shell-bg)] p-0 text-[var(--color-text-primary)] shadow-[var(--modal-shell-shadow)] backdrop-blur-xl sm:max-w-4xl">
         <div className="border-b border-border px-6 py-5">
           <DialogHeader className="gap-3 text-left">
-            <DialogTitle className="text-xl">🤖 配置模型 — {agentName}</DialogTitle>
+            <DialogTitle className="text-xl">配置模型 — {agentName}</DialogTitle>
             <DialogDescription>
-              为当前员工单独指定模型，保存后会立即写入 Gateway 配置。
+              为当前员工配置主模型和备用链。主模型不可用时，自动切换到下一个。
             </DialogDescription>
           </DialogHeader>
         </div>
 
-        <div className="max-h-[72vh] overflow-y-auto px-6 py-5">
+        <div className="max-h-[75vh] overflow-y-auto px-6 py-5">
           <div className="space-y-5">
-            <div className="grid w-full grid-cols-2 rounded-2xl bg-[var(--color-bg-soft)] p-1">
-              <button
-                type="button"
-                onClick={() => switchTab("switch")}
-                className={cn(
-                  "rounded-xl px-4 py-2.5 text-sm font-medium transition-colors",
-                  activeTab === "switch"
-                    ? "bg-[var(--color-bg-card)] text-[var(--color-text-primary)]"
-                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
-                )}
-              >
-                切换模型
-              </button>
-              <button
-                type="button"
-                onClick={() => switchTab("add")}
-                className={cn(
-                  "rounded-xl px-4 py-2.5 text-sm font-medium transition-colors",
-                  activeTab === "add"
-                    ? "bg-[var(--color-bg-card)] text-[var(--color-text-primary)]"
-                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
-                )}
-              >
-                + 新增模型
-              </button>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-secondary)]" />
+              <Input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="搜索模型..."
+                className="h-12 rounded-2xl border-[var(--color-border)] bg-[var(--color-bg-card)] pl-11"
+              />
             </div>
 
-            {activeTab === "switch" ? (
-              <div className="space-y-5">
-                <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-4">
-                  <div className="text-xs uppercase tracking-[0.18em] text-[var(--color-text-secondary)]">
-                    当前模型
-                  </div>
-                  <div className="mt-2 text-base font-semibold text-[var(--color-text-primary)]">
-                    {currentModelInfo.title}
-                  </div>
-                  <div className="mt-1 text-sm text-[var(--color-text-secondary)]">
-                    {currentModelInfo.metadata}
-                  </div>
-                  <div className="mt-3 text-xs text-[var(--color-text-secondary)]">
-                    切换后立即生效，当前对话不受影响
-                  </div>
-                </section>
+            <div className="text-sm text-[var(--color-text-secondary)]">
+              拖拽排序优先级。排第一的是主模型，后面的依次是备用模型。
+            </div>
 
-                {loadError ? (
-                  <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                    {loadError}
-                  </div>
-                ) : null}
-
-                {saveError ? (
-                  <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                    {saveError}
-                  </div>
-                ) : null}
-
-                {modelLoading ? (
-                  <div className="flex items-center gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-6 text-sm text-[var(--color-text-secondary)]">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    正在加载模型列表...
-                  </div>
-                ) : null}
-
-                {!modelLoading && availableModels.length === 0 && !loadError ? (
-                  <div className="rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-6 text-sm text-[var(--color-text-secondary)]">
-                    当前没有可选模型，请检查 Gateway 的模型配置。
-                  </div>
-                ) : null}
-
-                {!modelLoading && availableModels.length > 0 ? (
-                  useFlatLayout ? (
-                    <div className="space-y-3">
-                      {allModels.map(({ provider, model, modelRef }) => (
-                        <ModelOptionCard
-                          key={modelRef}
-                          provider={provider}
-                          model={model}
-                          selected={effectiveSelectedModel === modelRef}
-                          current={currentAgentModel === modelRef}
-                          onClick={() => setSelectedModel(modelRef)}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {availableModels.map((group) => {
-                        const isCollapsed = collapsedProviders[group.provider];
-
-                        return (
-                          <section
-                            key={group.provider}
-                            className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)]"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => toggleProvider(group.provider)}
-                              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--color-bg-hover)]"
-                            >
-                              <div>
-                                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                                  {group.provider}
-                                </div>
-                                <div className="mt-1 text-xs text-[var(--color-text-secondary)]">
-                                  {group.models.length} 个模型
-                                </div>
-                              </div>
-                              {isCollapsed ? (
-                                <ChevronRight className="h-4 w-4 text-[var(--color-text-secondary)]" />
-                              ) : (
-                                <ChevronDown className="h-4 w-4 text-[var(--color-text-secondary)]" />
-                              )}
-                            </button>
-
-                            {!isCollapsed ? (
-                              <div className="border-t border-[var(--color-border)] px-3 py-3">
-                                <div className="space-y-3">
-                                  {group.models.map((model) => {
-                                    const modelRef = `${group.provider}/${model.id}`;
-
-                                    return (
-                                      <ModelOptionCard
-                                        key={modelRef}
-                                        provider={group.provider}
-                                        model={model}
-                                        selected={effectiveSelectedModel === modelRef}
-                                        current={currentAgentModel === modelRef}
-                                        onClick={() => setSelectedModel(modelRef)}
-                                      />
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ) : null}
-                          </section>
-                        );
-                      })}
-                    </div>
-                  )
-                ) : null}
+            {loadError ? (
+              <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                {loadError}
               </div>
             ) : null}
 
-            {activeTab === "add" ? (
-              <div className="space-y-5">
-                <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4">
-                  <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                    输入模型配置（JSON 格式）：
+            {saveError || chainValidationError ? (
+              <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                {saveError || chainValidationError}
+              </div>
+            ) : null}
+
+            {modelLoading ? (
+              <div className="flex items-center gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-6 text-sm text-[var(--color-text-secondary)]">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                正在加载模型列表...
+              </div>
+            ) : null}
+
+            {!modelLoading && allCandidateModels.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-6 text-sm text-[var(--color-text-secondary)]">
+                当前没有可选模型，请先在「添加模型供应商」里配置至少一个供应商和模型。
+              </div>
+            ) : null}
+
+            {!modelLoading && allCandidateModels.length > 0 ? (
+              <>
+                <section className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                      已勾选的模型
+                    </div>
+                    <div className="text-xs text-[var(--color-text-secondary)]">
+                      {selectedModelRefs.length} 个模型参与 fallback 链
+                    </div>
                   </div>
-                  <textarea
-                    value={jsonInput}
-                    onChange={(event) => setJsonInput(event.target.value)}
-                    spellCheck={false}
-                    className="mt-3 min-h-[320px] w-full resize-y rounded-2xl border border-[var(--color-border)] bg-[var(--modal-code-bg)] px-4 py-4 font-mono text-sm leading-7 text-[var(--modal-code-text)] outline-none transition-[border-color,box-shadow] focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-subtle)]"
-                  />
-                  <div className="mt-3 text-xs text-[var(--color-text-secondary)]">
-                    如果该 provider 已存在，将只追加模型，不会覆盖现有的 baseUrl、协议和 API
-                    Key。第三方 OpenAI 兼容 responses 中转站如果误写成{" "}
-                    <code className="mx-1 rounded bg-[var(--color-bg-code)] px-1 py-0.5">
-                      openai
-                    </code>
-                    ，前端会自动改成自定义 provider 名，避免命中 OpenClaw 的固定 OpenAI 路径。
-                  </div>
-                  {addError ? (
-                    <div className="mt-4 rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                      {addError}
+
+                  {selectedModelRefs.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-5 text-sm text-[var(--color-text-secondary)]">
+                      还没有启用任何模型，先从下方勾选一个。
                     </div>
                   ) : null}
-                  {isAddSubmitting ? (
-                    <div className="mt-4 flex items-center gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-soft)] px-4 py-3 text-sm text-[var(--color-text-secondary)]">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      正在写入配置并等待 Gateway 重载...
+
+                  <Reorder.Group
+                    axis="y"
+                    values={filteredSelectedModelRefs}
+                    onReorder={reorderSelectedModels}
+                    className="space-y-3"
+                  >
+                    {filteredSelectedModels.map((model) => {
+                      const priorityIndex = selectedModelRefs.indexOf(model.modelRef);
+                      const statusBadge = getProviderStatusBadge(
+                        model.providerId,
+                        providerStatusMap,
+                      );
+
+                      return (
+                        <Reorder.Item
+                          key={model.modelRef}
+                          value={model.modelRef}
+                          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)]"
+                        >
+                          <div className="grid gap-3 px-4 py-4 md:grid-cols-[auto_auto_auto_minmax(0,1fr)] md:items-center">
+                            <label className="inline-flex items-center gap-3 text-sm font-medium text-[var(--color-text-primary)]">
+                              <input
+                                type="checkbox"
+                                checked
+                                onChange={(event) =>
+                                  toggleModel(model.modelRef, event.target.checked)
+                                }
+                                className="h-4 w-4 rounded border-[var(--color-border)]"
+                              />
+                            </label>
+
+                            <div className="inline-flex items-center gap-2 text-[var(--color-text-secondary)]">
+                              <GripVertical className="h-4 w-4 cursor-grab" />
+                              <span className="text-sm font-semibold">
+                                {formatPriorityIndex(priorityIndex)}
+                              </span>
+                            </div>
+
+                            <div
+                              className={cn(
+                                "inline-flex items-center gap-1 text-xs font-medium",
+                                statusBadge.toneClassName,
+                              )}
+                            >
+                              <span>{statusBadge.icon}</span>
+                              <span>{statusBadge.label}</span>
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
+                                {model.modelDisplayName}
+                              </div>
+                              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--color-text-secondary)]">
+                                <span>{model.providerDisplayName}</span>
+                                {model.contextWindow ? (
+                                  <span>{formatContextWindow(model.contextWindow)}</span>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        </Reorder.Item>
+                      );
+                    })}
+                  </Reorder.Group>
+
+                  {searchQuery.trim() &&
+                  selectedModelRefs.length > 0 &&
+                  filteredSelectedModels.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg-soft)] px-4 py-4 text-sm text-[var(--color-text-secondary)]">
+                      当前搜索条件下，没有已勾选模型。
                     </div>
                   ) : null}
                 </section>
-              </div>
+
+                <section className="space-y-3">
+                  <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                    未勾选的模型
+                  </div>
+
+                  {filteredUnselectedModels.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-5 text-sm text-[var(--color-text-secondary)]">
+                      {searchQuery.trim()
+                        ? "没有匹配的未勾选模型。"
+                        : "所有模型都已经加入 fallback 链。"}
+                    </div>
+                  ) : null}
+
+                  {filteredUnselectedModels.map((model) => {
+                    const statusBadge = getProviderStatusBadge(model.providerId, providerStatusMap);
+
+                    return (
+                      <div
+                        key={model.modelRef}
+                        className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)]"
+                      >
+                        <div className="grid gap-3 px-4 py-4 md:grid-cols-[auto_auto_minmax(0,1fr)] md:items-center">
+                          <label className="inline-flex items-center gap-3 text-sm font-medium text-[var(--color-text-primary)]">
+                            <input
+                              type="checkbox"
+                              checked={false}
+                              onChange={(event) =>
+                                toggleModel(model.modelRef, event.target.checked)
+                              }
+                              className="h-4 w-4 rounded border-[var(--color-border)]"
+                            />
+                          </label>
+
+                          <div
+                            className={cn(
+                              "inline-flex items-center gap-1 text-xs font-medium",
+                              statusBadge.toneClassName,
+                            )}
+                          >
+                            <span>{statusBadge.icon}</span>
+                            <span>{statusBadge.label}</span>
+                          </div>
+
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
+                              {model.modelDisplayName}
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--color-text-secondary)]">
+                              <span>{model.providerDisplayName}</span>
+                              {model.contextWindow ? (
+                                <span>{formatContextWindow(model.contextWindow)}</span>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </section>
+              </>
             ) : null}
           </div>
         </div>
@@ -501,34 +461,18 @@ export function ModelSelectModal({
             type="button"
             variant="ghost"
             onClick={() => handleDialogOpenChange(false)}
-            disabled={modelSaving || isAddSubmitting}
+            disabled={isSaving}
           >
             取消
           </Button>
-
-          {activeTab === "switch" ? (
-            <Button
-              type="button"
-              onClick={() => void handleSave()}
-              disabled={
-                modelSaving ||
-                !effectiveSelectedModel ||
-                effectiveSelectedModel === currentAgentModel
-              }
-            >
-              {modelSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              保存
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              onClick={() => void handleAddModel()}
-              disabled={isAddSubmitting || !jsonInput.trim()}
-            >
-              {isAddSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              添加模型
-            </Button>
-          )}
+          <Button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={isSaving || selectedModelRefs.length === 0}
+          >
+            {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            保存
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

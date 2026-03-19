@@ -39,6 +39,8 @@ import {
   type CompactionIndicatorStatus,
   type FallbackIndicatorStatus,
 } from "@/components/chat/original/views/chat";
+import { CronManageModal } from "@/components/cron/CronManageModal";
+import { formatHealthWarningTitle } from "@/components/health/HealthWidgets";
 import type { Employee } from "@/components/layout/EmployeeList";
 import { useTheme } from "@/components/layout/useTheme";
 import { ConfirmModal } from "@/components/modals/ConfirmModal";
@@ -46,10 +48,13 @@ import { EditGroupModal } from "@/components/modals/EditGroupModal";
 import { GroupAnnouncementModal } from "@/components/modals/GroupAnnouncementModal";
 import { GroupMemberManageModal } from "@/components/modals/GroupMemberManageModal";
 import { GroupUrgeModal } from "@/components/modals/GroupUrgeModal";
+import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/use-toast";
 import { gateway, type GatewayChatEventPayload } from "@/services/gateway";
 import { useAgentStore, type Agent } from "@/stores/agentStore";
+import { useArchiveViewStore } from "@/stores/archiveViewStore";
 import { useChatStore } from "@/stores/chatStore";
+import { useCronStore } from "@/stores/cronStore";
 import { useDirectArchiveStore } from "@/stores/directArchiveStore";
 import {
   getGroupContextMetrics,
@@ -58,8 +63,16 @@ import {
   type Group,
   type GroupChatMessage,
 } from "@/stores/groupStore";
+import { useHealthStore } from "@/stores/healthStore";
 import type { ModelProviderGroup } from "@/types/model";
 import { getAgentAvatarInfo } from "@/utils/agentAvatar";
+import { isScrollNearBottom } from "@/utils/chatScroll";
+import {
+  filterCronJobsByAgent,
+  filterCronJobsByGroup,
+  findNearestCronNextRunAt,
+  resolveCronNextRunText,
+} from "@/utils/cronTask";
 import {
   findActiveGroupMention,
   insertGroupMention,
@@ -75,6 +88,7 @@ import {
   resolveInitialAvatarText,
   resolveGroupMembersForSurface,
 } from "@/utils/groupSurface";
+import { EMPTY_HEALTH_SUMMARY } from "@/utils/health";
 import { adaptSidebarSyncMessages } from "@/utils/messageAdapter";
 import { getUserProfile, subscribeToUserProfile, type UserProfile } from "@/utils/userProfile";
 import "@/styles/openclaw-chat.css";
@@ -103,7 +117,7 @@ type PendingNewSessionState = {
   sessionKey: string;
 };
 
-type QuickActionKind = "compact" | "archive" | "reset";
+type QuickActionKind = "compact" | "archive" | "reset" | "dissolve";
 
 type OpenClawChatSurfaceProps = {
   employee: Employee;
@@ -371,6 +385,14 @@ function countHiddenCronSessions(sessionKey: string, sessions: SessionsListResul
   );
 }
 
+function buildCronHintTooltip(label: string, count: number, nextRunText?: string) {
+  if (count <= 0) {
+    return `${label}暂无定时任务，点击可新建`;
+  }
+
+  return `${label}有 ${count} 条定时任务${nextRunText ? `，下次执行 ${nextRunText}` : ""}`;
+}
+
 function resolveCurrentSessionRow(sessionKey: string, sessions: SessionsListResult | null) {
   return sessions?.sessions?.find((row) => row.key === sessionKey);
 }
@@ -462,8 +484,10 @@ function OpenClawChatSurfaceInner({
   const [urgeIntervalDraft, setUrgeIntervalDraft] = useState(group?.urgeIntervalMinutes ?? 10);
   const [isEditGroupModalOpen, setIsEditGroupModalOpen] = useState(false);
   const [isMemberManageModalOpen, setIsMemberManageModalOpen] = useState(false);
+  const [isGroupCronModalOpen, setIsGroupCronModalOpen] = useState(false);
   const [pendingQuickAction, setPendingQuickAction] = useState<QuickActionKind | null>(null);
   const [isQuickActionLoading, setIsQuickActionLoading] = useState(false);
+  const [archiveTitleDraft, setArchiveTitleDraft] = useState("");
   const [groupCaretPosition, setGroupCaretPosition] = useState(0);
   const [, setIsGroupInputFocused] = useState(false);
   const [, setActiveMentionIndex] = useState(0);
@@ -471,6 +495,8 @@ function OpenClawChatSurfaceInner({
   const [userProfile, setUserProfile] = useState<UserProfile>(() => getUserProfile());
   const [agentAvatarVersion, setAgentAvatarVersion] = useState(0);
   const gatewayStatus = useChatStore((state) => state.status);
+  const cronJobs = useCronStore((state) => state.jobs);
+  const requestAgentScheduleFocus = useCronStore((state) => state.requestAgentScheduleFocus);
   const switchAgent = useChatStore((state) => state.switchAgent);
   const compactCurrentSession = useChatStore((state) => state.compactCurrentSession);
   const resetCurrentSession = useChatStore((state) => state.resetCurrentSession);
@@ -479,6 +505,9 @@ function OpenClawChatSurfaceInner({
   const mainKey = useAgentStore((state) => state.mainKey);
   const openDetail = useAgentStore((state) => state.openDetail);
   const closeDetail = useAgentStore((state) => state.closeDetail);
+  const showGroupDissolvedEmptyState = useArchiveViewStore(
+    (state) => state.showGroupDissolvedEmptyState,
+  );
   const allGroups = useGroupStore((state) => state.groups);
   const clearSelectedArchive = useGroupStore((state) => state.clearSelectedArchive);
   const clearSelectedGroup = useGroupStore((state) => state.clearSelectedGroup);
@@ -493,6 +522,7 @@ function OpenClawChatSurfaceInner({
   const sendGroupMessage = useGroupStore((state) => state.sendGroupMessage);
   const archiveGroupSession = useGroupStore((state) => state.archiveGroupSession);
   const resetGroupMessages = useGroupStore((state) => state.resetGroupMessages);
+  const dissolveGroup = useGroupStore((state) => state.dissolveGroup);
   const selectGroup = useGroupStore((state) => state.selectGroup);
   const updateGroupAnnouncement = useGroupStore((state) => state.updateGroupAnnouncement);
   const setGroupNotificationsEnabled = useGroupStore((state) => state.setGroupNotificationsEnabled);
@@ -692,6 +722,59 @@ function OpenClawChatSurfaceInner({
     groupMembersForSurface.find((member) => member.id === group?.leaderId)?.name ??
     groupMembersForSurface[0]?.name ??
     "群主";
+  const directCronJobs = useMemo(
+    () => (isGroupMode ? [] : filterCronJobsByAgent(cronJobs, employee.id)),
+    [cronJobs, employee.id, isGroupMode],
+  );
+  const directCronHint = useMemo(() => {
+    if (isGroupMode || directCronJobs.length === 0) {
+      return null;
+    }
+
+    const nextRunAt = findNearestCronNextRunAt(directCronJobs);
+    const nextRunJob =
+      nextRunAt === null
+        ? null
+        : (directCronJobs.find((job) => job.state?.nextRunAtMs === nextRunAt) ?? null);
+    return {
+      count: directCronJobs.length,
+      tooltip: buildCronHintTooltip(
+        employee.name,
+        directCronJobs.length,
+        nextRunJob ? resolveCronNextRunText(nextRunJob) : undefined,
+      ),
+    };
+  }, [directCronJobs, employee.name, isGroupMode]);
+  const groupCronJobs = useMemo(
+    () => (group ? filterCronJobsByGroup(cronJobs, group.id, group.leaderId) : []),
+    [cronJobs, group],
+  );
+  const groupCronHint = useMemo(() => {
+    if (!group) {
+      return null;
+    }
+
+    const nextRunAt = findNearestCronNextRunAt(groupCronJobs);
+    const nextRunJob =
+      nextRunAt === null
+        ? null
+        : (groupCronJobs.find((job) => job.state?.nextRunAtMs === nextRunAt) ?? null);
+    return {
+      count: groupCronJobs.length,
+      tooltip: buildCronHintTooltip(
+        "本群",
+        groupCronJobs.length,
+        nextRunJob ? resolveCronNextRunText(nextRunJob) : undefined,
+      ),
+    };
+  }, [group, groupCronJobs]);
+  const directHealthSummary = useHealthStore(
+    (state) => state.recordsByAgentId[displayedAgentId]?.summary ?? EMPTY_HEALTH_SUMMARY,
+  );
+  const directHealthWarningTitle = useMemo(
+    () => (isGroupMode ? null : formatHealthWarningTitle(directHealthSummary)),
+    [directHealthSummary, isGroupMode],
+  );
   const activeGroupMention = useMemo(
     () => (isGroupMode ? findActiveGroupMention(currentDraft, groupCaretPosition) : null),
     [currentDraft, groupCaretPosition, isGroupMode],
@@ -937,6 +1020,7 @@ function OpenClawChatSurfaceInner({
     }
 
     setPendingQuickAction(null);
+    setArchiveTitleDraft("");
   }
 
   function handleOpenResetConversationConfirm() {
@@ -945,6 +1029,34 @@ function OpenClawChatSurfaceInner({
 
   function handleOpenArchiveConversationConfirm() {
     openQuickActionConfirm("archive");
+  }
+
+  function handleOpenDissolveGroupConfirm() {
+    if (!group) {
+      return;
+    }
+
+    openQuickActionConfirm("dissolve");
+  }
+
+  function clearGroupPendingQueue() {
+    queueRef.current = [];
+    processingQueueRef.current = false;
+    setQueue([]);
+    clearPendingNewSession();
+
+    const runtime = runtimeRef.current;
+    if (!runtime) {
+      return;
+    }
+
+    runtime.chatLoading = false;
+    runtime.chatSending = false;
+    runtime.newSessionLoading = false;
+    runtime.chatRunId = null;
+    runtime.chatStream = null;
+    runtime.chatStreamStartedAt = null;
+    runtime.lastError = null;
   }
 
   async function handleConfirmQuickAction() {
@@ -985,7 +1097,7 @@ function OpenClawChatSurfaceInner({
             return;
           }
 
-          const result = await archiveGroupSession(group.id);
+          const result = await archiveGroupSession(group.id, archiveTitleDraft);
           if (!result.success) {
             throw new Error(result.error || "归档项目组对话失败");
           }
@@ -999,7 +1111,7 @@ function OpenClawChatSurfaceInner({
             return;
           }
 
-          const result = await archiveCurrentSession();
+          const result = await archiveCurrentSession(archiveTitleDraft);
           if (!result.success) {
             throw new Error(result.error || "归档 1v1 会话失败");
           }
@@ -1010,6 +1122,30 @@ function OpenClawChatSurfaceInner({
             description: "可在左侧“1v1 归档”中随时回看。",
           });
         }
+      } else if (action === "dissolve") {
+        if (!group) {
+          return;
+        }
+
+        const dissolvedGroupId = group.id;
+        const dissolvedGroupName = group.name;
+        clearGroupPendingQueue();
+        pendingContentChangeRef.current = true;
+        requestRender();
+
+        const result = await dissolveGroup(dissolvedGroupId);
+        if (!result.success) {
+          throw new Error(result.error || "解散群聊失败");
+        }
+
+        const nextGroupState = useGroupStore.getState();
+        if (nextGroupState.selectedGroupId === null && nextGroupState.groups.length === 0) {
+          showGroupDissolvedEmptyState(dissolvedGroupName);
+        }
+
+        toast({
+          title: "✅ 群聊已解散",
+        });
       } else if (isGroupMode) {
         if (!group) {
           return;
@@ -1042,6 +1178,7 @@ function OpenClawChatSurfaceInner({
       }
 
       setPendingQuickAction(null);
+      setArchiveTitleDraft("");
       pendingContentChangeRef.current = true;
       requestRender();
     } catch (error) {
@@ -1052,14 +1189,23 @@ function OpenClawChatSurfaceInner({
             ? "压缩会话失败"
             : action === "archive"
               ? "归档会话失败"
-              : "重置会话失败";
+              : action === "dissolve"
+                ? "解散群聊失败"
+                : "重置会话失败";
 
       if (runtime) {
         runtime.lastError = message;
       }
 
       toast({
-        title: action === "compact" ? "压缩失败" : action === "archive" ? "归档失败" : "重置失败",
+        title:
+          action === "compact"
+            ? "压缩失败"
+            : action === "archive"
+              ? "归档失败"
+              : action === "dissolve"
+                ? "解散失败"
+                : "重置失败",
         description: message,
         variant: "destructive",
       });
@@ -1505,6 +1651,11 @@ function OpenClawChatSurfaceInner({
     void openDetail(agentId);
   }
 
+  function handleOpenAgentSchedule(agentId: string) {
+    requestAgentScheduleFocus(agentId);
+    handleOpenAgentDetail(agentId);
+  }
+
   useEffect(() => {
     const host = hostRef.current;
     const runtime = runtimeRef.current;
@@ -1517,6 +1668,8 @@ function OpenClawChatSurfaceInner({
         activeAgentId: displayedAgentId,
         assistantName,
         headerTitle: isGroupMode ? (group?.name ?? assistantName) : employee.name,
+        healthAlertSymbol: directHealthWarningTitle ? "⚠️" : null,
+        healthAlertTitle: directHealthWarningTitle,
         isGroupMode,
         groupHeader,
         onGroupHeaderMemberClick: (memberId) => {
@@ -1535,6 +1688,8 @@ function OpenClawChatSurfaceInner({
         focusMode: isChatFullscreen,
         hideCronSessions,
         hiddenCronCount,
+        directCronHint,
+        groupCronHint,
         sessions,
         sessionKey,
         modelValue: currentModelValue,
@@ -1599,6 +1754,15 @@ function OpenClawChatSurfaceInner({
         },
         onResetConversationClick: () => {
           handleOpenResetConversationConfirm();
+        },
+        onDissolveGroupClick: () => {
+          handleOpenDissolveGroupConfirm();
+        },
+        onDirectCronClick: () => {
+          handleOpenAgentSchedule(employee.id);
+        },
+        onGroupCronClick: () => {
+          setIsGroupCronModalOpen(true);
         },
         onRefresh: () => {
           void refreshCurrentSession(sessionKey);
@@ -1765,6 +1929,8 @@ function OpenClawChatSurfaceInner({
 
             runtime.chatMessage = "";
             runtime.chatAttachments = [];
+            stickToBottomRef.current = true;
+            setShowNewMessages(false);
             if (isGroupMode) {
               setGroupCaretPosition(0);
               setActiveMentionIndex(0);
@@ -1931,8 +2097,7 @@ function OpenClawChatSurfaceInner({
           },
           onChatScroll: (event) => {
             const thread = event.currentTarget as HTMLElement;
-            const distanceToBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight;
-            const nearBottom = distanceToBottom < 48;
+            const nearBottom = isScrollNearBottom(thread);
             stickToBottomRef.current = nearBottom;
 
             if (nearBottom) {
@@ -2096,6 +2261,20 @@ function OpenClawChatSurfaceInner({
           };
     }
 
+    if (pendingQuickAction === "dissolve") {
+      const groupName = group?.name?.trim() || "当前群聊";
+      return {
+        icon: "🗑️",
+        iconBgColor: "bg-[var(--danger-subtle)]",
+        iconTextColor: "text-[var(--danger)]",
+        title: "解散群聊",
+        subtitle: "永久删除当前项目组",
+        description: `确定要解散「${groupName}」吗？解散后该群聊将从项目组列表中移除，所有聊天记录将被清除，此操作无法撤销。`,
+        confirmText: "确认解散",
+        confirmColor: "bg-[var(--danger)] hover:brightness-110",
+      };
+    }
+
     return group
       ? {
           icon: "🔄",
@@ -2120,6 +2299,12 @@ function OpenClawChatSurfaceInner({
           confirmColor: "bg-[var(--danger)] hover:brightness-110",
         };
   }, [group, pendingQuickAction]);
+
+  useEffect(() => {
+    if (pendingQuickAction !== "archive") {
+      setArchiveTitleDraft("");
+    }
+  }, [pendingQuickAction]);
 
   if (!sessionKey) {
     return (
@@ -2194,6 +2379,18 @@ function OpenClawChatSurfaceInner({
               setIsUrgeModalOpen(false);
             }}
           />
+          <CronManageModal
+            open={isGroupCronModalOpen}
+            onOpenChange={setIsGroupCronModalOpen}
+            title="群聊定时任务"
+            description={`${groupLeaderName} 作为群主创建的群聊任务都会在这里管理。`}
+            jobs={groupCronJobs}
+            emptyText="当前群聊还没有定时任务"
+            createLabel="新建群任务"
+            lockedAgentId={group.leaderId}
+            defaultReplyMode="group"
+            defaultGroupId={group.id}
+          />
         </>
       ) : null}
 
@@ -2213,7 +2410,28 @@ function OpenClawChatSurfaceInner({
           description={quickActionModalConfig.description}
           confirmText={quickActionModalConfig.confirmText}
           confirmColor={quickActionModalConfig.confirmColor}
-        />
+        >
+          {pendingQuickAction === "archive" ? (
+            <div className="space-y-2">
+              <label
+                htmlFor="archive-title-input"
+                className="block text-sm font-medium text-[var(--text-strong)]"
+              >
+                归档标题
+              </label>
+              <Input
+                id="archive-title-input"
+                value={archiveTitleDraft}
+                maxLength={50}
+                placeholder="给这份归档起个名字（选填）"
+                onChange={(event) => {
+                  setArchiveTitleDraft(event.target.value.slice(0, 50));
+                }}
+                className="h-11 rounded-xl border border-[var(--border)] bg-[var(--bg-content)] text-sm text-[var(--text)] shadow-none placeholder:text-[var(--muted)]"
+              />
+            </div>
+          ) : null}
+        </ConfirmModal>
       ) : null}
     </>
   );

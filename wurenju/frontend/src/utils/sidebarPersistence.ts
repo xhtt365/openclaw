@@ -1,5 +1,6 @@
 "use client";
 
+import { hydrateArchiveTitles, sanitizeArchiveTitle } from "@/utils/archiveTitle";
 import { adaptSidebarSyncMessage, type ChatMessage, type ChatUsage } from "@/utils/messageAdapter";
 
 export type SidebarDepartment = {
@@ -20,6 +21,7 @@ export type SidebarDirectArchive = {
   id: string;
   agentId: string;
   agentName: string;
+  title: string;
   agentRole?: string;
   agentAvatarUrl?: string;
   agentAvatarText?: string;
@@ -62,7 +64,11 @@ function writeStorageItem(key: string, value: string) {
     return;
   }
 
-  window.localStorage.setItem(key, value);
+  try {
+    window.localStorage.setItem(key, value);
+  } catch (error) {
+    console.warn(`[Sidebar] 写入本地缓存失败: ${key}`, error);
+  }
 }
 
 function emitStorageChange(key: string) {
@@ -549,14 +555,14 @@ export function readSidebarDirectArchives(): SidebarDirectArchive[] {
     return [];
   }
 
-  const normalized: Array<SidebarDirectArchive | null> = parsed.map((item) => {
+  const normalized = parsed.map((item): SidebarDirectArchive | null => {
     if (!isRecord(item)) {
       return null;
     }
 
     const messages = normalizeArchivedMessages(pickArchiveMessages(item));
-    const id = readTrimmedString(item, ["id", "archiveId"]);
     const agentId = readTrimmedString(item, ["agentId", "employeeId", "targetAgentId"]);
+    const id = readTrimmedString(item, ["id", "archiveId"]) || `direct-archive:${agentId}`;
     const agentName = readTrimmedString(item, ["agentName", "employeeName", "name"]) || agentId;
     const preview = readTrimmedString(item, ["preview", "summary"]);
     const archivedAt = resolveArchivedAt(item, messages);
@@ -565,6 +571,7 @@ export function readSidebarDirectArchives(): SidebarDirectArchive[] {
       readTrimmedString(item, ["agentAvatarUrl", "avatarUrl", "avatar"]) || undefined;
     const agentAvatarText = readTrimmedString(item, ["agentAvatarText", "avatarText"]) || undefined;
     const agentEmoji = readTrimmedString(item, ["agentEmoji", "emoji"]) || undefined;
+    const title = readTrimmedString(item, ["title", "archiveTitle"]);
 
     if (!id || !agentId || !agentName || !archivedAt) {
       return null;
@@ -574,6 +581,7 @@ export function readSidebarDirectArchives(): SidebarDirectArchive[] {
       id,
       agentId,
       agentName,
+      title,
       agentRole,
       agentAvatarUrl,
       agentAvatarText,
@@ -581,11 +589,23 @@ export function readSidebarDirectArchives(): SidebarDirectArchive[] {
       preview: preview || "已归档，可稍后回看",
       archivedAt,
       messages,
-    };
+    } satisfies SidebarDirectArchive;
   });
 
+  const normalizedArchives = normalized.filter(
+    (archive): archive is SidebarDirectArchive => archive !== null,
+  );
+
   return sortDirectArchivesByNewest(
-    normalized.filter((archive): archive is SidebarDirectArchive => archive !== null),
+    hydrateArchiveTitles(normalizedArchives, {
+      getTitle: (archive) => archive.title,
+      getSourceName: (archive) => archive.agentName,
+      getArchivedAt: (archive) => archive.archivedAt,
+      setTitle: (archive, title) => ({
+        ...archive,
+        title,
+      }),
+    }),
   );
 }
 
@@ -595,6 +615,7 @@ export function writeSidebarDirectArchives(value: SidebarDirectArchive[]) {
     const agentId = archive.agentId.trim();
     const agentName = archive.agentName.trim();
     const archivedAt = archive.archivedAt.trim();
+    const title = sanitizeArchiveTitle(archive.title);
     if (!id || !agentId || !agentName || !archivedAt) {
       return null;
     }
@@ -604,6 +625,7 @@ export function writeSidebarDirectArchives(value: SidebarDirectArchive[]) {
       id,
       agentId,
       agentName,
+      title,
       agentRole: archive.agentRole?.trim() || undefined,
       agentAvatarUrl: archive.agentAvatarUrl?.trim() || undefined,
       agentAvatarText: archive.agentAvatarText?.trim() || undefined,
@@ -640,6 +662,67 @@ export function removeSidebarDirectArchivesByAgentId(agentId: string) {
   }
 
   return writeSidebarDirectArchives(nextArchives);
+}
+
+export function removeSidebarDirectArchiveById(archiveId: string) {
+  const normalizedArchiveId = archiveId.trim();
+  if (!normalizedArchiveId) {
+    return readSidebarDirectArchives();
+  }
+
+  const currentArchives = readSidebarDirectArchives();
+  const nextArchives = currentArchives.filter((archive) => archive.id !== normalizedArchiveId);
+  if (nextArchives.length === currentArchives.length) {
+    return currentArchives;
+  }
+
+  console.log(`[Archive] 删除 1v1 归档: ${normalizedArchiveId}`);
+  return writeSidebarDirectArchives(nextArchives);
+}
+
+export function renameSidebarDirectArchiveById(archiveId: string, title: string) {
+  const normalizedArchiveId = archiveId.trim();
+  const nextTitle = sanitizeArchiveTitle(title);
+  const currentArchives = readSidebarDirectArchives();
+  if (!normalizedArchiveId || !nextTitle) {
+    return {
+      archives: currentArchives,
+      renamed: false,
+    };
+  }
+
+  let previousTitle = "";
+  let renamed = false;
+  const nextArchives = currentArchives.map((archive) => {
+    if (archive.id !== normalizedArchiveId) {
+      return archive;
+    }
+
+    const currentTitle = sanitizeArchiveTitle(archive.title);
+    if (!currentTitle || currentTitle === nextTitle) {
+      return archive;
+    }
+
+    previousTitle = currentTitle;
+    renamed = true;
+    return {
+      ...archive,
+      title: nextTitle,
+    };
+  });
+
+  if (!renamed || !previousTitle) {
+    return {
+      archives: currentArchives,
+      renamed: false,
+    };
+  }
+
+  console.log(`[Archive] 归档重命名: ${previousTitle} → ${nextTitle}`);
+  return {
+    archives: writeSidebarDirectArchives(nextArchives),
+    renamed: true,
+  };
 }
 
 export function readSidebarUnreadState(): SidebarUnreadState {

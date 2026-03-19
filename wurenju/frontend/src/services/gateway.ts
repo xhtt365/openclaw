@@ -29,6 +29,7 @@ import type {
   ModelProviderGroup,
   ModelApiProtocol,
 } from "@/types/model";
+import { trackModelProviderError } from "@/utils/modelProviders";
 import {
   resolveSessionRuntimeState,
   type SessionRuntimeListPayload,
@@ -169,8 +170,56 @@ export type GatewayDeleteAgentResult = {
 type PendingRequest = {
   method: string;
   waitForChatFinal?: boolean;
+  sessionKey?: string;
+  agentId?: string;
+  requestTag?: string;
   resolve: (data: GatewayResponseFrame) => void;
   reject: (error: Error) => void;
+};
+
+export type GatewayObservedRequestKind = "chat.send" | "agent";
+
+export type GatewayObservedRequestStart = {
+  kind: GatewayObservedRequestKind;
+  requestId: string;
+  sessionKey: string;
+  agentId?: string | null;
+  startedAt: number;
+};
+
+export type GatewayObservedRunAccepted = {
+  kind: GatewayObservedRequestKind;
+  requestId: string;
+  runId: string;
+  sessionKey: string;
+  agentId?: string | null;
+  acceptedAt: number;
+};
+
+export type GatewayObservedAssistantMessage = {
+  kind: GatewayObservedRequestKind;
+  runId?: string | null;
+  sessionKey: string;
+  agentId?: string | null;
+  message: GatewayMessage;
+  receivedAt: number;
+};
+
+export type GatewayObservedRequestError = {
+  kind: GatewayObservedRequestKind;
+  requestId?: string;
+  runId?: string | null;
+  sessionKey?: string;
+  agentId?: string | null;
+  message: string;
+  occurredAt: number;
+};
+
+export type GatewayLifecycleObserver = {
+  onRequestStart?: (event: GatewayObservedRequestStart) => void;
+  onRunAccepted?: (event: GatewayObservedRunAccepted) => void;
+  onAssistantMessage?: (event: GatewayObservedAssistantMessage) => void;
+  onRequestError?: (event: GatewayObservedRequestError) => void;
 };
 
 export interface GatewayMessage {
@@ -256,18 +305,122 @@ export interface GatewayAgentWaitPayload {
   error?: string;
 }
 
+export type GatewayCronSchedule =
+  | {
+      kind: "at";
+      at: string;
+    }
+  | {
+      kind: "every";
+      everyMs: number;
+      anchorMs?: number;
+    }
+  | {
+      kind: "cron";
+      expr: string;
+      tz?: string;
+      staggerMs?: number;
+    };
+
+export type GatewayCronSessionTarget = "main" | "isolated";
+export type GatewayCronWakeMode = "next-heartbeat" | "now";
+export type GatewayCronDeliveryMode = "none" | "announce" | "webhook";
+export type GatewayCronRunStatus = "ok" | "error" | "skipped";
+export type GatewayCronDeliveryStatus = "delivered" | "not-delivered" | "unknown" | "not-requested";
+
+export interface GatewayCronFailureDestination {
+  channel?: string;
+  to?: string;
+  accountId?: string;
+  mode?: "announce" | "webhook";
+}
+
+export interface GatewayCronDelivery {
+  mode: GatewayCronDeliveryMode;
+  channel?: string;
+  to?: string;
+  accountId?: string;
+  bestEffort?: boolean;
+  failureDestination?: GatewayCronFailureDestination;
+}
+
+export interface GatewayCronFailureAlert {
+  after?: number;
+  channel?: string;
+  to?: string;
+  cooldownMs?: number;
+  mode?: "announce" | "webhook";
+  accountId?: string;
+}
+
+export type GatewayCronPayload =
+  | {
+      kind: "systemEvent";
+      text: string;
+    }
+  | {
+      kind: "agentTurn";
+      message: string;
+      model?: string;
+      fallbacks?: string[];
+      thinking?: string;
+      timeoutSeconds?: number;
+      allowUnsafeExternalContent?: boolean;
+      lightContext?: boolean;
+      deliver?: boolean;
+      channel?: string;
+      to?: string;
+      bestEffortDeliver?: boolean;
+    };
+
+export type GatewayCronPayloadPatch =
+  | {
+      kind: "systemEvent";
+      text?: string;
+    }
+  | {
+      kind: "agentTurn";
+      message?: string;
+      model?: string;
+      fallbacks?: string[];
+      thinking?: string;
+      timeoutSeconds?: number;
+      allowUnsafeExternalContent?: boolean;
+      lightContext?: boolean;
+      deliver?: boolean;
+      channel?: string;
+      to?: string;
+      bestEffortDeliver?: boolean;
+    };
+
 export interface GatewayCronJob {
   id: string;
   name: string;
+  sessionTarget?: GatewayCronSessionTarget;
+  wakeMode?: GatewayCronWakeMode;
   enabled?: boolean;
   agentId?: string | null;
+  sessionKey?: string | null;
   description?: string;
+  deleteAfterRun?: boolean;
+  createdAtMs?: number;
+  updatedAtMs?: number;
+  schedule?: GatewayCronSchedule;
+  payload?: GatewayCronPayload;
+  delivery?: GatewayCronDelivery;
+  failureAlert?: GatewayCronFailureAlert | false;
   state?: {
     nextRunAtMs?: number;
     runningAtMs?: number;
     lastRunAtMs?: number;
     lastRunStatus?: string;
     lastStatus?: string;
+    lastError?: string;
+    lastDeliveryStatus?: GatewayCronDeliveryStatus;
+    lastDeliveryError?: string;
+    lastDurationMs?: number;
+    consecutiveErrors?: number;
+    lastDelivered?: boolean;
   };
 }
 
@@ -285,6 +438,86 @@ export interface GatewayCronStatusResponse {
   storePath?: string;
   jobs?: number;
   nextWakeAtMs?: number | null;
+}
+
+export interface GatewayCronCreateParams {
+  name: string;
+  agentId?: string | null;
+  sessionKey?: string | null;
+  description?: string;
+  enabled?: boolean;
+  deleteAfterRun?: boolean;
+  schedule: GatewayCronSchedule;
+  sessionTarget: GatewayCronSessionTarget;
+  wakeMode: GatewayCronWakeMode;
+  payload: GatewayCronPayload;
+  delivery?: GatewayCronDelivery;
+  failureAlert?: GatewayCronFailureAlert | false;
+}
+
+export interface GatewayCronJobPatch {
+  name?: string;
+  agentId?: string | null;
+  sessionKey?: string | null;
+  description?: string;
+  enabled?: boolean;
+  deleteAfterRun?: boolean;
+  schedule?: GatewayCronSchedule;
+  sessionTarget?: GatewayCronSessionTarget;
+  wakeMode?: GatewayCronWakeMode;
+  payload?: GatewayCronPayloadPatch;
+  delivery?: Partial<GatewayCronDelivery>;
+  failureAlert?: GatewayCronFailureAlert | false;
+  state?: Partial<NonNullable<GatewayCronJob["state"]>>;
+}
+
+export interface GatewayCronRemoveResponse {
+  ok?: boolean;
+  removed?: boolean;
+}
+
+export interface GatewayCronRunResponse {
+  ok?: boolean;
+  ran?: boolean;
+  enqueued?: boolean;
+  runId?: string;
+  reason?: string;
+}
+
+export interface GatewayCronRunLogEntry {
+  ts: number;
+  jobId: string;
+  action: "finished";
+  status?: GatewayCronRunStatus;
+  error?: string;
+  summary?: string;
+  delivered?: boolean;
+  deliveryStatus?: GatewayCronDeliveryStatus;
+  deliveryError?: string;
+  sessionId?: string;
+  sessionKey?: string;
+  runAtMs?: number;
+  durationMs?: number;
+  nextRunAtMs?: number;
+  model?: string;
+  provider?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+    cache_read_tokens?: number;
+    cache_write_tokens?: number;
+  };
+  jobName?: string;
+}
+
+export interface GatewayCronRunsResponse {
+  entries?: GatewayCronRunLogEntry[];
+  total?: number;
+  offset?: number;
+  limit?: number;
+  hasMore?: boolean;
+  nextOffset?: number | null;
 }
 
 export interface GatewayCronEventPayload {
@@ -313,6 +546,11 @@ export interface GatewayCronEventPayload {
 }
 
 type GatewaySessionMutationResult = Record<string, unknown>;
+type GatewayChatAbortResult = {
+  ok?: boolean;
+  aborted?: boolean;
+  runIds?: string[];
+};
 type GatewaySessionDefaultsPayload = {
   defaults?: {
     contextTokens?: number | null;
@@ -340,6 +578,15 @@ function toPositiveInteger(value: unknown) {
 
 function isGroupSessionKey(value: unknown) {
   return typeof value === "string" && value.includes(":group:");
+}
+
+function parseAgentIdFromSessionKey(value: unknown) {
+  if (typeof value !== "string" || !value.startsWith("agent:")) {
+    return null;
+  }
+
+  const agentId = value.split(":")[1]?.trim();
+  return agentId || null;
 }
 
 function summarizeTextFieldForLog(label: string, value: unknown) {
@@ -541,6 +788,7 @@ class GatewayService {
   private onMessage: MessageHandler | null = null;
   private onStatus: StatusHandler | null = null;
   private eventHandlers = new Set<GatewayEventHandler>();
+  private lifecycleObservers = new Set<GatewayLifecycleObserver>();
   private pendingRequests = new Map<string, PendingRequest>();
   private pendingChatRuns = new Map<string, string>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -565,6 +813,37 @@ class GatewayService {
     return () => {
       this.eventHandlers.delete(handler);
     };
+  }
+
+  addLifecycleObserver(observer: GatewayLifecycleObserver) {
+    this.lifecycleObservers.add(observer);
+    return () => {
+      this.lifecycleObservers.delete(observer);
+    };
+  }
+
+  private notifyRequestStart(event: GatewayObservedRequestStart) {
+    for (const observer of this.lifecycleObservers) {
+      observer.onRequestStart?.(event);
+    }
+  }
+
+  private notifyRunAccepted(event: GatewayObservedRunAccepted) {
+    for (const observer of this.lifecycleObservers) {
+      observer.onRunAccepted?.(event);
+    }
+  }
+
+  private notifyAssistantMessage(event: GatewayObservedAssistantMessage) {
+    for (const observer of this.lifecycleObservers) {
+      observer.onAssistantMessage?.(event);
+    }
+  }
+
+  private notifyRequestError(event: GatewayObservedRequestError) {
+    for (const observer of this.lifecycleObservers) {
+      observer.onRequestError?.(event);
+    }
   }
 
   // 连接 Gateway
@@ -662,6 +941,7 @@ class GatewayService {
       const state = typeof data.payload?.state === "string" ? data.payload.state : null;
       const sessionKey =
         typeof data.payload?.sessionKey === "string" ? data.payload.sessionKey : "agent:main:main";
+      const agentId = parseAgentIdFromSessionKey(sessionKey);
 
       console.log(
         "[GW] chat event:",
@@ -688,6 +968,14 @@ class GatewayService {
             : `chat ${state}`;
         const error = new Error(errorMessage);
         console.error("[GW] error:", error);
+        this.notifyRequestError({
+          kind: "chat.send",
+          runId,
+          sessionKey,
+          agentId,
+          message: error.message,
+          occurredAt: Date.now(),
+        });
         if (runId) {
           this.finishChatRun(runId, {
             type: "res",
@@ -773,6 +1061,41 @@ class GatewayService {
       if (resolver) {
         const payloadStatus = data.payload?.status;
         const runId = typeof data.payload?.runId === "string" ? data.payload.runId : null;
+        const kind =
+          resolver.method === "chat.send" || resolver.method === "agent" ? resolver.method : null;
+        const accepted =
+          runId &&
+          !Array.isArray(data.payload?.messages) &&
+          (payloadStatus === "accepted" ||
+            payloadStatus === "started" ||
+            payloadStatus === "in_flight" ||
+            payloadStatus === undefined);
+        if (kind && accepted) {
+          this.notifyRunAccepted({
+            kind,
+            requestId: resolver.requestTag ?? responseId,
+            runId,
+            sessionKey:
+              resolver.sessionKey ??
+              (typeof data.payload?.sessionKey === "string"
+                ? data.payload.sessionKey
+                : "agent:main:main"),
+            agentId: resolver.agentId ?? parseAgentIdFromSessionKey(data.payload?.sessionKey),
+            acceptedAt: Date.now(),
+          });
+        }
+        if (kind && !data.ok) {
+          this.notifyRequestError({
+            kind,
+            requestId: resolver.requestTag ?? responseId,
+            sessionKey:
+              resolver.sessionKey ??
+              (typeof data.payload?.sessionKey === "string" ? data.payload.sessionKey : undefined),
+            agentId: resolver.agentId ?? parseAgentIdFromSessionKey(data.payload?.sessionKey),
+            message: data.error?.message || `${resolver.method} failed`,
+            occurredAt: Date.now(),
+          });
+        }
         if (
           resolver.method === "chat.send" &&
           resolver.waitForChatFinal === true &&
@@ -864,10 +1187,14 @@ class GatewayService {
       })
       .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null);
     return new Promise((resolve) => {
+      const agentId = parseAgentIdFromSessionKey(sessionKey);
       this.pendingRequests.set(id, {
         method: "chat.send",
         // Fix: 问题11 - 仅 sendChat 辅助方法等待最终 chat 事件，通用 sendRequest("chat.send") 仍按原版只等 accepted 回执。
         waitForChatFinal: true,
+        sessionKey,
+        agentId: agentId ?? undefined,
+        requestTag: id,
         resolve,
         reject: (error) =>
           resolve({
@@ -876,6 +1203,14 @@ class GatewayService {
             ok: false,
             error: { message: error.message },
           }),
+      });
+
+      this.notifyRequestStart({
+        kind: "chat.send",
+        requestId: id,
+        sessionKey,
+        agentId,
+        startedAt: Date.now(),
       });
 
       console.log(`[GW] chat.send: sessionKey=${sessionKey}, id=${id}`);
@@ -895,6 +1230,14 @@ class GatewayService {
         this.pendingRequests.delete(id);
         const error = new Error("gateway chat.send send failed");
         console.error("[GW] error:", error);
+        this.notifyRequestError({
+          kind: "chat.send",
+          requestId: id,
+          sessionKey,
+          agentId,
+          message: error.message,
+          occurredAt: Date.now(),
+        });
         resolve({
           type: "res",
           id,
@@ -909,6 +1252,14 @@ class GatewayService {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
           this.dropPendingChatRunByRequestId(id);
+          this.notifyRequestError({
+            kind: "chat.send",
+            requestId: id,
+            sessionKey,
+            agentId,
+            message: "timeout",
+            occurredAt: Date.now(),
+          });
           resolve({
             type: "res",
             id,
@@ -972,7 +1323,19 @@ class GatewayService {
     console.log(
       `[Group] 发送 Agent 请求: sessionKey=${params.sessionKey}, agentId=${params.agentId ?? "auto"}, id=${idempotencyKey}, hasExtraSystemPrompt=${Boolean(params.extraSystemPrompt?.trim())}, messageLength=${params.message.length}`,
     );
-    return this.sendRequest<GatewayAgentTurnAcceptedPayload>("agent", payload);
+    try {
+      return await this.sendRequest<GatewayAgentTurnAcceptedPayload>("agent", payload);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim() ? error.message : "agent request failed";
+      const affectedProviders = trackModelProviderError(message);
+      if (affectedProviders.length > 0) {
+        console.log(
+          `[Model] 记录供应商状态: providers=${affectedProviders.join(", ")}, reason=${message}`,
+        );
+      }
+      throw error;
+    }
   }
 
   async waitForAgentRun(runId: string, timeoutMs = 120000): Promise<GatewayAgentWaitPayload> {
@@ -984,6 +1347,16 @@ class GatewayService {
         timeoutMs,
       },
       timeoutMs + 5000,
+    );
+  }
+
+  async abortSession(sessionKey: string, runId?: string): Promise<GatewayChatAbortResult> {
+    console.log(
+      `[GW] abortSession: key=${sessionKey}${runId?.trim() ? `, runId=${runId.trim()}` : ""}`,
+    );
+    return this.sendRequest<GatewayChatAbortResult>(
+      "chat.abort",
+      runId?.trim() ? { sessionKey, runId: runId.trim() } : { sessionKey },
     );
   }
 
@@ -1233,18 +1606,93 @@ class GatewayService {
     return groupModelsByProvider(Array.isArray(payload.models) ? payload.models : []);
   }
 
-  async listCronJobs() {
-    console.log("[GW] cron.list");
+  async listCronJobs(
+    params: {
+      includeDisabled?: boolean;
+      limit?: number;
+      offset?: number;
+      query?: string;
+      enabled?: "all" | "enabled" | "disabled";
+      sortBy?: "nextRunAtMs" | "updatedAtMs" | "name";
+      sortDir?: "asc" | "desc";
+    } = {},
+  ) {
+    console.log("[Cron] gateway cron.list");
     return await this.sendRequest<GatewayCronListResponse>("cron.list", {
       includeDisabled: true,
       limit: 200,
       offset: 0,
+      ...params,
     });
   }
 
   async getCronStatus() {
-    console.log("[GW] cron.status");
+    console.log("[Cron] gateway cron.status");
     return await this.sendRequest<GatewayCronStatusResponse>("cron.status", {});
+  }
+
+  async createCronJob(params: GatewayCronCreateParams) {
+    console.log(`[Cron] gateway cron.add: ${params.name}`);
+    return await this.sendRequest<GatewayCronJob>(
+      "cron.add",
+      params as unknown as Record<string, unknown>,
+    );
+  }
+
+  async updateCronJob(jobId: string, patch: GatewayCronJobPatch) {
+    console.log(`[Cron] gateway cron.update: ${jobId}`);
+    return await this.sendRequest<GatewayCronJob>("cron.update", {
+      id: jobId,
+      patch,
+    });
+  }
+
+  async removeCronJob(jobId: string) {
+    console.log(`[Cron] gateway cron.remove: ${jobId}`);
+    return await this.sendRequest<GatewayCronRemoveResponse>("cron.remove", {
+      id: jobId,
+    });
+  }
+
+  async pauseCronJob(jobId: string) {
+    console.log(`[Cron] gateway cron.pause: ${jobId}`);
+    return await this.updateCronJob(jobId, { enabled: false });
+  }
+
+  async resumeCronJob(jobId: string) {
+    console.log(`[Cron] gateway cron.resume: ${jobId}`);
+    return await this.updateCronJob(jobId, { enabled: true });
+  }
+
+  async runCronJob(jobId: string, mode: "due" | "force" = "force") {
+    console.log(`[Cron] gateway cron.run: ${jobId}`);
+    return await this.sendRequest<GatewayCronRunResponse>("cron.run", {
+      id: jobId,
+      mode,
+    });
+  }
+
+  async listCronRuns(
+    params: {
+      jobId?: string;
+      scope?: "job" | "all";
+      limit?: number;
+      offset?: number;
+      status?: "all" | "ok" | "error" | "skipped";
+      statuses?: GatewayCronRunStatus[];
+      deliveryStatus?: GatewayCronDeliveryStatus;
+      deliveryStatuses?: GatewayCronDeliveryStatus[];
+      query?: string;
+      sortDir?: "asc" | "desc";
+    } = {},
+  ) {
+    console.log(`[Cron] gateway cron.runs: ${params.jobId?.trim() || params.scope || "all"}`);
+    return await this.sendRequest<GatewayCronRunsResponse>("cron.runs", {
+      limit: 20,
+      sortDir: "desc",
+      ...(params.jobId ? { id: params.jobId } : {}),
+      ...params,
+    });
   }
 
   async getAgentIdentity(agentId: string) {
@@ -1660,6 +2108,14 @@ class GatewayService {
 
       if (this.hasRenderableMessage(message)) {
         console.log("[GW] chat reply:", 1, "msgs");
+        this.notifyAssistantMessage({
+          kind: "chat.send",
+          runId: params.runId,
+          sessionKey: params.sessionKey,
+          agentId: parseAgentIdFromSessionKey(params.sessionKey),
+          message,
+          receivedAt: Date.now(),
+        });
         this.onMessage?.([message], {
           sessionKey: params.sessionKey,
           runId: params.runId ?? undefined,
@@ -1718,11 +2174,33 @@ class GatewayService {
 
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
+      const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey : undefined;
+      const agentId =
+        (typeof params.agentId === "string" && params.agentId.trim()) ||
+        parseAgentIdFromSessionKey(sessionKey) ||
+        undefined;
+      const requestTag =
+        typeof params.idempotencyKey === "string" && params.idempotencyKey.trim()
+          ? params.idempotencyKey.trim()
+          : id;
       this.pendingRequests.set(id, {
         method,
+        sessionKey,
+        agentId,
+        requestTag,
         resolve,
         reject,
       });
+
+      if ((method === "chat.send" || method === "agent") && sessionKey) {
+        this.notifyRequestStart({
+          kind: method,
+          requestId: requestTag,
+          sessionKey,
+          agentId,
+          startedAt: Date.now(),
+        });
+      }
 
       const sent = this.send({
         type: "req",
@@ -1735,6 +2213,16 @@ class GatewayService {
         this.pendingRequests.delete(id);
         const error = new Error(`gateway ${method} send failed`);
         console.error("[GW] error:", error);
+        if ((method === "chat.send" || method === "agent") && sessionKey) {
+          this.notifyRequestError({
+            kind: method,
+            requestId: requestTag,
+            sessionKey,
+            agentId,
+            message: error.message,
+            occurredAt: Date.now(),
+          });
+        }
         reject(error);
         return;
       }
@@ -1742,6 +2230,16 @@ class GatewayService {
       setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
+          if ((method === "chat.send" || method === "agent") && sessionKey) {
+            this.notifyRequestError({
+              kind: method,
+              requestId: requestTag,
+              sessionKey,
+              agentId,
+              message: `${method} timeout`,
+              occurredAt: Date.now(),
+            });
+          }
           reject(new Error(`${method} timeout`));
         }
       }, timeoutMs);

@@ -1,10 +1,10 @@
 "use client";
 
 import {
-  Archive,
   ArrowUpRight,
   BriefcaseBusiness,
   ChevronDown,
+  MoreHorizontal,
   Plus,
   Settings,
   Sparkles,
@@ -14,9 +14,17 @@ import { ConfirmModal } from "@/components/modals/ConfirmModal";
 import { CreateEmployeeModal } from "@/components/modals/CreateEmployeeModal";
 import { CreateGroupModal } from "@/components/modals/CreateGroupModal";
 import { DepartmentManageModal } from "@/components/modals/DepartmentManageModal";
+import { ModelProvidersSettingsModal } from "@/components/modals/ModelProvidersSettingsModal";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useAgentStore, type Agent } from "@/stores/agentStore";
+import { useArchiveViewStore } from "@/stores/archiveViewStore";
 import { useChatStore } from "@/stores/chatStore";
 import { useDirectArchiveStore } from "@/stores/directArchiveStore";
 import { useGroupStore, type GroupArchive, type GroupChatMessage } from "@/stores/groupStore";
@@ -26,6 +34,13 @@ import {
   getAgentAvatarInfo,
   removeAgentAvatarMapping,
 } from "@/utils/agentAvatar";
+import { exportDirectArchiveAsMarkdown, exportGroupArchiveAsMarkdown } from "@/utils/archiveExport";
+import {
+  buildArchiveDisplayTitle,
+  extractArchiveEditableTitle,
+  formatArchiveListDate,
+  sanitizeArchiveTitle,
+} from "@/utils/archiveTitle";
 import { getGroupDisplayMemberCount } from "@/utils/groupMembers";
 import { resolveAvatarImage } from "@/utils/groupSurface";
 import type { ChatMessage } from "@/utils/messageAdapter";
@@ -35,6 +50,8 @@ import {
   readSidebarCollapsedSections,
   readSidebarDepartments,
   readSidebarDirectArchives,
+  removeSidebarDirectArchiveById,
+  renameSidebarDirectArchiveById,
   readSidebarUnreadState,
   readSidebarVisualPreset,
   subscribeSidebarStorage,
@@ -94,12 +111,45 @@ type GroupArchiveRowProps = {
   archive: GroupArchive;
   selected: boolean;
   onClick: () => void;
+  onDelete: () => void;
 };
 
 type DirectArchiveRowProps = {
   archive: SidebarDirectArchive;
   selected: boolean;
   onClick: () => void;
+  onDelete: () => void;
+};
+
+type ArchiveDeleteTarget = {
+  kind: "group" | "direct";
+  id: string;
+  title: string;
+};
+
+type ArchiveRenameTarget = {
+  kind: "group" | "direct";
+  id: string;
+  storedTitle: string;
+  sourceName: string;
+  archivedAt: string;
+  draftTitle: string;
+};
+
+type GroupArchiveCluster = {
+  sourceId: string;
+  sourceName: string;
+  archives: GroupArchive[];
+  latestArchive: GroupArchive;
+  hasSelectedArchive: boolean;
+};
+
+type DirectArchiveCluster = {
+  sourceId: string;
+  sourceName: string;
+  archives: SidebarDirectArchive[];
+  latestArchive: SidebarDirectArchive;
+  hasSelectedArchive: boolean;
 };
 
 export interface Employee {
@@ -122,6 +172,13 @@ const SECTION_KEYS = {
   groupArchives: "section:group-archives",
   directArchives: "section:direct-archives",
 } as const;
+
+const ARCHIVE_TITLE_MAX_LENGTH = 50;
+
+const DEFAULT_COLLAPSED_SECTIONS = {
+  [SECTION_KEYS.groupArchives]: true,
+  [SECTION_KEYS.directArchives]: true,
+} satisfies SidebarCollapsedSections;
 
 const AVATAR_COLORS = [
   "var(--color-avatar-1)",
@@ -235,6 +292,15 @@ function getGroupIconBackground(groupId: string) {
   return GROUP_ICON_GRADIENTS[hashText(groupId) % GROUP_ICON_GRADIENTS.length];
 }
 
+function mergeCollapsedSectionDefaults(
+  sections: SidebarCollapsedSections,
+): SidebarCollapsedSections {
+  return {
+    ...DEFAULT_COLLAPSED_SECTIONS,
+    ...sections,
+  };
+}
+
 function ProjectGroupAvatar({
   groupId,
   name,
@@ -312,6 +378,27 @@ function formatSidebarTimestamp(date: Date) {
     : `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
+function limitArchiveTitleLength(value: string) {
+  return Array.from(value).slice(0, ARCHIVE_TITLE_MAX_LENGTH).join("");
+}
+
+function resolveArchiveDisplayMeta(sourceName: string, storedTitle: string, archivedAt: string) {
+  return {
+    sourceName: sourceName.trim() || "未命名归档",
+    titlePart: extractArchiveEditableTitle({
+      title: storedTitle,
+      sourceName,
+      archivedAt,
+    }),
+    dateLabel: formatArchiveListDate(archivedAt),
+    fullLabel: buildArchiveDisplayTitle({
+      title: storedTitle,
+      sourceName,
+      archivedAt,
+    }),
+  };
+}
+
 function getGroupPreview(messages: GroupChatMessage[], fallbackCreatedAt: string) {
   const visibleMessages = messages.filter(
     (message) => !message.isLoading && message.content.trim(),
@@ -339,38 +426,60 @@ function getGroupPreview(messages: GroupChatMessage[], fallbackCreatedAt: string
   };
 }
 
-function getArchivePreview(archive: GroupArchive) {
-  const visibleMessages = archive.messages.filter(
-    (message) => !message.isLoading && message.content.trim(),
-  );
-  const latestMessage = visibleMessages[visibleMessages.length - 1];
+function groupVisibleGroupArchives(
+  archives: GroupArchive[],
+  selectedArchiveId: string | null,
+): GroupArchiveCluster[] {
+  const groupedArchives = new Map<string, GroupArchive[]>();
 
-  if (!latestMessage) {
-    return {
-      preview: "已归档，可随时回看",
-      timestamp: formatSidebarTimestamp(new Date(archive.createdAt)),
-    };
-  }
+  archives.forEach((archive) => {
+    const sourceId = archive.groupId.trim() || archive.id;
+    const currentArchives = groupedArchives.get(sourceId) ?? [];
+    currentArchives.push(archive);
+    groupedArchives.set(sourceId, currentArchives);
+  });
 
-  const previewText = latestMessage.content.replace(/\s+/g, " ").trim();
-  const senderLabel =
-    latestMessage.role === "user" ? "你" : latestMessage.senderName?.trim() || "成员";
-  const timestampSource =
-    typeof latestMessage.timestamp === "number" && Number.isFinite(latestMessage.timestamp)
-      ? new Date(latestMessage.timestamp)
-      : new Date(archive.createdAt);
-
-  return {
-    preview: `${senderLabel}：${previewText}`,
-    timestamp: formatSidebarTimestamp(timestampSource),
-  };
+  return Array.from(groupedArchives.entries())
+    .map(([sourceId, sourceArchives]) => ({
+      sourceId,
+      sourceName: sourceArchives[0]?.groupName?.trim() || "项目组归档",
+      archives: sourceArchives,
+      latestArchive: sourceArchives[0],
+      hasSelectedArchive: sourceArchives.some((archive) => archive.id === selectedArchiveId),
+    }))
+    .toSorted(
+      (left, right) =>
+        new Date(right.latestArchive.createdAt).getTime() -
+        new Date(left.latestArchive.createdAt).getTime(),
+    );
 }
 
-function getDirectArchivePreview(archive: SidebarDirectArchive) {
-  return {
-    preview: archive.preview,
-    timestamp: formatSidebarTimestamp(new Date(archive.archivedAt)),
-  };
+function groupVisibleDirectArchives(
+  archives: SidebarDirectArchive[],
+  selectedArchiveId: string | null,
+): DirectArchiveCluster[] {
+  const groupedArchives = new Map<string, SidebarDirectArchive[]>();
+
+  archives.forEach((archive) => {
+    const sourceId = archive.agentId.trim() || archive.id;
+    const currentArchives = groupedArchives.get(sourceId) ?? [];
+    currentArchives.push(archive);
+    groupedArchives.set(sourceId, currentArchives);
+  });
+
+  return Array.from(groupedArchives.entries())
+    .map(([sourceId, sourceArchives]) => ({
+      sourceId,
+      sourceName: sourceArchives[0]?.agentName?.trim() || "1v1 归档",
+      archives: sourceArchives,
+      latestArchive: sourceArchives[0],
+      hasSelectedArchive: sourceArchives.some((archive) => archive.id === selectedArchiveId),
+    }))
+    .toSorted(
+      (left, right) =>
+        new Date(right.latestArchive.archivedAt).getTime() -
+        new Date(left.latestArchive.archivedAt).getTime(),
+    );
 }
 
 function toEmployee(agent: Agent, preview: ReturnType<typeof getPreview>): Employee {
@@ -435,14 +544,23 @@ function SidebarSectionHeader({
   count,
   collapsed,
   onToggle,
+  variant = "default",
 }: {
   label: string;
   count?: number;
   collapsed: boolean;
   onToggle: () => void;
+  variant?: "default" | "archive";
 }) {
   return (
-    <button type="button" onClick={onToggle} className="workspace-sidebar__section-header">
+    <button
+      type="button"
+      onClick={onToggle}
+      className={cn(
+        "workspace-sidebar__section-header",
+        variant === "archive" ? "workspace-sidebar__section-header--archive" : "",
+      )}
+    >
       <ChevronDown
         className={cn(
           "workspace-sidebar__section-chevron shrink-0 transition-transform duration-200",
@@ -452,7 +570,14 @@ function SidebarSectionHeader({
       <span className="workspace-sidebar__section-labels">
         <span className="truncate leading-5">{label}</span>
         {typeof count === "number" ? (
-          <span className="workspace-sidebar__section-count">{count}</span>
+          <span
+            className={cn(
+              "workspace-sidebar__section-count",
+              variant === "archive" ? "workspace-sidebar__section-count--inline" : "",
+            )}
+          >
+            {variant === "archive" ? `(${count})` : count}
+          </span>
         ) : null}
       </span>
     </button>
@@ -772,63 +897,283 @@ function ProjectGroupRow({
   );
 }
 
-function GroupArchiveRow({ archive, selected, onClick }: GroupArchiveRowProps) {
-  const preview = getArchivePreview(archive);
-
+function ArchiveGroupToggleRow({
+  sourceName,
+  archiveCount,
+  expanded,
+  selected,
+  onToggle,
+}: {
+  sourceName: string;
+  archiveCount: number;
+  expanded: boolean;
+  selected: boolean;
+  onToggle: () => void;
+}) {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={onToggle}
       className={cn(
-        "workspace-sidebar__row group overflow-hidden text-left",
-        selected ? "workspace-sidebar__row--selected" : "",
+        "workspace-sidebar__archive-group-row",
+        selected ? "workspace-sidebar__archive-group-row--selected" : "",
       )}
     >
-      <div
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--accent-foreground)]"
-        style={{ background: "linear-gradient(135deg, var(--muted-strong), var(--muted))" }}
-      >
-        <Archive className="h-4 w-4" />
-      </div>
-
-      <div className="workspace-sidebar__row-body">
-        <div className="workspace-sidebar__row-title">
-          <span className="workspace-sidebar__row-name">{archive.groupName}</span>
-          <span className="workspace-sidebar__row-meta">{preview.timestamp}</span>
+      <span className="workspace-sidebar__archive-group-arrow" aria-hidden="true">
+        {expanded ? "▾" : "▸"}
+      </span>
+      <span className="workspace-sidebar__archive-group-icon" aria-hidden="true">
+        {expanded ? "📂" : "📁"}
+      </span>
+      <div className="workspace-sidebar__archive-group-body">
+        <div
+          className="workspace-sidebar__archive-group-title"
+          title={`${sourceName} (${archiveCount})`}
+        >
+          {sourceName} ({archiveCount})
         </div>
-        <div className="workspace-sidebar__row-preview">{preview.preview}</div>
       </div>
     </button>
   );
 }
 
-function DirectArchiveRow({ archive, selected, onClick }: DirectArchiveRowProps) {
-  const preview = getDirectArchivePreview(archive);
+function ArchiveRow({
+  icon,
+  sourceName,
+  dateLabel,
+  label,
+  selected,
+  isEditing = false,
+  draftTitle = "",
+  nested = false,
+  onClick,
+  onDraftTitleChange,
+  onRename,
+  onRenameCancel,
+  onRenameSave,
+  onExport,
+  onDelete,
+}: {
+  icon: string;
+  sourceName: string;
+  dateLabel: string;
+  label: string;
+  selected: boolean;
+  isEditing?: boolean;
+  draftTitle?: string;
+  nested?: boolean;
+  onClick: () => void;
+  onDraftTitleChange?: (value: string) => void;
+  onRename: () => void;
+  onRenameCancel?: () => void;
+  onRenameSave?: () => void;
+  onExport: () => void;
+  onDelete: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!isEditing) {
+      return;
+    }
+
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [isEditing]);
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <div
       className={cn(
-        "workspace-sidebar__row group overflow-hidden text-left",
-        selected ? "workspace-sidebar__row--selected" : "",
+        "workspace-sidebar__archive-row-shell",
+        nested ? "workspace-sidebar__archive-row-shell--nested" : "",
       )}
     >
-      <div
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--accent-foreground)]"
-        style={{ background: "linear-gradient(135deg, var(--info), var(--accent-2))" }}
-      >
-        <span className="text-[11px] font-semibold">1v1</span>
-      </div>
+      {isEditing ? (
+        <div
+          className={cn(
+            "workspace-sidebar__archive-row workspace-sidebar__archive-row--editing",
+            selected ? "workspace-sidebar__archive-row--selected" : "",
+          )}
+        >
+          <span className="workspace-sidebar__archive-row-content">
+            <span className="workspace-sidebar__archive-row-icon" aria-hidden="true">
+              {icon}
+            </span>
+            <span className="workspace-sidebar__archive-row-prefix">{sourceName} -</span>
+            <input
+              ref={inputRef}
+              type="text"
+              value={draftTitle}
+              maxLength={ARCHIVE_TITLE_MAX_LENGTH}
+              className="workspace-sidebar__archive-row-input"
+              onChange={(event) => {
+                onDraftTitleChange?.(limitArchiveTitleLength(event.target.value));
+              }}
+              onBlur={() => {
+                onRenameSave?.();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  onRenameSave?.();
+                  return;
+                }
 
-      <div className="workspace-sidebar__row-body">
-        <div className="workspace-sidebar__row-title">
-          <span className="workspace-sidebar__row-name">{archive.agentName}</span>
-          <span className="workspace-sidebar__row-meta">{preview.timestamp}</span>
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  onRenameCancel?.();
+                }
+              }}
+            />
+            <span className="workspace-sidebar__archive-row-suffix">- {dateLabel}</span>
+          </span>
         </div>
-        <div className="workspace-sidebar__row-preview">{preview.preview}</div>
+      ) : (
+        <button
+          type="button"
+          onClick={onClick}
+          aria-current={selected ? "true" : undefined}
+          className={cn(
+            "workspace-sidebar__archive-row",
+            selected ? "workspace-sidebar__archive-row--selected" : "",
+          )}
+        >
+          <span className="workspace-sidebar__archive-row-content">
+            <span className="workspace-sidebar__archive-row-icon" aria-hidden="true">
+              {icon}
+            </span>
+            <span className="workspace-sidebar__archive-row-name" title={label}>
+              {label}
+            </span>
+          </span>
+        </button>
+      )}
+
+      <div className="workspace-sidebar__archive-row-actions">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            className="workspace-sidebar__archive-row-menu-button"
+            aria-label={`打开 ${label} 操作菜单`}
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="left" align="end">
+            <DropdownMenuItem
+              onSelect={onRename}
+              className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-secondary)]"
+            >
+              <span>重命名</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={onExport}
+              className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-secondary)]"
+            >
+              <span>导出</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={onDelete}
+              className="text-[var(--color-text-secondary)] hover:text-[var(--danger)]"
+            >
+              <span>删除</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-    </button>
+    </div>
+  );
+}
+
+function GroupArchiveRow({
+  archive,
+  selected,
+  isEditing,
+  draftTitle,
+  onClick,
+  onDraftTitleChange,
+  onRename,
+  onRenameCancel,
+  onRenameSave,
+  onDelete,
+}: GroupArchiveRowProps & {
+  isEditing?: boolean;
+  draftTitle?: string;
+  onDraftTitleChange?: (value: string) => void;
+  onRename: () => void;
+  onRenameCancel?: () => void;
+  onRenameSave?: () => void;
+}) {
+  const displayMeta = resolveArchiveDisplayMeta(
+    archive.groupName,
+    archive.title,
+    archive.createdAt,
+  );
+
+  return (
+    <ArchiveRow
+      icon="📁"
+      sourceName={displayMeta.sourceName}
+      dateLabel={displayMeta.dateLabel}
+      label={displayMeta.fullLabel}
+      selected={selected}
+      isEditing={isEditing}
+      draftTitle={draftTitle}
+      onClick={onClick}
+      onDraftTitleChange={onDraftTitleChange}
+      onRename={onRename}
+      onRenameCancel={onRenameCancel}
+      onRenameSave={onRenameSave}
+      onExport={() => {
+        exportGroupArchiveAsMarkdown(archive);
+      }}
+      onDelete={onDelete}
+    />
+  );
+}
+
+function DirectArchiveRow({
+  archive,
+  selected,
+  isEditing,
+  draftTitle,
+  onClick,
+  onDraftTitleChange,
+  onRename,
+  onRenameCancel,
+  onRenameSave,
+  onDelete,
+}: DirectArchiveRowProps & {
+  isEditing?: boolean;
+  draftTitle?: string;
+  onDraftTitleChange?: (value: string) => void;
+  onRename: () => void;
+  onRenameCancel?: () => void;
+  onRenameSave?: () => void;
+}) {
+  const displayMeta = resolveArchiveDisplayMeta(
+    archive.agentName,
+    archive.title,
+    archive.archivedAt,
+  );
+
+  return (
+    <ArchiveRow
+      icon="💬"
+      sourceName={displayMeta.sourceName}
+      dateLabel={displayMeta.dateLabel}
+      label={displayMeta.fullLabel}
+      selected={selected}
+      isEditing={isEditing}
+      draftTitle={draftTitle}
+      onClick={onClick}
+      onDraftTitleChange={onDraftTitleChange}
+      onRename={onRename}
+      onRenameCancel={onRenameCancel}
+      onRenameSave={onRenameSave}
+      onExport={() => {
+        exportDirectArchiveAsMarkdown(archive);
+      }}
+      onDelete={onDelete}
+    />
   );
 }
 
@@ -839,7 +1184,7 @@ interface EmployeeListProps {
 
 function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeListProps) {
   const [collapsedSections, setCollapsedSections] = useState<SidebarCollapsedSections>(() =>
-    readSidebarCollapsedSections(),
+    mergeCollapsedSectionDefaults(readSidebarCollapsedSections()),
   );
   // 部门、置顶和 1v1 归档还没接后端，先从 localStorage 读取 mock 数据。
   const [departments, setDepartments] = useState<SidebarDepartment[]>(() =>
@@ -854,8 +1199,14 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
   const [isCreateEmployeeOpen, setIsCreateEmployeeOpen] = useState(false);
   const [isDepartmentManageOpen, setIsDepartmentManageOpen] = useState(false);
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
+  const [isModelSettingsOpen, setIsModelSettingsOpen] = useState(false);
   const [pendingDeleteEmployee, setPendingDeleteEmployee] = useState<Employee | null>(null);
+  const [pendingDeleteArchive, setPendingDeleteArchive] = useState<ArchiveDeleteTarget | null>(
+    null,
+  );
+  const [editingArchive, setEditingArchive] = useState<ArchiveRenameTarget | null>(null);
   const [isDeletingEmployee, setIsDeletingEmployee] = useState(false);
+  const [expandedArchiveGroups, setExpandedArchiveGroups] = useState<Record<string, boolean>>({});
   const [, setAgentAvatarVersion] = useState(0);
   const agents = useAgentStore((state) => state.agents);
   const currentAgentId = useAgentStore((state) => state.currentAgentId);
@@ -865,6 +1216,10 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
   const deleteAgent = useAgentStore((state) => state.deleteAgent);
   const openDetail = useAgentStore((state) => state.openDetail);
   const closeDetail = useAgentStore((state) => state.closeDetail);
+  const clearArchiveEmptyState = useArchiveViewStore((state) => state.clearArchiveEmptyState);
+  const showDeletedArchiveEmptyState = useArchiveViewStore(
+    (state) => state.showDeletedArchiveEmptyState,
+  );
   const groups = useGroupStore((state) => state.groups);
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
   const selectedArchiveId = useGroupStore((state) => state.selectedArchiveId);
@@ -874,6 +1229,8 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
   const clearSelectedGroup = useGroupStore((state) => state.clearSelectedGroup);
   const selectArchive = useGroupStore((state) => state.selectArchive);
   const clearSelectedArchive = useGroupStore((state) => state.clearSelectedArchive);
+  const deleteGroupArchive = useGroupStore((state) => state.deleteArchive);
+  const renameGroupArchive = useGroupStore((state) => state.renameArchive);
   const switchAgent = useChatStore((state) => state.switchAgent);
   const removeAgentLocalState = useChatStore((state) => state.removeAgentLocalState);
   const status = useChatStore((state) => state.status);
@@ -935,6 +1292,11 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
     (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
   );
   const visibleDirectArchives = directArchives;
+  const groupedGroupArchives = groupVisibleGroupArchives(visibleGroupArchives, selectedArchiveId);
+  const groupedDirectArchives = groupVisibleDirectArchives(
+    visibleDirectArchives,
+    selectedDirectArchiveId,
+  );
 
   const shouldShowPinnedSection = pinnedEntries.length > 0;
   const shouldShowGroupsSection = visibleGroups.length > 0;
@@ -963,6 +1325,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
 
   useEffect(() => {
     return subscribeSidebarStorage(() => {
+      setCollapsedSections(mergeCollapsedSectionDefaults(readSidebarCollapsedSections()));
       setDepartments(readSidebarDepartments());
       setAgentMetaById(readSidebarAgentMetaMap());
       setDirectArchives(readSidebarDirectArchives());
@@ -1035,6 +1398,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
   }, [fetchAgents, switchAgent]);
 
   async function handleSelectAgent(agent: Agent) {
+    clearArchiveEmptyState();
     clearSelectedGroup();
     clearSelectedArchive();
     clearSelectedDirectArchive();
@@ -1049,6 +1413,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
       return;
     }
 
+    clearArchiveEmptyState();
     clearSelectedGroup();
     clearSelectedArchive();
     clearSelectedDirectArchive();
@@ -1058,6 +1423,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
   }
 
   function handleOpenDetail(agentId: string) {
+    clearArchiveEmptyState();
     clearSelectedGroup();
     clearSelectedArchive();
     clearSelectedDirectArchive();
@@ -1128,22 +1494,220 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
   }
 
   function handleSelectGroup(groupId: string) {
+    clearArchiveEmptyState();
     clearSelectedDirectArchive();
     closeDetail();
     selectGroup(groupId);
   }
 
   function handleSelectArchive(archiveId: string) {
+    clearArchiveEmptyState();
     clearSelectedDirectArchive();
     closeDetail();
     selectArchive(archiveId);
   }
 
   function handleSelectDirectArchive(archiveId: string) {
+    clearArchiveEmptyState();
     clearSelectedGroup();
     clearSelectedArchive();
     closeDetail();
     selectDirectArchive(archiveId);
+  }
+
+  function toggleArchiveGroup(key: string) {
+    setExpandedArchiveGroups((current) => ({
+      ...current,
+      [key]: !current[key],
+    }));
+  }
+
+  function isArchiveGroupExpanded(key: string, hasSelectedArchive: boolean) {
+    return hasSelectedArchive || expandedArchiveGroups[key];
+  }
+
+  function requestArchiveDelete(kind: "group" | "direct", id: string, title: string) {
+    setPendingDeleteArchive({
+      kind,
+      id,
+      title,
+    });
+  }
+
+  function requestArchiveRename(
+    kind: "group" | "direct",
+    id: string,
+    sourceName: string,
+    storedTitle: string,
+    archivedAt: string,
+  ) {
+    setEditingArchive({
+      kind,
+      id,
+      storedTitle,
+      sourceName,
+      archivedAt,
+      draftTitle: extractArchiveEditableTitle({
+        title: storedTitle,
+        sourceName,
+        archivedAt,
+      }),
+    });
+  }
+
+  function updateEditingArchiveDraft(value: string) {
+    setEditingArchive((current) =>
+      current
+        ? {
+            ...current,
+            draftTitle: value,
+          }
+        : current,
+    );
+  }
+
+  function cancelArchiveRename() {
+    setEditingArchive(null);
+  }
+
+  function saveArchiveRename() {
+    if (!editingArchive) {
+      return;
+    }
+
+    const target = editingArchive;
+    const nextTitlePart = sanitizeArchiveTitle(target.draftTitle);
+    const nextStoredTitle = buildArchiveDisplayTitle({
+      title: nextTitlePart,
+      sourceName: target.sourceName,
+      archivedAt: target.archivedAt,
+    });
+    if (
+      !nextTitlePart ||
+      sanitizeArchiveTitle(nextStoredTitle) === sanitizeArchiveTitle(target.storedTitle)
+    ) {
+      setEditingArchive(null);
+      return;
+    }
+
+    try {
+      const renamed =
+        target.kind === "group"
+          ? renameGroupArchive(target.id, nextStoredTitle)
+          : (() => {
+              const result = renameSidebarDirectArchiveById(target.id, nextStoredTitle);
+              if (result.renamed) {
+                setDirectArchives(result.archives);
+              }
+
+              return result.renamed;
+            })();
+      if (!renamed) {
+        toast({
+          title: "重命名失败",
+          description: "归档标题未保存，请稍后重试",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setEditingArchive(null);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim()
+          ? error.message
+          : "归档标题未保存，请稍后重试";
+      toast({
+        title: "重命名失败",
+        description: message,
+        variant: "destructive",
+      });
+    }
+  }
+
+  function resolveNextArchiveSelectionAfterDelete(target: ArchiveDeleteTarget) {
+    const nextDirectArchives =
+      target.kind === "direct"
+        ? visibleDirectArchives.filter((archive) => archive.id !== target.id)
+        : visibleDirectArchives;
+    const nextGroupArchives =
+      target.kind === "group"
+        ? visibleGroupArchives.filter((archive) => archive.id !== target.id)
+        : visibleGroupArchives;
+
+    if (target.kind === "direct") {
+      if (nextDirectArchives[0]) {
+        return {
+          kind: "direct" as const,
+          id: nextDirectArchives[0].id,
+        };
+      }
+
+      if (nextGroupArchives[0]) {
+        return {
+          kind: "group" as const,
+          id: nextGroupArchives[0].id,
+        };
+      }
+
+      return null;
+    }
+
+    if (nextGroupArchives[0]) {
+      return {
+        kind: "group" as const,
+        id: nextGroupArchives[0].id,
+      };
+    }
+
+    if (nextDirectArchives[0]) {
+      return {
+        kind: "direct" as const,
+        id: nextDirectArchives[0].id,
+      };
+    }
+
+    return null;
+  }
+
+  function handleConfirmDeleteArchive() {
+    if (!pendingDeleteArchive) {
+      return;
+    }
+
+    const target = pendingDeleteArchive;
+    if (editingArchive?.id === target.id && editingArchive.kind === target.kind) {
+      setEditingArchive(null);
+    }
+    const isSelectedArchive =
+      (target.kind === "group" && selectedArchiveId === target.id) ||
+      (target.kind === "direct" && selectedDirectArchiveId === target.id);
+    const nextSelection = isSelectedArchive ? resolveNextArchiveSelectionAfterDelete(target) : null;
+
+    if (target.kind === "group") {
+      deleteGroupArchive(target.id);
+    } else {
+      removeSidebarDirectArchiveById(target.id);
+    }
+
+    if (isSelectedArchive) {
+      clearSelectedArchive();
+      clearSelectedDirectArchive();
+
+      if (nextSelection?.kind === "group") {
+        handleSelectArchive(nextSelection.id);
+      } else if (nextSelection?.kind === "direct") {
+        handleSelectDirectArchive(nextSelection.id);
+      } else {
+        showDeletedArchiveEmptyState(target.title);
+      }
+    }
+
+    toast({
+      title: "归档已删除",
+      description: `${target.title} 已从本地归档中移除`,
+    });
+    setPendingDeleteArchive(null);
   }
 
   function toggleSection(key: string) {
@@ -1434,18 +1998,117 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
                   count={visibleGroupArchives.length}
                   collapsed={collapsedSections[SECTION_KEYS.groupArchives]}
                   onToggle={() => toggleSection(SECTION_KEYS.groupArchives)}
+                  variant="archive"
                 />
 
                 {!collapsedSections[SECTION_KEYS.groupArchives] ? (
-                  <div className="workspace-sidebar__section-items">
-                    {visibleGroupArchives.map((archive) => (
-                      <GroupArchiveRow
-                        key={archive.id}
-                        archive={archive}
-                        selected={selectedArchiveId === archive.id}
-                        onClick={() => handleSelectArchive(archive.id)}
-                      />
-                    ))}
+                  <div className="workspace-sidebar__section-items workspace-sidebar__section-items--archive">
+                    {groupedGroupArchives.map((cluster) => {
+                      if (cluster.archives.length < 2) {
+                        const archive = cluster.archives[0];
+                        if (!archive) {
+                          return null;
+                        }
+
+                        return (
+                          <GroupArchiveRow
+                            key={archive.id}
+                            archive={archive}
+                            selected={selectedArchiveId === archive.id}
+                            isEditing={
+                              editingArchive?.kind === "group" && editingArchive.id === archive.id
+                            }
+                            draftTitle={
+                              editingArchive?.kind === "group" && editingArchive.id === archive.id
+                                ? editingArchive.draftTitle
+                                : archive.title
+                            }
+                            onClick={() => handleSelectArchive(archive.id)}
+                            onDraftTitleChange={updateEditingArchiveDraft}
+                            onRename={() => {
+                              requestArchiveRename(
+                                "group",
+                                archive.id,
+                                archive.groupName,
+                                archive.title,
+                                archive.createdAt,
+                              );
+                            }}
+                            onRenameCancel={cancelArchiveRename}
+                            onRenameSave={saveArchiveRename}
+                            onDelete={() => {
+                              requestArchiveDelete("group", archive.id, archive.title);
+                            }}
+                          />
+                        );
+                      }
+
+                      const groupKey = `group:${cluster.sourceId}`;
+                      const isExpanded = isArchiveGroupExpanded(
+                        groupKey,
+                        cluster.hasSelectedArchive,
+                      );
+
+                      return (
+                        <div key={groupKey} className="workspace-sidebar__archive-cluster">
+                          <ArchiveGroupToggleRow
+                            sourceName={cluster.sourceName}
+                            archiveCount={cluster.archives.length}
+                            expanded={isExpanded}
+                            selected={cluster.hasSelectedArchive}
+                            onToggle={() => {
+                              toggleArchiveGroup(groupKey);
+                            }}
+                          />
+                          <div
+                            className={cn(
+                              "workspace-sidebar__archive-children",
+                              isExpanded ? "workspace-sidebar__archive-children--expanded" : "",
+                            )}
+                          >
+                            <div className="workspace-sidebar__archive-children-inner">
+                              {cluster.archives.map((archive) => (
+                                <div
+                                  key={archive.id}
+                                  className="workspace-sidebar__archive-children-item"
+                                >
+                                  <GroupArchiveRow
+                                    archive={archive}
+                                    selected={selectedArchiveId === archive.id}
+                                    isEditing={
+                                      editingArchive?.kind === "group" &&
+                                      editingArchive.id === archive.id
+                                    }
+                                    draftTitle={
+                                      editingArchive?.kind === "group" &&
+                                      editingArchive.id === archive.id
+                                        ? editingArchive.draftTitle
+                                        : archive.title
+                                    }
+                                    onClick={() => handleSelectArchive(archive.id)}
+                                    onDraftTitleChange={updateEditingArchiveDraft}
+                                    onRename={() => {
+                                      requestArchiveRename(
+                                        "group",
+                                        archive.id,
+                                        archive.groupName,
+                                        archive.title,
+                                        archive.createdAt,
+                                      );
+                                    }}
+                                    onRenameCancel={cancelArchiveRename}
+                                    onRenameSave={saveArchiveRename}
+                                    onDelete={() => {
+                                      requestArchiveDelete("group", archive.id, archive.title);
+                                    }}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : null}
               </section>
@@ -1458,18 +2121,117 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
                   count={visibleDirectArchives.length}
                   collapsed={collapsedSections[SECTION_KEYS.directArchives]}
                   onToggle={() => toggleSection(SECTION_KEYS.directArchives)}
+                  variant="archive"
                 />
 
                 {!collapsedSections[SECTION_KEYS.directArchives] ? (
-                  <div className="workspace-sidebar__section-items">
-                    {visibleDirectArchives.map((archive) => (
-                      <DirectArchiveRow
-                        key={archive.id}
-                        archive={archive}
-                        selected={selectedDirectArchiveId === archive.id}
-                        onClick={() => handleSelectDirectArchive(archive.id)}
-                      />
-                    ))}
+                  <div className="workspace-sidebar__section-items workspace-sidebar__section-items--archive">
+                    {groupedDirectArchives.map((cluster) => {
+                      if (cluster.archives.length < 2) {
+                        const archive = cluster.archives[0];
+                        if (!archive) {
+                          return null;
+                        }
+
+                        return (
+                          <DirectArchiveRow
+                            key={archive.id}
+                            archive={archive}
+                            selected={selectedDirectArchiveId === archive.id}
+                            isEditing={
+                              editingArchive?.kind === "direct" && editingArchive.id === archive.id
+                            }
+                            draftTitle={
+                              editingArchive?.kind === "direct" && editingArchive.id === archive.id
+                                ? editingArchive.draftTitle
+                                : archive.title
+                            }
+                            onClick={() => handleSelectDirectArchive(archive.id)}
+                            onDraftTitleChange={updateEditingArchiveDraft}
+                            onRename={() => {
+                              requestArchiveRename(
+                                "direct",
+                                archive.id,
+                                archive.agentName,
+                                archive.title,
+                                archive.archivedAt,
+                              );
+                            }}
+                            onRenameCancel={cancelArchiveRename}
+                            onRenameSave={saveArchiveRename}
+                            onDelete={() => {
+                              requestArchiveDelete("direct", archive.id, archive.title);
+                            }}
+                          />
+                        );
+                      }
+
+                      const groupKey = `direct:${cluster.sourceId}`;
+                      const isExpanded = isArchiveGroupExpanded(
+                        groupKey,
+                        cluster.hasSelectedArchive,
+                      );
+
+                      return (
+                        <div key={groupKey} className="workspace-sidebar__archive-cluster">
+                          <ArchiveGroupToggleRow
+                            sourceName={cluster.sourceName}
+                            archiveCount={cluster.archives.length}
+                            expanded={isExpanded}
+                            selected={cluster.hasSelectedArchive}
+                            onToggle={() => {
+                              toggleArchiveGroup(groupKey);
+                            }}
+                          />
+                          <div
+                            className={cn(
+                              "workspace-sidebar__archive-children",
+                              isExpanded ? "workspace-sidebar__archive-children--expanded" : "",
+                            )}
+                          >
+                            <div className="workspace-sidebar__archive-children-inner">
+                              {cluster.archives.map((archive) => (
+                                <div
+                                  key={archive.id}
+                                  className="workspace-sidebar__archive-children-item"
+                                >
+                                  <DirectArchiveRow
+                                    archive={archive}
+                                    selected={selectedDirectArchiveId === archive.id}
+                                    isEditing={
+                                      editingArchive?.kind === "direct" &&
+                                      editingArchive.id === archive.id
+                                    }
+                                    draftTitle={
+                                      editingArchive?.kind === "direct" &&
+                                      editingArchive.id === archive.id
+                                        ? editingArchive.draftTitle
+                                        : archive.title
+                                    }
+                                    onClick={() => handleSelectDirectArchive(archive.id)}
+                                    onDraftTitleChange={updateEditingArchiveDraft}
+                                    onRename={() => {
+                                      requestArchiveRename(
+                                        "direct",
+                                        archive.id,
+                                        archive.agentName,
+                                        archive.title,
+                                        archive.archivedAt,
+                                      );
+                                    }}
+                                    onRenameCancel={cancelArchiveRename}
+                                    onRenameSave={saveArchiveRename}
+                                    onDelete={() => {
+                                      requestArchiveDelete("direct", archive.id, archive.title);
+                                    }}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : null}
               </section>
@@ -1489,6 +2251,14 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
               <span>{connection.label}</span>
             </span>
           </div>
+          <button
+            type="button"
+            onClick={() => setIsModelSettingsOpen(true)}
+            className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-3 text-sm font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-hover)]"
+          >
+            <Settings className="h-4 w-4" />
+            <span>设置</span>
+          </button>
         </div>
       </aside>
 
@@ -1505,6 +2275,10 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
         agentMetaById={agentMetaById}
       />
       <CreateGroupModal open={isCreateGroupOpen} onOpenChange={setIsCreateGroupOpen} />
+      <ModelProvidersSettingsModal
+        open={isModelSettingsOpen}
+        onOpenChange={setIsModelSettingsOpen}
+      />
       <ConfirmModal
         open={pendingDeleteEmployee !== null}
         onClose={() => {
@@ -1524,6 +2298,22 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
         title="删除员工"
         subtitle={pendingDeleteEmployee?.name ?? ""}
         description="确认后会一并删除该员工及其全部空间数据，包括私聊会话、项目组成员关系、本地归档与头像缓存。这个操作不可恢复。"
+        confirmText="确认删除"
+        confirmColor="bg-[var(--danger)] hover:brightness-110"
+      />
+      <ConfirmModal
+        open={pendingDeleteArchive !== null}
+        onClose={() => {
+          setPendingDeleteArchive(null);
+        }}
+        onConfirm={handleConfirmDeleteArchive}
+        icon="🗑️"
+        iconBgColor="bg-[var(--danger-subtle)]"
+        iconTextColor="text-[var(--danger)]"
+        title="删除归档"
+        subtitle={pendingDeleteArchive?.title ?? ""}
+        description="确定删除这份归档吗？删除后无法恢复。"
+        cancelText="取消"
         confirmText="确认删除"
         confirmColor="bg-[var(--danger)] hover:brightness-110"
       />

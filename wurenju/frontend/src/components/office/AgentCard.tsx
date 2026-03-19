@@ -1,6 +1,8 @@
 import { motion } from "framer-motion";
 import { memo } from "react";
+import { HealthBadge, formatHealthLatency } from "@/components/health/HealthWidgets";
 import type { Agent } from "@/stores/agentStore";
+import { useHealthStore } from "@/stores/healthStore";
 import type {
   OfficeAgentMetrics,
   OfficeAgentMotion,
@@ -8,6 +10,7 @@ import type {
   OfficeAnimationKind,
   OfficeZone,
 } from "@/stores/officeStore";
+import { EMPTY_HEALTH_SUMMARY } from "@/utils/health";
 
 type AgentCardProps = {
   agent: Agent;
@@ -101,14 +104,6 @@ function formatTokenUsage(currentContextUsed: number, contextWindowSize: number)
   return `${formatTokenCount(currentContextUsed)} / ${formatTokenCount(contextWindowSize)}`;
 }
 
-function formatDuration(ms: number) {
-  if (ms < 1_000) {
-    return `${Math.max(0.1, ms / 1_000).toFixed(1)}s`;
-  }
-
-  return `${(ms / 1_000).toFixed(1)}s`;
-}
-
 function formatRelativeTime(timestamp: number) {
   const diffMs = Math.max(0, Date.now() - timestamp);
   const diffMinutes = Math.floor(diffMs / 60_000);
@@ -142,7 +137,12 @@ function normalizeModelName(modelName?: string | null) {
 function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCardProps) {
   const pulseKey = motionState?.pulseKey ?? 0;
   const transition = motionState?.transition ?? "idle";
-  const modelName = normalizeModelName(metrics?.modelName ?? agent.modelName ?? null);
+  const healthSummary = useHealthStore(
+    (state) => state.recordsByAgentId[agent.id]?.summary ?? EMPTY_HEALTH_SUMMARY,
+  );
+  const modelName = normalizeModelName(
+    healthSummary.currentModel ?? metrics?.modelName ?? agent.modelName ?? null,
+  );
 
   if (zone === "lounge") {
     const shouldFadeIn = transition === "return";
@@ -151,7 +151,7 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
 
     return (
       <motion.div
-        className="pointer-events-none flex w-full max-w-[132px] flex-col items-center gap-3 rounded-2xl border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] px-3 py-4 text-center opacity-[0.55]"
+        className="pointer-events-auto flex w-full max-w-[132px] flex-col items-center gap-3 rounded-2xl border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] px-3 py-4 text-center opacity-[0.55]"
         initial={shouldFadeIn ? { opacity: 0 } : false}
         animate={{ opacity: 0.55 }}
         exit={{ opacity: 0, transition: { duration: 0.3 } }}
@@ -184,6 +184,9 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
           <div className="mt-1 text-[10px] font-semibold tracking-[0.18em] text-[var(--color-text-secondary)]">
             STANDBY
           </div>
+          <div className="mt-2 flex justify-center">
+            <HealthBadge summary={healthSummary} compact showTooltip />
+          </div>
           {lastActiveText ? (
             <div className="mt-1 text-[10px] text-[var(--color-text-secondary)]">
               {lastActiveText}
@@ -210,7 +213,7 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
     <motion.div
       layout
       layoutId={`agent-card-${agent.id}`}
-      className="pointer-events-none h-full rounded-2xl border border-[var(--modal-shell-border)] bg-[var(--surface-glass-strong)] shadow-[var(--shadow-md)]"
+      className="pointer-events-auto h-full rounded-2xl border border-[var(--modal-shell-border)] bg-[var(--surface-glass-strong)] shadow-[var(--shadow-md)]"
       initial={shouldSummon ? { scale: 0.3, opacity: 0, y: 20 } : false}
       animate={{ scale: 1, opacity: 1, y: 0 }}
       exit={{
@@ -264,6 +267,7 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
                   {resolveRole(agent)}
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <HealthBadge summary={healthSummary} showTooltip />
                   {modelName ? (
                     <span className="rounded bg-[var(--surface-soft-strong)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-secondary)]">
                       {modelName}
@@ -290,9 +294,9 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
               <div className="min-w-0 flex-1 text-sm text-[var(--color-text-primary)]">
                 {status.detail}
               </div>
-              {metrics?.lastResponseMs ? (
+              {healthSummary.avgLatencyMs || metrics?.lastResponseMs ? (
                 <div className="shrink-0 text-[11px] tabular-nums text-[var(--color-text-secondary)]">
-                  {formatDuration(metrics.lastResponseMs)}
+                  {formatHealthLatency(healthSummary.avgLatencyMs ?? metrics?.lastResponseMs)}
                 </div>
               ) : null}
             </div>

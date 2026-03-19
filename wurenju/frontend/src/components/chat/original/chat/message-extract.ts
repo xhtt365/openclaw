@@ -1,6 +1,9 @@
 // 复制自 openclaw 3.13 原版 ../../../ui/src/ui/chat/message-extract.ts，用于二开定制
 
-import { stripInboundMetadata } from "../../../../../../../src/auto-reply/reply/strip-inbound-meta.ts";
+import {
+  stripInboundMetadata,
+  stripLeadingTrustedSystemEvents,
+} from "../../../../../../../src/auto-reply/reply/strip-inbound-meta.ts";
 import { stripEnvelope } from "../../../../../../../src/shared/chat-envelope.ts";
 import { stripThinkingTags } from "../format.ts";
 
@@ -12,9 +15,11 @@ function processMessageText(text: string, role: string): string {
   if (role === "assistant") {
     return stripThinkingTags(text);
   }
-  return shouldStripInboundMetadata
-    ? stripInboundMetadata(stripEnvelope(text))
-    : stripEnvelope(text);
+  const withoutEnvelope = stripEnvelope(text);
+  if (!shouldStripInboundMetadata) {
+    return withoutEnvelope;
+  }
+  return stripLeadingTrustedSystemEvents(stripInboundMetadata(withoutEnvelope));
 }
 
 export function extractText(message: unknown): string | null {

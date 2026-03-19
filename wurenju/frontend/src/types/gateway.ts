@@ -4,6 +4,7 @@ export type GatewayConfigModelValue =
   | string
   | {
       primary?: string;
+      fallbacks?: string[];
     };
 
 export interface GatewayConfigAgentIdentity {

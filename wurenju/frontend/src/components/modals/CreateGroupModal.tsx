@@ -1,14 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import {
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Crown,
-  ImagePlus,
-  Sparkles,
-  Users,
-  X,
-} from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Crown, ImagePlus, Users, X } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GroupBasicInfoFields } from "@/components/modals/GroupBasicInfoFields";
@@ -238,6 +229,33 @@ function AgentRow({ agent, selected, mode, onClick }: AgentRowProps) {
 const MemoAgentRow = memo(AgentRow);
 MemoAgentRow.displayName = "CreateGroupAgentRow";
 
+function SelectedMemberChip({ agent }: { agent: Agent }) {
+  const avatarInfo = resolveAgentAvatarInfo(agent);
+
+  return (
+    <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-sm text-[var(--color-text-primary)]">
+      {avatarInfo.type === "image" ? (
+        <img
+          alt={agent.name}
+          className="h-5 w-5 rounded-full object-cover"
+          src={avatarInfo.value}
+        />
+      ) : (
+        <span
+          aria-hidden="true"
+          className="flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold text-[var(--accent-foreground)]"
+          style={{
+            background: "linear-gradient(135deg, var(--warn), var(--accent))",
+          }}
+        >
+          {avatarInfo.value}
+        </span>
+      )}
+      <span className="truncate">{agent.name}</span>
+    </div>
+  );
+}
+
 function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupModalProps) {
   const agents = useAgentStore((state) => state.agents);
   const createGroup = useGroupStore((state) => state.createGroup);
@@ -249,7 +267,6 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const selectedMembers = agents.filter((agent) => wizard.memberIds.includes(agent.id));
-  const selectedLeader = selectedMembers.find((agent) => agent.id === wizard.leaderId) ?? null;
   const canNextStep1 = wizard.name.trim().length > 0;
   const canNextStep2 = wizard.memberIds.length >= 2;
   const canCreate = Boolean(wizard.leaderId) && selectedMembers.length >= 2;
@@ -508,7 +525,7 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
                         />
                       </div>
 
-                      <div className="space-y-4">
+                      <div>
                         <GroupBasicInfoFields
                           name={wizard.name}
                           description={wizard.description}
@@ -525,42 +542,6 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
                             }));
                           }}
                         />
-
-                        <div className="grid gap-3 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
-                          <div className="rounded-[22px] border border-[var(--border)] bg-[var(--card)] px-4 py-3 shadow-[var(--shadow-sm)]">
-                            <div className="flex items-center gap-2 text-sm font-semibold text-[var(--color-text-primary)]">
-                              <Sparkles className="h-4 w-4 text-[var(--accent)]" />
-                              创建建议
-                            </div>
-                            <div className="mt-2 space-y-1.5 text-[13px] leading-6 text-[var(--color-text-secondary)]">
-                              <div>名称短一些，侧边栏展示更利落。</div>
-                              <div>描述写职责边界，后面更容易协作。</div>
-                            </div>
-                          </div>
-
-                          <div className="rounded-[22px] border border-[var(--border)] bg-[var(--bg-accent)] px-4 py-3">
-                            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                              预览
-                            </div>
-                            <div className="mt-2 flex items-center gap-3 rounded-[18px] border border-[var(--border)] bg-[var(--card)] px-3.5 py-3">
-                              <GroupAvatarPreview
-                                avatarUrl={wizard.avatarUrl || undefined}
-                                name={wizard.name}
-                                className="h-12 w-12 rounded-[16px]"
-                                textClassName="text-[19px]"
-                              />
-                              <div className="min-w-0 flex-1 text-left">
-                                <div className="truncate text-[15px] font-semibold text-[var(--color-text-primary)]">
-                                  {wizard.name.trim() || "未命名项目组"}
-                                </div>
-                                <div className="mt-1 line-clamp-2 text-[13px] leading-5 text-[var(--color-text-secondary)]">
-                                  {wizard.description.trim() ||
-                                    "项目组介绍会显示在这里，方便成员快速理解分工。"}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
                       </div>
                     </div>
                   </motion.div>
@@ -598,13 +579,7 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
                     {selectedMembers.length > 0 ? (
                       <div className="flex flex-wrap gap-2">
                         {selectedMembers.map((member) => (
-                          <div
-                            key={member.id}
-                            className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-sm text-[var(--color-text-primary)]"
-                          >
-                            <span aria-hidden="true">{resolveAgentAvatarInfo(member).value}</span>
-                            <span>{member.name}</span>
-                          </div>
+                          <SelectedMemberChip key={member.id} agent={member} />
                         ))}
                       </div>
                     ) : null}
@@ -657,49 +632,21 @@ function CreateGroupModalInner({ open, onOpenChange, onCreated }: CreateGroupMod
                       </div>
                     </div>
 
-                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
-                      <div className="im-scroll max-h-[240px] space-y-3 overflow-y-auto pr-1">
-                        {selectedMembers.map((agent) => (
-                          <MemoAgentRow
-                            key={agent.id}
-                            agent={agent}
-                            selected={wizard.leaderId === agent.id}
-                            mode="single"
-                            onClick={() => {
-                              setWizard((current) => ({
-                                ...current,
-                                leaderId: current.leaderId === agent.id ? "" : agent.id,
-                              }));
-                            }}
-                          />
-                        ))}
-                      </div>
-
-                      <div className="rounded-[24px] border border-[var(--border)] bg-[var(--card)] px-5 py-5 shadow-[var(--shadow-sm)]">
-                        <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-                          创建摘要
-                        </div>
-                        <div className="mt-4 flex items-center gap-3">
-                          <GroupAvatarPreview
-                            avatarUrl={wizard.avatarUrl || undefined}
-                            name={wizard.name}
-                            className="h-14 w-14 rounded-[18px]"
-                            textClassName="text-[22px]"
-                          />
-                          <div className="min-w-0">
-                            <div className="truncate text-[15px] font-semibold text-[var(--color-text-primary)]">
-                              {wizard.name.trim() || "未命名项目组"}
-                            </div>
-                            <div className="mt-1 text-sm text-[var(--color-text-secondary)]">
-                              {selectedMembers.length} 位成员
-                            </div>
-                          </div>
-                        </div>
-                        <div className="mt-4 rounded-[18px] bg-[var(--bg-accent)] px-4 py-3 text-sm leading-6 text-[var(--color-text-secondary)]">
-                          群主：{selectedLeader?.name ?? "请选择"}
-                          。创建后会直接进入该项目组，并在侧边栏显示群头像。
-                        </div>
-                      </div>
+                    <div className="im-scroll max-h-[320px] space-y-3 overflow-y-auto pr-1">
+                      {selectedMembers.map((agent) => (
+                        <MemoAgentRow
+                          key={agent.id}
+                          agent={agent}
+                          selected={wizard.leaderId === agent.id}
+                          mode="single"
+                          onClick={() => {
+                            setWizard((current) => ({
+                              ...current,
+                              leaderId: current.leaderId === agent.id ? "" : agent.id,
+                            }));
+                          }}
+                        />
+                      ))}
                     </div>
                   </motion.div>
                 ) : null}

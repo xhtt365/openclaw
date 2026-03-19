@@ -4,13 +4,16 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { ThemeProvider } from "@/components/layout/ThemeProvider";
 import { OfficePage } from "@/pages/OfficePage";
 import { useChatStore } from "@/stores/chatStore";
+import { useHealthStore } from "@/stores/healthStore";
 
 function App() {
   const connect = useChatStore((s) => s.connect);
+  const initializeHealth = useHealthStore((state) => state.initialize);
 
   useEffect(() => {
     connect();
-  }, [connect]);
+    initializeHealth();
+  }, [connect, initializeHealth]);
 
   return (
     <ThemeProvider>

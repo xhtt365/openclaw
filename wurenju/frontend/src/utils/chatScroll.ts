@@ -1,6 +1,8 @@
 "use client";
 
-export const CHAT_AUTO_SCROLL_THRESHOLD_PX = 48;
+// 对齐 OpenClaw 原版 `ui/src/ui/app-scroll.ts` 的“接近底部”判定，
+// 避免用户视觉上仍在底部附近时被误判成已经离底。
+export const CHAT_AUTO_SCROLL_THRESHOLD_PX = 450;
 
 type ScrollMetrics = {
   clientHeight: number;

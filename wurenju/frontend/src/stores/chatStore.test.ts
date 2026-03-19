@@ -192,7 +192,7 @@ void test("archiveCurrentSession 会把当前 1v1 消息写入归档并清空会
       status: "connected",
     });
 
-    const result = await useChatStore.getState().archiveCurrentSession();
+    const result = await useChatStore.getState().archiveCurrentSession("产品讨论");
 
     assert.equal(result.success, true);
     assert.deepEqual(deletedSessionKeys, ["agent:agent-archive:main"]);
@@ -202,6 +202,7 @@ void test("archiveCurrentSession 会把当前 1v1 消息写入归档并清空会
     assert.equal(archives.length, 1);
     assert.equal(archives[0]?.agentId, ARCHIVE_AGENT.id);
     assert.equal(archives[0]?.agentName, "小红");
+    assert.equal(archives[0]?.title, "产品讨论");
     assert.equal(archives[0]?.preview, "我已经整理成待办清单了");
     assert.equal(archives[0]?.messages.length, 2);
     assert.equal(archives[0]?.messages[0]?.isHistorical, true);

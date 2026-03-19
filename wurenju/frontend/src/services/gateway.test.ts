@@ -83,3 +83,33 @@ void test("waitForAgentRun 会用更长超时调用 agent.wait", async () => {
     gateway.sendRequest = originalSendRequest;
   }
 });
+
+void test("abortSession 会调用 chat.abort 并透传 sessionKey", async () => {
+  const originalSendRequest = gateway.sendRequest.bind(gateway);
+  let captured:
+    | {
+        method: string;
+        params: Record<string, unknown> | undefined;
+        timeoutMs: number | undefined;
+      }
+    | undefined;
+
+  gateway.sendRequest = (async (method, params, timeoutMs) => {
+    captured = { method, params, timeoutMs };
+    return { ok: true, aborted: true, runIds: ["run-3"] };
+  }) as typeof gateway.sendRequest;
+
+  try {
+    const result = await gateway.abortSession("agent:main:group:project-a");
+
+    assert.equal(result.ok, true);
+    assert.equal(result.aborted, true);
+    assert.equal(captured?.method, "chat.abort");
+    assert.deepEqual(captured?.params, {
+      sessionKey: "agent:main:group:project-a",
+    });
+    assert.equal(captured?.timeoutMs, undefined);
+  } finally {
+    gateway.sendRequest = originalSendRequest;
+  }
+});

@@ -13,6 +13,8 @@ import { toast } from "@/hooks/use-toast";
 import { gateway } from "@/services/gateway";
 import { useAgentStore } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
+import { useCronStore } from "@/stores/cronStore";
+import { useHealthStore } from "@/stores/healthStore";
 import { useOfficeStore } from "@/stores/officeStore";
 
 export function OfficePage() {
@@ -28,11 +30,15 @@ export function OfficePage() {
   const agentAnimations = useOfficeStore((state) => state.agentAnimations);
   const agentMetrics = useOfficeStore((state) => state.agentMetrics);
   const activityLog = useOfficeStore((state) => state.activityLog);
-  const scheduledTasks = useOfficeStore((state) => state.scheduledTasks);
+  const addActivity = useOfficeStore((state) => state.addActivity);
   const initialize = useOfficeStore((state) => state.initialize);
   const syncAgents = useOfficeStore((state) => state.syncAgents);
+  const initializeCron = useCronStore((state) => state.initialize);
 
   const gatewayStatus = useChatStore((state) => state.status);
+  const startOfficeProbe = useHealthStore((state) => state.startOfficeProbe);
+  const stopOfficeProbe = useHealthStore((state) => state.stopOfficeProbe);
+  const subscribeAlerts = useHealthStore((state) => state.subscribeAlerts);
 
   const [isFullscreen, setIsFullscreen] = useState(() =>
     typeof document !== "undefined" ? Boolean(document.fullscreenElement) : false,
@@ -47,11 +53,34 @@ export function OfficePage() {
       Array.from(useOfficeStore.getState().agentZones.entries()),
     );
     initialize();
-  }, [initialize]);
+    initializeCron();
+  }, [initialize, initializeCron]);
 
   useEffect(() => {
     syncAgents(agents);
   }, [agents, syncAgents]);
+
+  useEffect(() => {
+    startOfficeProbe(agents);
+    return () => {
+      stopOfficeProbe();
+    };
+  }, [agents, startOfficeProbe, stopOfficeProbe]);
+
+  useEffect(() => {
+    return subscribeAlerts(
+      (alert) => {
+        const activityType =
+          alert.severity === "critical"
+            ? "error"
+            : alert.severity === "recovery"
+              ? "done"
+              : "system";
+        addActivity(alert.agentId, `健康状态：${alert.message}`, activityType);
+      },
+      { replayRecent: true },
+    );
+  }, [addActivity, subscribeAlerts]);
 
   useEffect(() => {
     if (agents.length > 0 || isAgentLoading) {
@@ -235,8 +264,8 @@ export function OfficePage() {
             <div className="min-h-0 flex-1">
               <ActivityFeed items={activityLog} connected={gatewayStatus === "connected"} />
             </div>
-            <div className="h-[200px] shrink-0">
-              <ScheduledTasks tasks={scheduledTasks} />
+            <div className="h-[300px] shrink-0">
+              <ScheduledTasks />
             </div>
           </div>
         </div>

@@ -14,6 +14,7 @@ type ThinkingAgentDisplay = {
   avatarUrl?: string;
   avatarText: string;
   avatarColor: string;
+  detail?: string;
 };
 
 const AVATAR_COLORS = [
@@ -57,6 +58,7 @@ function GroupThinkingStatusInner({ members, thinkingAgents }: GroupThinkingStat
         avatarUrl,
         avatarText: resolveAvatarText(name, emoji),
         avatarColor: getAvatarColor(thinkingAgent.id || name),
+        detail: thinkingAgent.detail?.trim() || undefined,
       };
     });
   }, [agents, members, thinkingAgents]);
@@ -65,7 +67,7 @@ function GroupThinkingStatusInner({ members, thinkingAgents }: GroupThinkingStat
     () =>
       displayAgents.map((agent, index) => ({
         id: agent.id,
-        label: `${index > 0 ? "、" : ""}${agent.name}`,
+        label: `${index > 0 ? "、" : ""}${agent.name}${agent.detail ? ` ${agent.detail}` : " 思考中…"}`,
       })),
     [displayAgents],
   );
@@ -127,7 +129,6 @@ function GroupThinkingStatusInner({ members, thinkingAgents }: GroupThinkingStat
                   </motion.span>
                 ))}
               </AnimatePresence>
-              <motion.span layout>思考中…</motion.span>
             </span>
           </div>
         </motion.div>

@@ -41,11 +41,19 @@ function ChatAreaInner({
   }
 
   if (archive) {
-    return <GroupArchiveChatArea key={archive.id} archive={archive} />;
+    return (
+      <div className="flex h-full min-h-0">
+        <GroupArchiveChatArea key={archive.id} archive={archive} />
+      </div>
+    );
   }
 
   if (directArchive) {
-    return <DirectArchiveChatArea key={directArchive.id} archive={directArchive} />;
+    return (
+      <div className="flex h-full min-h-0">
+        <DirectArchiveChatArea key={directArchive.id} archive={directArchive} />
+      </div>
+    );
   }
 
   return (

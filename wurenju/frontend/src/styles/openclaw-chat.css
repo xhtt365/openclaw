@@ -115,6 +115,20 @@
   text-overflow: ellipsis;
 }
 
+.dashboard-header__health {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+  font-size: 13px;
+  line-height: 1;
+}
+
 .openclaw-chat-shell__topbar--group {
   height: auto;
   min-height: 72px;
@@ -763,6 +777,21 @@
   background: var(--danger-subtle);
 }
 
+.surface-group-more__separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.surface-group-more__item--destructive {
+  color: color-mix(in srgb, var(--text) 68%, transparent);
+}
+
+.surface-group-more__item--destructive:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-subtle);
+}
+
 .surface-group-more__item-icon {
   display: inline-flex;
   align-items: center;
@@ -780,6 +809,11 @@
   stroke-width: 1.5px;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.surface-group-more__item-icon--emoji {
+  font-size: 14px;
+  line-height: 1;
 }
 
 .surface-group-more__item-label {

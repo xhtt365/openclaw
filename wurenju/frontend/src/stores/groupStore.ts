@@ -2,6 +2,12 @@ import { create } from "zustand";
 import { gateway, type GatewayChatAttachmentInput } from "@/services/gateway";
 import { useAgentStore, type Agent } from "@/stores/agentStore";
 import { useDirectArchiveStore } from "@/stores/directArchiveStore";
+import { useHealthStore } from "@/stores/healthStore";
+import {
+  hydrateArchiveTitles,
+  resolveArchiveTitle,
+  sanitizeArchiveTitle,
+} from "@/utils/archiveTitle";
 import {
   buildGroupAgentRequestMessage,
   normalizeGroupAnnouncement,
@@ -33,6 +39,9 @@ const GROUP_HISTORY_PULL_LIMIT = 24;
 const MAX_GROUP_ROUTE_DEPTH = 6;
 const GROUP_RELAY_SETTLE_DELAY_MS = 2500;
 const GROUP_RELAY_IDLE_TIMEOUT_MS = 5000;
+const GROUP_COMPACT_THRESHOLD = 30;
+const GROUP_COMPACT_KEEP_RECENT = 5;
+const GROUP_COMPACT_HISTORY_LIMIT = 200;
 
 const pendingGroupSendCounts = new Map<string, number>();
 const groupMessageEpochs = new Map<string, number>();
@@ -40,6 +49,7 @@ const groupRoundStates = new Map<string, GroupRoundState>();
 const groupRelayIdleTimerIds = new Map<string, number>();
 const groupRelaySettleTimerIds = new Map<string, number>();
 const groupUrgeTimerIds = new Map<string, number>();
+const compactingAgents = new Set<string>();
 let groupUrgeVisibilityHandler: (() => void) | null = null;
 
 export type AgentInfo = {
@@ -56,6 +66,7 @@ export type Group = {
   avatarUrl?: string;
   description?: string;
   announcement?: string;
+  announcementVersion?: number;
   notificationsEnabled?: boolean;
   soundEnabled?: boolean;
   isUrging?: boolean;
@@ -74,18 +85,22 @@ export type GroupChatMessage = ChatMessage & {
   senderName?: string;
   senderEmoji?: string;
   senderAvatarUrl?: string;
+  sessionTargetIds?: string[];
 };
 
 export type ThinkingAgent = {
   id: string;
   name: string;
   pendingCount: number;
+  detail?: string;
 };
 
 export type GroupArchive = {
   id: string;
   groupId: string;
   groupName: string;
+  groupAvatarUrl?: string;
+  title: string;
   createdAt: string;
   messages: GroupChatMessage[];
 };
@@ -121,6 +136,7 @@ export type CleanupGroupStateOptions = {
 
 type GroupState = GroupPersistence & {
   thinkingAgentsByGroupId: Map<string, Map<string, ThinkingAgent>>;
+  announcementSyncStatus: Map<string, Record<string, number>>;
   isSendingByGroupId: Record<string, boolean>;
   fetchGroups: () => void;
   createGroup: (data: CreateGroupInput) => Group;
@@ -128,6 +144,8 @@ type GroupState = GroupPersistence & {
   clearSelectedGroup: () => void;
   selectArchive: (archiveId: string) => void;
   clearSelectedArchive: () => void;
+  deleteArchive: (archiveId: string) => void;
+  renameArchive: (archiveId: string, title: string) => boolean;
   updateGroupInfo: (
     groupId: string,
     payload: {
@@ -144,6 +162,12 @@ type GroupState = GroupPersistence & {
     text: string,
     attachments?: GatewayChatAttachmentInput[],
   ) => Promise<void>;
+  mirrorCronReplyToGroup: (params: {
+    groupId: string;
+    agentId: string;
+    jobId: string;
+    message: ChatMessage;
+  }) => void;
   startGroupUrging: (groupId: string, intervalMinutes: number) => void;
   pauseGroupUrging: (groupId: string) => void;
   resumeGroupUrging: (groupId: string) => void;
@@ -160,9 +184,10 @@ type GroupState = GroupPersistence & {
     groupId: string,
     options?: CleanupGroupStateOptions,
   ) => Promise<GroupArchiveActionResult>;
-  archiveGroupMessages: (groupId: string) => Promise<GroupArchiveActionResult>;
-  archiveGroupSession: (groupId: string) => Promise<GroupArchiveActionResult>;
+  archiveGroupMessages: (groupId: string, title?: string) => Promise<GroupArchiveActionResult>;
+  archiveGroupSession: (groupId: string, title?: string) => Promise<GroupArchiveActionResult>;
   resetGroupMessages: (groupId: string) => Promise<GroupActionResult>;
+  dissolveGroup: (groupId: string) => Promise<GroupActionResult>;
   removeAgentData: (agentId: string) => void;
 };
 
@@ -170,7 +195,7 @@ type GroupDispatchSource = {
   senderId?: string;
   senderName: string;
   depth: number;
-  type: "user" | "assistant" | "system";
+  type: "user" | "assistant" | "announcement" | "urge" | "system";
   systemReason?:
     | "failure_fallback"
     | "failure_skip"
@@ -188,6 +213,17 @@ type GroupDispatchRequest = {
   userSpecifiedTargets: boolean;
   epoch: number;
   source: GroupDispatchSource;
+  skipRelayDetection?: boolean;
+  showReplyInUi?: boolean;
+  showThinkingStatus?: boolean;
+  skipAutoCompact?: boolean;
+  requireReply?: boolean;
+};
+
+type GroupDispatchResult = {
+  member: AgentInfo;
+  reply: ChatMessage | null;
+  ok: boolean;
 };
 
 type GroupRoundState = {
@@ -261,12 +297,29 @@ function sortGroupArchivesByNewest(archives: GroupArchive[]) {
   );
 }
 
-function createGroupArchive(group: Group, messages: GroupChatMessage[]): GroupArchive {
+function createGroupArchive(
+  group: Group,
+  messages: GroupChatMessage[],
+  existingArchives: GroupArchive[],
+  title?: string,
+): GroupArchive {
+  const createdAt = new Date().toISOString();
   return {
     id: crypto.randomUUID(),
     groupId: group.id,
     groupName: group.name,
-    createdAt: new Date().toISOString(),
+    groupAvatarUrl: group.avatarUrl,
+    title: resolveArchiveTitle({
+      title,
+      sourceName: group.name,
+      archivedAt: createdAt,
+      siblingArchives: existingArchives.map((archive) => ({
+        title: archive.title,
+        sourceName: archive.groupName,
+        archivedAt: archive.createdAt,
+      })),
+    }),
+    createdAt,
     messages: cloneGroupMessages(messages),
   };
 }
@@ -310,6 +363,17 @@ function normalizeMembers(members: AgentInfo[]) {
   return Array.from(uniqueMembers.values());
 }
 
+function normalizeSessionTargetIds(value: unknown) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const targetIds = value.filter(
+    (item): item is string => typeof item === "string" && item.trim().length > 0,
+  );
+  return targetIds.length > 0 ? targetIds : undefined;
+}
+
 function normalizeGroup(item: unknown): Group | null {
   if (!item || typeof item !== "object") {
     return null;
@@ -337,6 +401,11 @@ function normalizeGroup(item: unknown): Group | null {
     announcement:
       typeof maybeGroup.announcement === "string"
         ? normalizeGroupAnnouncement(maybeGroup.announcement)
+        : undefined,
+    announcementVersion:
+      typeof maybeGroup.announcementVersion === "number" &&
+      Number.isFinite(maybeGroup.announcementVersion)
+        ? maybeGroup.announcementVersion
         : undefined,
     notificationsEnabled: maybeGroup.notificationsEnabled !== false,
     soundEnabled: maybeGroup.soundEnabled !== false,
@@ -404,6 +473,9 @@ function normalizeMessage(item: unknown): GroupChatMessage | null {
       }) ??
       resolveAvatarImage(maybeMessage) ??
       undefined,
+    sessionTargetIds: normalizeSessionTargetIds(
+      (maybeMessage as { sessionTargetIds?: unknown }).sessionTargetIds,
+    ),
   };
 }
 
@@ -431,24 +503,25 @@ function normalizeArchive(item: unknown): GroupArchive | null {
   const normalizedMessages = messagesSource
     .map(normalizeMessage)
     .filter((message): message is GroupChatMessage => message !== null);
+  const nestedGroup =
+    maybeArchive.group && typeof maybeArchive.group === "object"
+      ? (maybeArchive.group as Record<string, unknown>)
+      : null;
+  const legacyGroupId =
+    typeof maybeArchive.groupId === "string" && maybeArchive.groupId.trim()
+      ? maybeArchive.groupId.trim()
+      : nestedGroup && typeof nestedGroup.id === "string" && nestedGroup.id.trim()
+        ? nestedGroup.id.trim()
+        : "";
   const id =
     typeof maybeArchive.id === "string" && maybeArchive.id.trim()
       ? maybeArchive.id.trim()
       : typeof maybeArchive.archiveId === "string" && maybeArchive.archiveId.trim()
         ? maybeArchive.archiveId.trim()
-        : "";
-  const nestedGroup =
-    maybeArchive.group && typeof maybeArchive.group === "object"
-      ? (maybeArchive.group as Record<string, unknown>)
-      : null;
-  const groupId =
-    typeof maybeArchive.groupId === "string" && maybeArchive.groupId.trim()
-      ? maybeArchive.groupId.trim()
-      : nestedGroup && typeof nestedGroup.id === "string" && nestedGroup.id.trim()
-        ? nestedGroup.id.trim()
-        : id
-          ? `legacy-group:${id}`
+        : legacyGroupId
+          ? legacyGroupId
           : "";
+  const groupId = legacyGroupId || (id ? `legacy-group:${id}` : "");
   const groupName =
     typeof maybeArchive.groupName === "string" && maybeArchive.groupName.trim()
       ? maybeArchive.groupName.trim()
@@ -457,6 +530,15 @@ function normalizeArchive(item: unknown): GroupArchive | null {
         : nestedGroup && typeof nestedGroup.name === "string" && nestedGroup.name.trim()
           ? nestedGroup.name.trim()
           : "项目组归档";
+  const groupAvatarUrl =
+    resolveAvatarImage({
+      avatarUrl:
+        typeof maybeArchive.groupAvatarUrl === "string" ? maybeArchive.groupAvatarUrl : undefined,
+      avatar: nestedGroup?.avatar,
+      image: nestedGroup?.image,
+    }) ??
+    (nestedGroup ? resolveAvatarImage(nestedGroup) : undefined) ??
+    undefined;
   const createdAt =
     typeof maybeArchive.createdAt === "string" && maybeArchive.createdAt.trim()
       ? maybeArchive.createdAt.trim()
@@ -473,7 +555,9 @@ function normalizeArchive(item: unknown): GroupArchive | null {
                 (latest, current) => (latest === null || current > latest ? current : latest),
                 null,
               );
-            return latestTimestamp !== null ? new Date(latestTimestamp).toISOString() : "";
+            return latestTimestamp !== null
+              ? new Date(latestTimestamp).toISOString()
+              : new Date(0).toISOString();
           })();
 
   if (!id || !groupId || !createdAt) {
@@ -484,6 +568,11 @@ function normalizeArchive(item: unknown): GroupArchive | null {
     id,
     groupId,
     groupName,
+    groupAvatarUrl,
+    title:
+      (typeof maybeArchive.title === "string" && maybeArchive.title.trim()) ||
+      (typeof maybeArchive.archiveTitle === "string" && maybeArchive.archiveTitle.trim()) ||
+      "",
     createdAt,
     messages: normalizedMessages,
   };
@@ -552,9 +641,20 @@ function readStoredState(): GroupPersistence {
     );
     const archives = Array.isArray(maybeState.archives)
       ? sortGroupArchivesByNewest(
-          maybeState.archives
-            .map(normalizeArchive)
-            .filter((archive): archive is GroupArchive => archive !== null),
+          hydrateArchiveTitles(
+            maybeState.archives
+              .map(normalizeArchive)
+              .filter((archive): archive is GroupArchive => archive !== null),
+            {
+              getTitle: (archive) => archive.title,
+              getSourceName: (archive) => archive.groupName,
+              getArchivedAt: (archive) => archive.createdAt,
+              setTitle: (archive, title) => ({
+                ...archive,
+                title,
+              }),
+            },
+          ),
         )
       : [];
     const selectedGroupId =
@@ -733,6 +833,150 @@ function buildRelayMessage(senderName: string, text: string) {
   ].join("\n");
 }
 
+function resolveDispatchLogPrefix(type: GroupDispatchSource["type"]) {
+  if (type === "announcement") {
+    return "[Announce]";
+  }
+
+  if (type === "urge") {
+    return "[Urge]";
+  }
+
+  if (type === "system") {
+    return "[System]";
+  }
+
+  return "[Group]";
+}
+
+function buildAnnouncementBroadcastVisibleMessage(announcement: string) {
+  return `📢 群公告已更新：
+
+${announcement}
+
+请所有成员立刻根据公告内容中与你相关的部分采取行动，并在群聊中回复执行结果。如果公告中要求你读取某个文件，请使用 read 工具读取后按要求行动。`;
+}
+
+function buildAnnouncementBroadcastDispatchMessage(announcement: string) {
+  return `${buildAnnouncementBroadcastVisibleMessage(announcement)}
+
+这是一条群公告同步消息，不要在群里展开讨论。阅读后请仅回复“已知悉公告”。`;
+}
+
+function buildUrgeDecisionRequestMessage() {
+  return `[系统-督促检查] 请根据群内最近的对话记录，判断当前是否还有未完成的任务或未回复的请求。
+
+请严格以 JSON 格式回答，不要添加任何其他文字：
+
+{
+  "needUrge": true或false,
+  "targets": ["需要催促的成员名称，不包括群主自己"],
+  "reason": "简要说明判断依据"
+}
+
+判断标准：
+
+- 如果有成员被分配了任务但还没有回复结果 -> needUrge: true
+- 如果所有已知任务都已完成、所有请求都已回复 -> needUrge: false
+- 群主自己不需要催自己`;
+}
+
+type UrgeDecision = {
+  needUrge: boolean;
+  targets: string[];
+  reason: string;
+};
+
+function parseUrgeDecisionReply(text: string): UrgeDecision | null {
+  const normalizedText = text.trim();
+  if (!normalizedText) {
+    return null;
+  }
+
+  const codeBlockMatch = normalizedText.match(/```(?:json)?\s*([\s\S]*?)```/iu);
+  const candidate = (codeBlockMatch?.[1] ?? normalizedText).trim();
+  const jsonMatch = candidate.match(/\{[\s\S]*\}/u);
+  if (!jsonMatch) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(jsonMatch[0]) as {
+      needUrge?: unknown;
+      targets?: unknown;
+      reason?: unknown;
+    };
+    if (typeof parsed.needUrge !== "boolean" || !Array.isArray(parsed.targets)) {
+      return null;
+    }
+
+    const targets = parsed.targets
+      .filter((target): target is string => typeof target === "string")
+      .map((target) => target.replace(/^@/u, "").trim())
+      .filter(Boolean);
+
+    return {
+      needUrge: parsed.needUrge,
+      targets,
+      reason: typeof parsed.reason === "string" ? parsed.reason.trim() : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function formatHistoryMessagesForCompact(messages: ChatMessage[]) {
+  return messages
+    .map((message, index) => {
+      const role =
+        message.role === "assistant" ? "助手" : message.role === "user" ? "用户" : "系统";
+      const content = [
+        message.content.trim(),
+        message.thinking?.trim() ? `思考：${message.thinking.trim()}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      return `${index + 1}. [${role}]\n${content || "（空内容）"}`;
+    })
+    .join("\n\n");
+}
+
+function buildCompactSummaryPrompt(historyText: string) {
+  return `请总结以下群聊记录的关键信息，输出一段简洁的摘要（不超过 500 字）。
+
+必须保留：任务分配与责任人、已达成的结论和决策、未完成事项和待办、关键数据和数字。
+
+可以丢弃：寒暄问候、重复讨论、中间过程细节、已完成且不再相关的历史任务。
+
+以下是需要总结的对话记录：
+
+${historyText}`;
+}
+
+function buildCompactSeedMessage(summary: string, recentHistoryText: string) {
+  return `[系统-上下文压缩同步] 以下是压缩后的群聊上下文，请把它作为后续协作依据。
+
+注意：
+
+- 不要重复执行下面的历史任务
+- 不要复述这段上下文
+- 只在后续真正收到新消息时继续工作
+
+摘要：
+
+${summary}
+
+最近保留的原始消息：
+
+${recentHistoryText}
+
+如果你已完成上下文同步，请仅回复“已整理”。`;
+}
+
+function messageBelongsToAgentSession(message: GroupChatMessage, agentId: string) {
+  return message.senderId === agentId || message.sessionTargetIds?.includes(agentId) === true;
+}
+
 function cloneGroupRoundState(round: GroupRoundState): GroupRoundState {
   return {
     ...round,
@@ -807,6 +1051,48 @@ function clearGroupUrgeTimer(groupId: string, reason?: string) {
 
   if (reason) {
     console.log(`[Urge] 已清除督促定时器: ${groupId}，原因: ${reason}`);
+  }
+}
+
+function clearGroupCompactingState(groupId: string) {
+  const compactingPrefix = `${groupId}:`;
+  let removedCount = 0;
+
+  Array.from(compactingAgents).forEach((compactingKey) => {
+    if (!compactingKey.startsWith(compactingPrefix)) {
+      return;
+    }
+
+    compactingAgents.delete(compactingKey);
+    removedCount += 1;
+  });
+
+  if (removedCount > 0) {
+    console.log(`[Compact] 已清理群聊压缩状态: ${groupId}，count=${removedCount}`);
+  }
+}
+
+function removeGroupCompactionBackups(groupId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const backupPrefix = `compacted:${groupId}:`;
+  const backupKeys: string[] = [];
+
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (typeof key === "string" && key.startsWith(backupPrefix)) {
+      backupKeys.push(key);
+    }
+  }
+
+  backupKeys.forEach((key) => {
+    window.localStorage.removeItem(key);
+  });
+
+  if (backupKeys.length > 0) {
+    console.log(`[Compact] 已移除群聊压缩备份: ${groupId}，count=${backupKeys.length}`);
   }
 }
 
@@ -1004,6 +1290,14 @@ function getThinkingAgentsFromBuckets(thinkingAgentsByGroupId: ThinkingBuckets, 
   return Array.from(thinkingGroup.values());
 }
 
+function getThinkingAgentFromBuckets(
+  thinkingAgentsByGroupId: ThinkingBuckets,
+  groupId: string,
+  agentId: string,
+) {
+  return thinkingAgentsByGroupId.get(groupId)?.get(agentId) ?? null;
+}
+
 function withThinkingGroup(
   thinkingAgentsByGroupId: ThinkingBuckets,
   groupId: string,
@@ -1112,6 +1406,31 @@ function clearThinkingAgentFromBuckets(
     thinkingAgentsByGroupId: nextBuckets,
     currentAgents: getThinkingAgentsFromBuckets(nextBuckets, groupId),
     removedAgent,
+  };
+}
+
+function setThinkingAgentDetailInBuckets(
+  thinkingAgentsByGroupId: ThinkingBuckets,
+  groupId: string,
+  agentId: string,
+  detail?: string,
+): ThinkingUpdateResult {
+  const nextBuckets = withThinkingGroup(thinkingAgentsByGroupId, groupId, (thinkingGroup) => {
+    const current = thinkingGroup.get(agentId);
+    if (!current) {
+      return;
+    }
+
+    const nextDetail = detail?.trim() || undefined;
+    thinkingGroup.set(agentId, {
+      ...current,
+      detail: nextDetail,
+    });
+  });
+
+  return {
+    thinkingAgentsByGroupId: nextBuckets,
+    currentAgents: getThinkingAgentsFromBuckets(nextBuckets, groupId),
   };
 }
 
@@ -1388,6 +1707,87 @@ export const useGroupStore = create<GroupState>((set, get) => {
     });
   }
 
+  function getThinkingAgentDetailInternal(groupId: string, agentId: string) {
+    return getThinkingAgentFromBuckets(get().thinkingAgentsByGroupId, groupId, agentId)?.detail;
+  }
+
+  function setThinkingAgentDetailInternal(groupId: string, agentId: string, detail?: string) {
+    return syncThinkingBuckets((thinkingAgentsByGroupId) =>
+      setThinkingAgentDetailInBuckets(thinkingAgentsByGroupId, groupId, agentId, detail),
+    );
+  }
+
+  function getAnnouncementSyncVersion(groupId: string, agentId: string) {
+    const syncedVersion = get().announcementSyncStatus.get(groupId)?.[agentId];
+    return typeof syncedVersion === "number" && Number.isFinite(syncedVersion)
+      ? syncedVersion
+      : undefined;
+  }
+
+  function updateAnnouncementSyncStatus(
+    groupId: string,
+    updater: (current: Record<string, number>) => Record<string, number> | null,
+  ) {
+    updateState((state) => {
+      const nextStatus = new Map(state.announcementSyncStatus);
+      const current = state.announcementSyncStatus.get(groupId) ?? {};
+      const updated = updater(current);
+
+      if (!updated || Object.keys(updated).length === 0) {
+        nextStatus.delete(groupId);
+      } else {
+        nextStatus.set(groupId, updated);
+      }
+
+      return {
+        announcementSyncStatus: nextStatus,
+      };
+    });
+  }
+
+  function markAnnouncementSynced(groupId: string, agentIds: string[], version: number) {
+    if (!Number.isFinite(version)) {
+      return;
+    }
+
+    const normalizedIds = Array.from(
+      new Set(agentIds.map((agentId) => agentId.trim()).filter(Boolean)),
+    );
+    if (normalizedIds.length === 0) {
+      return;
+    }
+
+    updateAnnouncementSyncStatus(groupId, (current) => {
+      const next = { ...current };
+      normalizedIds.forEach((agentId) => {
+        next[agentId] = version;
+      });
+      return next;
+    });
+  }
+
+  function clearAnnouncementSyncStatus(groupId: string, agentIds?: string[]) {
+    if (!agentIds || agentIds.length === 0) {
+      updateAnnouncementSyncStatus(groupId, () => null);
+      return;
+    }
+
+    const normalizedIds = Array.from(
+      new Set(agentIds.map((agentId) => agentId.trim()).filter(Boolean)),
+    );
+    if (normalizedIds.length === 0) {
+      return;
+    }
+
+    updateAnnouncementSyncStatus(groupId, (current) => {
+      const next = { ...current };
+      normalizedIds.forEach((agentId) => {
+        delete next[agentId];
+      });
+      return Object.keys(next).length > 0 ? next : null;
+    });
+  }
+
   function isMemberStillInGroup(groupId: string, memberId: string) {
     const group = get().groups.find((item) => item.id === groupId);
     if (!group) {
@@ -1413,6 +1813,322 @@ export const useGroupStore = create<GroupState>((set, get) => {
     const payload = await gateway.loadHistory(sessionKey, GROUP_HISTORY_PULL_LIMIT);
     const messages = adaptHistoryMessages(payload);
     return pickLatestAssistantReply(messages, startedAt);
+  }
+
+  function writeCompactedSessionBackup(groupId: string, agentId: string, messages: ChatMessage[]) {
+    if (typeof window === "undefined" || messages.length === 0) {
+      return;
+    }
+
+    try {
+      const backupKey = `compacted:${groupId}:${agentId}:${Date.now()}`;
+      window.localStorage.setItem(
+        backupKey,
+        JSON.stringify({
+          groupId,
+          agentId,
+          createdAt: new Date().toISOString(),
+          messages,
+        }),
+      );
+    } catch (error) {
+      console.warn(`[Compact] 写入压缩备份失败: group=${groupId}, agent=${agentId}`, error);
+    }
+  }
+
+  function replaceVisibleMessagesWithCompactSummary(
+    groupId: string,
+    member: AgentInfo,
+    summary: string,
+    sessionMessageCount: number,
+  ) {
+    const summaryContent = sanitizeAssistantText(`📋 [上下文摘要] ${summary.trim()}`);
+    if (!summaryContent.trim()) {
+      return;
+    }
+
+    updateState((state) => {
+      const messages = state.messagesByGroupId[groupId] ?? [];
+      const relatedIndexes = messages
+        .map((message, index) => ({ message, index }))
+        .filter((entry) => messageBelongsToAgentSession(entry.message, member.id))
+        .map((entry) => entry.index);
+
+      if (sessionMessageCount <= GROUP_COMPACT_KEEP_RECENT || relatedIndexes.length === 0) {
+        return {};
+      }
+
+      // 只压缩当前会话里已经落盘的历史消息，保留最近 5 条历史消息以及本次刚追加到界面的新消息。
+      const compactCount = Math.max(0, sessionMessageCount - GROUP_COMPACT_KEEP_RECENT);
+      const compactIndexes = new Set(relatedIndexes.slice(0, compactCount));
+      if (compactIndexes.size === 0) {
+        return {};
+      }
+
+      const summaryMessage: GroupChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: summaryContent,
+        timestamp: Date.now(),
+        isLoading: false,
+        isNew: true,
+        isHistorical: false,
+        senderId: member.id,
+        senderName: member.name,
+        senderEmoji: member.emoji,
+        senderAvatarUrl: member.avatarUrl,
+        sessionTargetIds: [member.id],
+      };
+
+      const nextMessages: GroupChatMessage[] = [];
+      let inserted = false;
+
+      messages.forEach((message, index) => {
+        const shouldCompact = compactIndexes.has(index);
+        if (shouldCompact && !inserted) {
+          nextMessages.push(summaryMessage);
+          inserted = true;
+        }
+
+        if (!shouldCompact) {
+          nextMessages.push(message);
+          return;
+        }
+
+        if (message.senderId === member.id) {
+          return;
+        }
+
+        if (!message.sessionTargetIds?.includes(member.id)) {
+          return;
+        }
+
+        const remainingTargetIds = message.sessionTargetIds.filter(
+          (targetId) => targetId !== member.id,
+        );
+        if (remainingTargetIds.length === 0) {
+          return;
+        }
+
+        nextMessages.push({
+          ...message,
+          sessionTargetIds: remainingTargetIds,
+        });
+      });
+
+      if (!inserted) {
+        nextMessages.unshift(summaryMessage);
+      }
+
+      return {
+        messagesByGroupId: {
+          ...state.messagesByGroupId,
+          [groupId]: nextMessages,
+        },
+      };
+    });
+  }
+
+  async function dispatchProgrammaticMessage(params: {
+    groupId: string;
+    text: string;
+    source: GroupDispatchSource;
+    targetIds: string[];
+    attachments?: GatewayChatAttachmentInput[];
+    visibleMessage?: GroupChatMessage;
+    showReplyInUi?: boolean;
+    showThinkingStatus?: boolean;
+    skipAutoCompact?: boolean;
+    requireReply?: boolean;
+  }) {
+    const cleanText = params.text.trim();
+    if (!cleanText && (params.attachments?.length ?? 0) === 0) {
+      return [] as GroupDispatchResult[];
+    }
+
+    const group = get().groups.find((item) => item.id === params.groupId);
+    if (!group) {
+      return [] as GroupDispatchResult[];
+    }
+
+    const agentStore = useAgentStore.getState();
+    const members = resolveGroupMembers(group, agentStore.agents);
+    const targetIdSet = new Set(
+      params.targetIds.map((targetId) => targetId.trim()).filter(Boolean),
+    );
+    const targets = members.filter((member) => targetIdSet.has(member.id));
+    if (targets.length === 0) {
+      console.warn(
+        `${resolveDispatchLogPrefix(params.source.type)} 程序化消息跳过: 群=${group.name}，没有命中的目标成员`,
+      );
+      return [] as GroupDispatchResult[];
+    }
+
+    const epoch = getGroupEpoch(params.groupId);
+    const logPrefix = resolveDispatchLogPrefix(params.source.type);
+    console.log(
+      `${logPrefix} 发送程序化消息: 群=${group.name}，目标=${targets.map((target) => target.name).join("、")}，可见=${params.visibleMessage ? "是" : "否"}`,
+    );
+
+    if (params.visibleMessage) {
+      appendGroupVisibleMessage(params.groupId, {
+        ...params.visibleMessage,
+        sessionTargetIds: targets.map((target) => target.id),
+      });
+    }
+
+    if (params.showThinkingStatus === true) {
+      addThinkingAgentsInternal(params.groupId, targets);
+    }
+
+    return queueGroupDispatches(
+      params.groupId,
+      targets.map((member) => ({
+        group,
+        member,
+        members,
+        text: cleanText,
+        attachments: params.attachments,
+        userSpecifiedTargets: true,
+        epoch,
+        source: params.source,
+        skipRelayDetection: true,
+        showReplyInUi: params.showReplyInUi,
+        showThinkingStatus: params.showThinkingStatus,
+        skipAutoCompact: params.skipAutoCompact,
+        requireReply: params.requireReply,
+      })),
+    );
+  }
+
+  async function compactGroupSessionIfNeeded(params: {
+    groupId: string;
+    member: AgentInfo;
+    members: AgentInfo[];
+    source: GroupDispatchSource;
+    showThinkingStatus: boolean;
+    sessionKey: string;
+  }) {
+    const compactingKey = `${params.groupId}:${params.member.id}`;
+    if (compactingAgents.has(compactingKey)) {
+      console.log(`[Compact] 跳过重复压缩: group=${params.groupId}, agent=${params.member.name}`);
+      return;
+    }
+
+    const historyPayload = await gateway.loadHistory(
+      params.sessionKey,
+      GROUP_COMPACT_HISTORY_LIMIT,
+    );
+    const sessionMessages = adaptHistoryMessages(historyPayload);
+    // 压缩检查发生在发送新消息之前，命中阈值时也要立刻压缩，避免用户再多发一轮才触发。
+    if (sessionMessages.length < GROUP_COMPACT_THRESHOLD) {
+      return;
+    }
+
+    compactingAgents.add(compactingKey);
+    const previousDetail = params.showThinkingStatus
+      ? getThinkingAgentDetailInternal(params.groupId, params.member.id)
+      : undefined;
+
+    if (params.showThinkingStatus) {
+      setThinkingAgentDetailInternal(params.groupId, params.member.id, "📋 整理记忆中...");
+    }
+
+    try {
+      const messagesToCompact = sessionMessages.slice(
+        0,
+        Math.max(0, sessionMessages.length - GROUP_COMPACT_KEEP_RECENT),
+      );
+      const recentMessages = sessionMessages.slice(-GROUP_COMPACT_KEEP_RECENT);
+      if (messagesToCompact.length === 0) {
+        return;
+      }
+
+      writeCompactedSessionBackup(params.groupId, params.member.id, messagesToCompact);
+      console.log(
+        `[Compact] 触发上下文压缩: 群=${params.groupId}，成员=${params.member.name}，历史=${sessionMessages.length}，压缩=${messagesToCompact.length}`,
+      );
+
+      let summaryText = "";
+      const compactStartedAt = Date.now();
+
+      try {
+        const compactResult = await gateway.sendCompactCommand(params.sessionKey);
+        if (!compactResult.ok) {
+          throw new Error(compactResult.error?.message || "Gateway /compact 失败");
+        }
+
+        summaryText =
+          (await loadLatestAssistantReply(params.sessionKey, compactStartedAt))?.content.trim() ??
+          "";
+        if (summaryText) {
+          console.log(`[Compact] 已通过 Gateway /compact 压缩: 成员=${params.member.name}`);
+        }
+      } catch (error) {
+        console.warn(
+          `[Compact] Gateway /compact 不可用，改走前端兜底: 成员=${params.member.name}`,
+          error,
+        );
+      }
+
+      if (!summaryText) {
+        const summaryResults = await dispatchProgrammaticMessage({
+          groupId: params.groupId,
+          text: buildCompactSummaryPrompt(formatHistoryMessagesForCompact(messagesToCompact)),
+          targetIds: [params.member.id],
+          source: {
+            senderId: params.source.senderId,
+            senderName: "系统压缩器",
+            depth: 0,
+            type: "system",
+          },
+          showReplyInUi: false,
+          showThinkingStatus: false,
+          skipAutoCompact: true,
+          requireReply: true,
+        });
+        summaryText = summaryResults[0]?.reply?.content.trim() ?? "";
+        if (!summaryText) {
+          console.warn(`[Compact] 压缩摘要生成失败: 成员=${params.member.name}`);
+          return;
+        }
+
+        await gateway.resetSession(params.sessionKey);
+        clearAnnouncementSyncStatus(params.groupId, [params.member.id]);
+
+        await dispatchProgrammaticMessage({
+          groupId: params.groupId,
+          text: buildCompactSeedMessage(
+            summaryText,
+            formatHistoryMessagesForCompact(recentMessages),
+          ),
+          targetIds: [params.member.id],
+          source: {
+            senderId: params.source.senderId,
+            senderName: "系统压缩器",
+            depth: 0,
+            type: "system",
+          },
+          showReplyInUi: false,
+          showThinkingStatus: false,
+          skipAutoCompact: true,
+          requireReply: false,
+        });
+      }
+
+      replaceVisibleMessagesWithCompactSummary(
+        params.groupId,
+        params.member,
+        summaryText,
+        sessionMessages.length,
+      );
+      console.log(`[Compact] 压缩完成: 群=${params.groupId}，成员=${params.member.name}`);
+    } finally {
+      if (params.showThinkingStatus) {
+        setThinkingAgentDetailInternal(params.groupId, params.member.id, previousDetail);
+      }
+      compactingAgents.delete(compactingKey);
+    }
   }
 
   function scheduleRelaySettleCheck(params: {
@@ -1666,6 +2382,74 @@ export const useGroupStore = create<GroupState>((set, get) => {
     groupRelayIdleTimerIds.set(params.groupId, timerId);
   }
 
+  function syncUrgeReplyToRoundState(params: {
+    groupId: string;
+    group: Group;
+    members: AgentInfo[];
+    member: AgentInfo;
+    epoch: number;
+    source: GroupDispatchSource;
+    reply: ChatMessage | null;
+  }) {
+    if (params.source.type !== "urge" || !params.reply) {
+      return false;
+    }
+
+    const latestRound = getGroupRoundState(params.groupId);
+    if (!latestRound || latestRound.epoch !== params.epoch) {
+      return false;
+    }
+
+    const isTrackedMember =
+      latestRound.pendingAgentIds.has(params.member.id) ||
+      latestRound.remainingAgentIds.includes(params.member.id);
+    if (!isTrackedMember) {
+      return false;
+    }
+
+    const nextRound = cloneGroupRoundState(latestRound);
+    removePendingMemberFromRound(nextRound, params.member.id);
+    markMemberSpoken(nextRound, params.member.id);
+    nextRound.lastReplyAt = Date.now();
+    nextRound.lastReplyMemberId = params.member.id;
+    nextRound.lastReplyMemberName = params.member.name;
+    nextRound.lastReplyContent = params.reply.content;
+    nextRound.lastReplyDepth = params.source.depth;
+    nextRound.lastDispatchSourceType = params.source.type;
+    nextRound.lastDispatchSystemReason = params.source.systemReason;
+
+    console.log(
+      `[Group] 督促回复已同步到接力状态: 发言人=${params.member.name}，pending=${describeIdsAsNames(params.members, nextRound.pendingAgentIds)}，remaining=${describeIdsAsNames(params.members, nextRound.remainingAgentIds)}，allMembers=${nextRound.allMembersMode}`,
+    );
+
+    // 中文注释：督促回复要推进当前 round，但不能把督促文本重新识别成新的接力任务。
+    if (
+      nextRound.pendingAgentIds.size === 0 &&
+      (!nextRound.allMembersMode || nextRound.remainingAgentIds.length === 0)
+    ) {
+      clearGroupRoundState(
+        params.groupId,
+        nextRound.allMembersMode ? "督促后全员接力已完成" : "督促后显式提及链路结束",
+      );
+      return true;
+    }
+
+    setGroupRoundState(params.groupId, nextRound);
+    scheduleRelaySettleCheck({
+      groupId: params.groupId,
+      group: params.group,
+      members: params.members,
+      epoch: params.epoch,
+    });
+    scheduleRelayIdleWatchdog({
+      groupId: params.groupId,
+      group: params.group,
+      members: params.members,
+      epoch: params.epoch,
+    });
+    return true;
+  }
+
   function appendGroupAssistantMessage(groupId: string, message: GroupChatMessage) {
     const sanitizedMessage = {
       ...message,
@@ -1725,6 +2509,8 @@ export const useGroupStore = create<GroupState>((set, get) => {
       console.warn(`[Member] 成员移除后跳过运行时清理: 找不到项目组 ${groupId}`);
       return;
     }
+
+    clearAnnouncementSyncStatus(groupId, [removedMember.id]);
 
     const removalNotice = `${removedMember.name} 已被移除`;
     const thinkingResult = clearThinkingAgentInternal(groupId, removedMember.id);
@@ -2025,7 +2811,10 @@ export const useGroupStore = create<GroupState>((set, get) => {
       `[Group] 发送群消息: ${group.name} -> ${targets.map((member) => member.name).join(", ")}`,
     );
 
-    appendGroupVisibleMessage(params.groupId, params.displayMessage);
+    appendGroupVisibleMessage(params.groupId, {
+      ...params.displayMessage,
+      sessionTargetIds: targets.map((target) => target.id),
+    });
     addThinkingAgentsInternal(params.groupId, targets);
     console.log(`[Group] 思考中: ${targets.map((member) => member.name).join(", ")}`);
 
@@ -2040,6 +2829,9 @@ export const useGroupStore = create<GroupState>((set, get) => {
         userSpecifiedTargets,
         epoch,
         source: params.source,
+        showReplyInUi: true,
+        showThinkingStatus: true,
+        requireReply: true,
       })),
     );
   }
@@ -2069,6 +2861,53 @@ export const useGroupStore = create<GroupState>((set, get) => {
 
   function getGroupUrgeState(groupId: string) {
     return get().groups.find((group) => group.id === groupId) ?? null;
+  }
+
+  async function sendUrgeMessages(params: {
+    groupId: string;
+    leader: AgentInfo;
+    targets: AgentInfo[];
+  }) {
+    let sentCount = 0;
+
+    for (const target of params.targets) {
+      const urgeMessage = buildUrgeMessage([target.name]);
+      if (!urgeMessage) {
+        continue;
+      }
+
+      const visibleMessage: GroupChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: urgeMessage,
+        timestamp: Date.now(),
+        isNew: true,
+        isHistorical: false,
+        senderId: params.leader.id,
+        senderName: params.leader.name,
+        senderEmoji: params.leader.emoji,
+        senderAvatarUrl: params.leader.avatarUrl,
+      };
+
+      await dispatchProgrammaticMessage({
+        groupId: params.groupId,
+        text: urgeMessage,
+        targetIds: [target.id],
+        visibleMessage,
+        source: {
+          senderId: params.leader.id,
+          senderName: params.leader.name,
+          depth: 0,
+          type: "urge",
+        },
+        showReplyInUi: true,
+        showThinkingStatus: true,
+        requireReply: true,
+      });
+      sentCount += 1;
+    }
+
+    return sentCount;
   }
 
   async function performGroupUrgeCheck(
@@ -2113,7 +2952,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
     const thinkingAgentIds = get()
       .getThinkingAgentsForGroup(groupId)
       .map((member) => member.id);
-    const targets = resolveUrgeTargets({
+    const defaultTargets = resolveUrgeTargets({
       members,
       leaderId: group.leaderId,
       startedAt: group.urgeStartedAt,
@@ -2124,40 +2963,85 @@ export const useGroupStore = create<GroupState>((set, get) => {
     });
 
     console.log(
-      `[Urge] 执行督促检查: 群=${group.name}，触发=${trigger}，间隔=${intervalMinutes}分钟，目标=${targets.map((member) => member.name).join("、") || "无"}`,
+      `[Urge] 执行督促检查: 群=${group.name}，触发=${trigger}，间隔=${intervalMinutes}分钟，候选目标=${defaultTargets.map((member) => member.name).join("、") || "无"}`,
     );
 
-    if (targets.length > 0) {
-      const urgeMessage = buildUrgeMessage(targets.map((member) => member.name));
-      const visibleMessage: GroupChatMessage = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: urgeMessage,
-        timestamp: now,
-        isNew: true,
-        isHistorical: false,
+    let actualUrgeCount = 0;
+    let shouldFallbackToDefault = false;
+    let fallbackReason = "";
+
+    console.log("[Urge] 向群主发送督促判断请求");
+    const decisionResults = await dispatchProgrammaticMessage({
+      groupId,
+      text: buildUrgeDecisionRequestMessage(),
+      targetIds: [leader.id],
+      source: {
         senderId: leader.id,
         senderName: leader.name,
-        senderEmoji: leader.emoji,
-        senderAvatarUrl: leader.avatarUrl,
-      };
+        depth: 0,
+        type: "urge",
+      },
+      showReplyInUi: false,
+      showThinkingStatus: false,
+      requireReply: true,
+    });
 
+    const decision = parseUrgeDecisionReply(decisionResults[0]?.reply?.content ?? "");
+    if (decision?.needUrge === true) {
+      const resolvedTargets = Array.from(
+        new Map(
+          decision.targets
+            .map(
+              (targetName) =>
+                members.find(
+                  (member) =>
+                    member.id !== leader.id &&
+                    member.name.trim().toLowerCase() === targetName.trim().toLowerCase(),
+                ) ?? null,
+            )
+            .filter((member): member is AgentInfo => member !== null)
+            .map((member) => [member.id, member]),
+        ).values(),
+      );
+
+      if (resolvedTargets.length === 0) {
+        shouldFallbackToDefault = true;
+        fallbackReason = "群主返回的 targets 无法匹配到群成员";
+      } else {
+        console.log(
+          `[Urge] 群主判断需要催促: targets=[${resolvedTargets.map((member) => member.name).join(", ")}], reason=${decision.reason || "无"}`,
+        );
+        actualUrgeCount = await sendUrgeMessages({
+          groupId,
+          leader,
+          targets: resolvedTargets,
+        });
+      }
+    } else if (decision?.needUrge === false) {
+      console.log(`[Urge] 群主判断无需催促: reason=${decision.reason || "无"}`);
+    } else {
+      shouldFallbackToDefault = true;
+      fallbackReason = "群主回复格式异常";
+    }
+
+    if (shouldFallbackToDefault) {
+      console.warn(
+        `[Urge] 群主回复格式异常，降级为默认催促${fallbackReason ? `: ${fallbackReason}` : ""}`,
+      );
+      if (defaultTargets.length > 0) {
+        actualUrgeCount = await sendUrgeMessages({
+          groupId,
+          leader,
+          targets: defaultTargets,
+        });
+      }
+    }
+
+    if (actualUrgeCount > 0) {
       updateGroupUrgeState(groupId, (current) => ({
         ...current,
         urgeCount: (current.urgeCount ?? 0) + 1,
       }));
-
-      await dispatchGroupInput({
-        groupId,
-        text: urgeMessage,
-        displayMessage: visibleMessage,
-        source: {
-          senderId: leader.id,
-          senderName: leader.name,
-          depth: 0,
-          type: "user",
-        },
-      });
     }
 
     const latestGroup = getGroupUrgeState(groupId);
@@ -2169,19 +3053,21 @@ export const useGroupStore = create<GroupState>((set, get) => {
     scheduleGroupUrgeCheck(
       groupId,
       Math.max(1, intervalMinutes) * 60_000,
-      targets.length > 0 ? "完成一轮督促" : "完成一次空检查",
+      actualUrgeCount > 0 ? "完成一轮督促" : "完成一次空检查",
     );
   }
 
   async function queueGroupDispatches(groupId: string, requests: GroupDispatchRequest[]) {
     if (requests.length === 0) {
-      return;
+      return [] as GroupDispatchResult[];
     }
 
-    clearGroupRelaySettleTimer(groupId, "已有新的接力请求开始发送");
-    clearGroupRelayIdleTimer(groupId, "已有新的接力请求开始发送");
+    if (!requests.every((request) => request.skipRelayDetection === true)) {
+      clearGroupRelaySettleTimer(groupId, "已有新的接力请求开始发送");
+      clearGroupRelayIdleTimer(groupId, "已有新的接力请求开始发送");
+    }
     beginGroupSend(groupId, requests.length);
-    await Promise.all(
+    return await Promise.all(
       requests.map((request) =>
         dispatchMessageToTarget({
           groupId,
@@ -2193,6 +3079,11 @@ export const useGroupStore = create<GroupState>((set, get) => {
           userSpecifiedTargets: request.userSpecifiedTargets,
           epoch: request.epoch,
           source: request.source,
+          skipRelayDetection: request.skipRelayDetection,
+          showReplyInUi: request.showReplyInUi,
+          showThinkingStatus: request.showThinkingStatus,
+          skipAutoCompact: request.skipAutoCompact,
+          requireReply: request.requireReply,
         }),
       ),
     );
@@ -2208,6 +3099,11 @@ export const useGroupStore = create<GroupState>((set, get) => {
     userSpecifiedTargets: boolean;
     epoch: number;
     source: GroupDispatchSource;
+    skipRelayDetection?: boolean;
+    showReplyInUi?: boolean;
+    showThinkingStatus?: boolean;
+    skipAutoCompact?: boolean;
+    requireReply?: boolean;
   }) {
     const {
       groupId,
@@ -2219,11 +3115,17 @@ export const useGroupStore = create<GroupState>((set, get) => {
       userSpecifiedTargets,
       epoch,
       source,
+      skipRelayDetection = false,
+      showReplyInUi = true,
+      showThinkingStatus = true,
+      skipAutoCompact = false,
+      requireReply = true,
     } = params;
 
     try {
       const agentStore = useAgentStore.getState();
       const liveAgent = agentStore.agents.find((agent) => agent.id === member.id);
+      const logPrefix = resolveDispatchLogPrefix(source.type);
       const targetMember = liveAgent
         ? {
             ...member,
@@ -2251,23 +3153,54 @@ export const useGroupStore = create<GroupState>((set, get) => {
       const payloadText =
         source.type === "assistant" ? buildRelayMessage(source.senderName, text) : text;
       const sessionKey = buildGroupSessionKey(targetMember.id, groupId);
+      if (!skipAutoCompact) {
+        await compactGroupSessionIfNeeded({
+          groupId,
+          member: targetMember,
+          members,
+          source,
+          showThinkingStatus,
+          sessionKey,
+        });
+      }
+
+      const liveGroup = get().groups.find((item) => item.id === groupId) ?? group;
+      const normalizedAnnouncement = normalizeGroupAnnouncement(liveGroup.announcement);
+      const announcementVersion =
+        typeof liveGroup.announcementVersion === "number" &&
+        Number.isFinite(liveGroup.announcementVersion)
+          ? liveGroup.announcementVersion
+          : undefined;
+      const syncedAnnouncementVersion = getAnnouncementSyncVersion(groupId, targetMember.id);
+      const shouldInjectAnnouncement =
+        source.type !== "announcement" &&
+        Boolean(
+          normalizedAnnouncement &&
+          announcementVersion !== undefined &&
+          syncedAnnouncementVersion !== announcementVersion,
+        );
+      const shouldMarkAnnouncementSynced =
+        Boolean(normalizedAnnouncement && announcementVersion !== undefined) &&
+        (source.type === "announcement" || shouldInjectAnnouncement);
       const startedAt = Date.now();
-      const normalizedAnnouncement = normalizeGroupAnnouncement(group.announcement);
       const outboundMessage = buildGroupAgentRequestMessage({
-        groupName: group.name,
-        announcement: normalizedAnnouncement,
+        groupName: liveGroup.name,
+        announcement: shouldInjectAnnouncement ? normalizedAnnouncement : undefined,
         members: toContextMembers(members),
-        leaderId: group.leaderId,
+        leaderId: liveGroup.leaderId,
         targetAgentId: targetMember.id,
         userSpecifiedTargets,
         message: payloadText,
       });
 
-      console.log("[Announce] 准备注入群公告上下文:", {
-        groupId: group.id,
-        groupName: group.name,
+      console.log(`${logPrefix} 准备发送群上下文消息:`, {
+        groupId: liveGroup.id,
+        groupName: liveGroup.name,
         agentName: targetMember.name,
         hasAnnouncement: Boolean(normalizedAnnouncement),
+        shouldInjectAnnouncement,
+        announcementVersion,
+        syncedAnnouncementVersion,
         announcementLength: normalizedAnnouncement?.length ?? 0,
         messageLength: payloadText.length,
         outboundMessageLength: outboundMessage.length,
@@ -2275,7 +3208,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
       });
 
       console.log(
-        `[Group] 注入群聊上下文 → Agent: ${targetMember.name}, 群: ${group.name}, sessionKey=${sessionKey}`,
+        `${logPrefix} 注入群聊上下文 -> Agent: ${targetMember.name}, 群: ${liveGroup.name}, sessionKey=${sessionKey}`,
       );
       if (attachments.length > 0) {
         const result = await gateway.sendChat(outboundMessage, sessionKey, attachments);
@@ -2302,43 +3235,114 @@ export const useGroupStore = create<GroupState>((set, get) => {
         }
       }
 
+      if (shouldMarkAnnouncementSynced && announcementVersion !== undefined) {
+        markAnnouncementSynced(groupId, [targetMember.id], announcementVersion);
+      }
+
       // 群聊不复用 1v1 的活跃回复桶，直接回拉目标 Agent 的历史拿最终结果。
       const reply = await loadLatestAssistantReply(sessionKey, startedAt);
-      if (!reply) {
+      if (!reply && requireReply) {
         throw new Error("未获取到 Agent 回复");
       }
 
+      if (reply) {
+        useHealthStore.getState().recordAssistantMessage({
+          agentId: targetMember.id,
+          sessionKey,
+          kind: attachments.length > 0 ? "chat.send" : "agent",
+          message: {
+            model: reply.model,
+            usage: reply.usage,
+            timestamp: reply.timestamp ?? Date.now(),
+          },
+        });
+      }
+
       if (getGroupEpoch(groupId) !== epoch) {
-        return;
+        return {
+          member: targetMember,
+          reply: reply ?? null,
+          ok: true,
+        } satisfies GroupDispatchResult;
       }
 
       if (!isMemberStillInGroup(groupId, targetMember.id)) {
         // 成员已被移出群聊时，晚到的 run 结果不能再落消息或继续接力。
         const completionResult = completeThinkingAgentsInternal(groupId, targetMember.id, []);
         console.log(
-          `[Member] 已忽略被移除成员的晚到回复: 群=${group.name}，成员=${targetMember.name}，剩余思考中=${completionResult.remainingAfterComplete.map((item) => item.name).join(", ") || "无"}`,
+          `[Member] 已忽略被移除成员的晚到回复: 群=${liveGroup.name}，成员=${targetMember.name}，剩余思考中=${completionResult.remainingAfterComplete.map((item) => item.name).join(", ") || "无"}`,
         );
-        return;
+        return {
+          member: targetMember,
+          reply: reply ?? null,
+          ok: true,
+        } satisfies GroupDispatchResult;
       }
 
-      appendGroupAssistantMessage(groupId, {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: reply.content,
-        thinking: reply.thinking,
-        model: reply.model,
-        usage: reply.usage,
-        timestamp: reply.timestamp ?? Date.now(),
-        timestampLabel: reply.timestampLabel,
-        isLoading: false,
-        isNew: true,
-        isHistorical: false,
-        senderId: targetMember.id,
-        senderName: targetMember.name,
-        senderEmoji: targetMember.emoji,
-        senderAvatarUrl: targetMember.avatarUrl,
-      });
-      console.log(`[Group] 群成员回复: ${targetMember.name}`);
+      if (reply && showReplyInUi) {
+        appendGroupAssistantMessage(groupId, {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: reply.content,
+          thinking: reply.thinking,
+          model: reply.model,
+          usage: reply.usage,
+          timestamp: reply.timestamp ?? Date.now(),
+          timestampLabel: reply.timestampLabel,
+          isLoading: false,
+          isNew: true,
+          isHistorical: false,
+          senderId: targetMember.id,
+          senderName: targetMember.name,
+          senderEmoji: targetMember.emoji,
+          senderAvatarUrl: targetMember.avatarUrl,
+          sessionTargetIds: [targetMember.id],
+        });
+        console.log(`${logPrefix} 群成员回复: ${targetMember.name}`);
+      } else if (reply) {
+        console.log(`${logPrefix} 已收到隐藏回复: ${targetMember.name}`);
+      } else {
+        console.log(`${logPrefix} 本次发送无需等待可见回复: ${targetMember.name}`);
+      }
+
+      if (skipRelayDetection) {
+        syncUrgeReplyToRoundState({
+          groupId,
+          group,
+          members,
+          member: targetMember,
+          epoch,
+          source,
+          reply: reply ?? null,
+        });
+        const completionResult = completeThinkingAgentsInternal(groupId, targetMember.id, []);
+        const thinkingNames = completionResult.remainingAfterComplete
+          .map((item) => item.name)
+          .join(", ");
+        console.log(
+          `${logPrefix} 程序化消息处理完成: ${targetMember.name}, 剩余思考中: ${thinkingNames || "无"}`,
+        );
+        return {
+          member: targetMember,
+          reply: reply ?? null,
+          ok: true,
+        } satisfies GroupDispatchResult;
+      }
+
+      if (!reply) {
+        const completionResult = completeThinkingAgentsInternal(groupId, targetMember.id, []);
+        const thinkingNames = completionResult.remainingAfterComplete
+          .map((item) => item.name)
+          .join(", ");
+        console.log(
+          `[Group] 回复缺失但流程已结束: ${targetMember.name}, 剩余思考中: ${thinkingNames || "无"}`,
+        );
+        return {
+          member: targetMember,
+          reply: null,
+          ok: true,
+        } satisfies GroupDispatchResult;
+      }
 
       const round = getGroupRoundState(groupId);
       const routeDepthLimit = resolveGroupRouteDepthLimit(
@@ -2354,8 +3358,12 @@ export const useGroupStore = create<GroupState>((set, get) => {
         console.log(
           `[Group] 回复完成: ${targetMember.name}, 剩余思考中: ${remainingNames || "无"}`,
         );
-        console.warn(`[Group] 群内协作转发达到深度上限: ${group.name}，已停止自动路由`);
-        return;
+        console.warn(`[Group] 群内协作转发达到深度上限: ${liveGroup.name}，已停止自动路由`);
+        return {
+          member: targetMember,
+          reply,
+          ok: true,
+        } satisfies GroupDispatchResult;
       }
 
       const explicitNextTargets = extractMentionTargets(reply.content, members, [targetMember.id]);
@@ -2434,12 +3442,20 @@ export const useGroupStore = create<GroupState>((set, get) => {
       }
 
       if (roundEnded) {
-        console.log(`[Group] 本轮回复处理结束: ${group.name} 已结束当前回合`);
-        return;
+        console.log(`[Group] 本轮回复处理结束: ${liveGroup.name} 已结束当前回合`);
+        return {
+          member: targetMember,
+          reply,
+          ok: true,
+        } satisfies GroupDispatchResult;
       }
 
       if (!isRelayMode) {
-        return;
+        return {
+          member: targetMember,
+          reply,
+          ok: true,
+        } satisfies GroupDispatchResult;
       }
 
       scheduleRelaySettleCheck({
@@ -2456,7 +3472,11 @@ export const useGroupStore = create<GroupState>((set, get) => {
       });
 
       if (nextTargets.length === 0) {
-        return;
+        return {
+          member: targetMember,
+          reply,
+          ok: true,
+        } satisfies GroupDispatchResult;
       }
 
       await queueGroupDispatches(
@@ -2474,23 +3494,42 @@ export const useGroupStore = create<GroupState>((set, get) => {
             depth: source.depth + 1,
             type: "assistant",
           },
+          showReplyInUi: true,
+          showThinkingStatus: true,
+          requireReply: true,
         })),
       );
+      return {
+        member: targetMember,
+        reply,
+        ok: true,
+      } satisfies GroupDispatchResult;
     } catch (error) {
       const errorText = getErrorMessage(error, "连接 Gateway 失败，请确认服务已启动");
-      console.error(`[Group] 群消息发送失败: ${member.name}`, error);
+      const logPrefix = resolveDispatchLogPrefix(source.type);
+      console.error(`${logPrefix} 群消息发送失败: ${member.name}`, error);
+      useHealthStore.getState().recordRequestError({
+        agentId: member.id,
+        sessionKey: buildGroupSessionKey(member.id, groupId),
+        kind: attachments.length > 0 ? "chat.send" : "agent",
+        message: errorText,
+      });
 
       const removeResult = removeThinkingAgentInternal(groupId, member.id);
       console.log(
-        `[Group] 回复失败移出思考中: ${member.name}, 剩余思考中: ${removeResult.currentAgents.map((item) => item.name).join(", ") || "无"}`,
+        `${logPrefix} 回复失败移出思考中: ${member.name}, 剩余思考中: ${removeResult.currentAgents.map((item) => item.name).join(", ") || "无"}`,
       );
 
       if (!isMemberStillInGroup(groupId, member.id)) {
         console.log(`[Member] 已忽略被移除成员的失败结果: 群=${group.name}，成员=${member.name}`);
-        return;
+        return {
+          member,
+          reply: null,
+          ok: false,
+        } satisfies GroupDispatchResult;
       }
 
-      if (getGroupEpoch(groupId) === epoch) {
+      if (!skipRelayDetection && getGroupEpoch(groupId) === epoch) {
         const handledByRelay = await handleRelayDispatchFailure({
           groupId,
           group,
@@ -2499,7 +3538,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
           epoch,
           source,
         });
-        if (!handledByRelay) {
+        if (!handledByRelay && showReplyInUi) {
           appendGroupAssistantMessage(groupId, {
             id: crypto.randomUUID(),
             role: "assistant",
@@ -2514,7 +3553,27 @@ export const useGroupStore = create<GroupState>((set, get) => {
             senderAvatarUrl: member.avatarUrl,
           });
         }
+      } else if (showReplyInUi) {
+        appendGroupAssistantMessage(groupId, {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `${member.name} 暂时无法回复。\n原始错误：${errorText}`,
+          timestamp: Date.now(),
+          isLoading: false,
+          isNew: true,
+          isHistorical: false,
+          senderId: member.id,
+          senderName: member.name,
+          senderEmoji: member.emoji,
+          senderAvatarUrl: member.avatarUrl,
+          sessionTargetIds: [member.id],
+        });
       }
+      return {
+        member,
+        reply: null,
+        ok: false,
+      } satisfies GroupDispatchResult;
     } finally {
       finishGroupSend(groupId);
     }
@@ -2552,6 +3611,8 @@ export const useGroupStore = create<GroupState>((set, get) => {
         }),
       );
 
+      clearAnnouncementSyncStatus(groupId, memberIds);
+
       updateState((state) => ({
         archives: archive ? [archive, ...state.archives] : state.archives,
         messagesByGroupId: {
@@ -2584,12 +3645,94 @@ export const useGroupStore = create<GroupState>((set, get) => {
     }
   }
 
+  async function dissolveGroupInternal(groupId: string): Promise<GroupActionResult> {
+    const group = get().groups.find((item) => item.id === groupId);
+    if (!group) {
+      const error = `找不到项目组 ${groupId}`;
+      console.error(`[Group] 解散群聊失败: ${error}`);
+      return {
+        success: false,
+        error,
+      };
+    }
+
+    const memberIds = collectGroupSessionMemberIds(group);
+    const sessionKeys = memberIds.map((memberId) => buildGroupSessionKey(memberId, groupId));
+
+    get().stopGroupUrging(groupId);
+    cancelGroupPending(groupId);
+    clearGroupCompactingState(groupId);
+    groupMessageEpochs.delete(groupId);
+    pendingGroupSendCounts.delete(groupId);
+
+    console.log(`[Group] 准备解散群聊: ${group.name}，成员数=${memberIds.length}`);
+
+    try {
+      await Promise.all(
+        sessionKeys.map(async (sessionKey) => {
+          try {
+            await gateway.abortSession(sessionKey);
+          } catch (error) {
+            console.warn(`[Group] 取消群聊活跃请求失败: sessionKey=${sessionKey}`, error);
+          }
+
+          await gateway.deleteSession(sessionKey);
+        }),
+      );
+
+      const committed = updateState((state) => {
+        const nextGroups = state.groups.filter((item) => item.id !== groupId);
+        const nextMessagesByGroupId = { ...state.messagesByGroupId };
+        const nextIsSendingByGroupId = { ...state.isSendingByGroupId };
+        const nextThinkingAgentsByGroupId = new Map(state.thinkingAgentsByGroupId);
+        const nextAnnouncementSyncStatus = new Map(state.announcementSyncStatus);
+
+        delete nextMessagesByGroupId[groupId];
+        delete nextIsSendingByGroupId[groupId];
+        nextThinkingAgentsByGroupId.delete(groupId);
+        nextAnnouncementSyncStatus.delete(groupId);
+
+        return {
+          groups: nextGroups,
+          selectedGroupId:
+            state.selectedGroupId === groupId ? (nextGroups[0]?.id ?? null) : state.selectedGroupId,
+          messagesByGroupId: ensureMessageBuckets(nextGroups, nextMessagesByGroupId),
+          thinkingAgentsByGroupId: nextThinkingAgentsByGroupId,
+          announcementSyncStatus: nextAnnouncementSyncStatus,
+          isSendingByGroupId: nextIsSendingByGroupId,
+        };
+      });
+
+      if (!committed) {
+        return {
+          success: false,
+          error: "解散群聊失败，数据未保存",
+        };
+      }
+
+      clearSidebarGroupUnreadCount(groupId);
+      removeGroupCompactionBackups(groupId);
+      console.log(`[Group] 解散群聊: groupId=${groupId}, name=${group.name}`);
+      return {
+        success: true,
+      };
+    } catch (error) {
+      const message = getErrorMessage(error, "解散群聊失败，请稍后重试");
+      console.error(`[Group] 解散群聊失败: ${group.name}`, error);
+      return {
+        success: false,
+        error: message,
+      };
+    }
+  }
+
   ensureGroupUrgeRuntimeInitialized();
   restoreActiveGroupUrgings(initialState.groups, "初始化项目组 store");
 
   return {
     ...initialState,
     thinkingAgentsByGroupId: new Map(),
+    announcementSyncStatus: new Map(),
     isSendingByGroupId: {},
 
     fetchGroups: () => {
@@ -2604,6 +3747,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
       set({
         ...nextState,
         thinkingAgentsByGroupId: new Map(),
+        announcementSyncStatus: new Map(),
         isSendingByGroupId: {},
       });
       ensureGroupUrgeRuntimeInitialized();
@@ -2621,6 +3765,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
         avatarUrl,
         description,
         announcement: undefined,
+        announcementVersion: undefined,
         notificationsEnabled: true,
         soundEnabled: true,
         isUrging: false,
@@ -2675,7 +3820,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
     },
 
     selectArchive: (archiveId) => {
-      console.log(`[Group] 选中项目组归档: ${archiveId}`);
+      console.log(`[Archive] 选中项目组归档: ${archiveId}`);
       updateState(() => ({
         selectedGroupId: null,
         selectedArchiveId: archiveId,
@@ -2684,10 +3829,76 @@ export const useGroupStore = create<GroupState>((set, get) => {
     },
 
     clearSelectedArchive: () => {
-      console.log("[Group] 清空当前项目组归档选中态");
+      console.log("[Archive] 清空当前项目组归档选中态");
       updateState(() => ({
         selectedArchiveId: null,
       }));
+    },
+
+    deleteArchive: (archiveId) => {
+      const normalizedArchiveId = archiveId.trim();
+      if (!normalizedArchiveId) {
+        return;
+      }
+
+      updateState((state) => {
+        const nextArchives = state.archives.filter((archive) => archive.id !== normalizedArchiveId);
+        if (nextArchives.length === state.archives.length) {
+          return {};
+        }
+
+        console.log(`[Archive] 删除项目组归档: ${normalizedArchiveId}`);
+        return {
+          archives: nextArchives,
+          selectedArchiveId:
+            state.selectedArchiveId === normalizedArchiveId ? null : state.selectedArchiveId,
+        };
+      });
+    },
+
+    renameArchive: (archiveId, title) => {
+      const normalizedArchiveId = archiveId.trim();
+      const nextTitle = sanitizeArchiveTitle(title);
+      if (!normalizedArchiveId || !nextTitle) {
+        return false;
+      }
+
+      let previousTitle = "";
+      let renamed = false;
+      const committed = updateState((state) => {
+        const nextArchives = state.archives.map((archive) => {
+          if (archive.id !== normalizedArchiveId) {
+            return archive;
+          }
+
+          const currentTitle = sanitizeArchiveTitle(archive.title);
+          if (!currentTitle || currentTitle === nextTitle) {
+            return archive;
+          }
+
+          previousTitle = currentTitle;
+          renamed = true;
+          return {
+            ...archive,
+            title: nextTitle,
+          };
+        });
+
+        if (!renamed) {
+          return {};
+        }
+
+        return {
+          archives: nextArchives,
+        };
+      });
+
+      if (!committed || !renamed || !previousTitle) {
+        return false;
+      }
+
+      console.log(`[Archive] 归档重命名: ${previousTitle} → ${nextTitle}`);
+      return true;
     },
 
     updateGroupInfo: (groupId, payload) => {
@@ -2740,6 +3951,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
         const nextMessagesByGroupId = { ...state.messagesByGroupId };
         const nextIsSendingByGroupId = { ...state.isSendingByGroupId };
         const nextThinkingAgentsByGroupId = new Map(state.thinkingAgentsByGroupId);
+        const nextAnnouncementSyncStatus = new Map(state.announcementSyncStatus);
         const nextGroups: Group[] = [];
 
         for (const group of state.groups) {
@@ -2763,12 +3975,24 @@ export const useGroupStore = create<GroupState>((set, get) => {
             }
           }
 
+          const currentAnnouncementSync = nextAnnouncementSyncStatus.get(group.id);
+          if (currentAnnouncementSync) {
+            const nextGroupSync = { ...currentAnnouncementSync };
+            delete nextGroupSync[normalizedAgentId];
+            if (Object.keys(nextGroupSync).length > 0) {
+              nextAnnouncementSyncStatus.set(group.id, nextGroupSync);
+            } else {
+              nextAnnouncementSyncStatus.delete(group.id);
+            }
+          }
+
           const nextMembers = group.members.filter((member) => member.id !== normalizedAgentId);
           if (leaderRemoved && nextMembers.length === 0) {
             removedGroupIds.push(group.id);
             delete nextMessagesByGroupId[group.id];
             delete nextIsSendingByGroupId[group.id];
             nextThinkingAgentsByGroupId.delete(group.id);
+            nextAnnouncementSyncStatus.delete(group.id);
             if (nextSelectedGroupId === group.id) {
               nextSelectedGroupId = null;
             }
@@ -2800,6 +4024,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
           messagesByGroupId: ensureMessageBuckets(nextGroups, nextMessagesByGroupId),
           archives: nextArchives,
           thinkingAgentsByGroupId: nextThinkingAgentsByGroupId,
+          announcementSyncStatus: nextAnnouncementSyncStatus,
           isSendingByGroupId: nextIsSendingByGroupId,
         };
       });
@@ -2829,24 +4054,89 @@ export const useGroupStore = create<GroupState>((set, get) => {
         return;
       }
 
+      const announcementVersion = normalizedAnnouncement ? Date.now() : undefined;
+
       const committed = updateState((state) => ({
         groups: state.groups.map((item) =>
           item.id === groupId
             ? {
                 ...item,
                 announcement: normalizedAnnouncement,
+                announcementVersion,
               }
             : item,
         ),
       }));
 
-      if (committed) {
-        console.log(
-          normalizedAnnouncement
-            ? `[Announce] 已保存群公告: ${group.name}`
-            : `[Announce] 已清空群公告: ${group.name}`,
-        );
+      if (!committed) {
+        return;
       }
+
+      clearAnnouncementSyncStatus(groupId);
+      console.log(
+        normalizedAnnouncement
+          ? `[Announce] 已保存群公告: ${group.name}，version=${announcementVersion}`
+          : `[Announce] 已清空群公告: ${group.name}`,
+      );
+
+      if (!normalizedAnnouncement || announcementVersion === undefined) {
+        return;
+      }
+
+      const latestGroup = get().groups.find((item) => item.id === groupId);
+      if (!latestGroup) {
+        return;
+      }
+
+      const members = resolveGroupMembers(latestGroup, useAgentStore.getState().agents);
+      const leader = getLeaderMember(latestGroup, members);
+      if (!leader || members.length === 0) {
+        console.warn(`[Announce] 群公告广播跳过: ${group.name} 缺少可用成员或群主`);
+        return;
+      }
+
+      const visibleMessage: GroupChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: buildAnnouncementBroadcastVisibleMessage(normalizedAnnouncement),
+        timestamp: Date.now(),
+        isNew: true,
+        isHistorical: false,
+        senderId: leader.id,
+        senderName: leader.name,
+        senderEmoji: leader.emoji,
+        senderAvatarUrl: leader.avatarUrl,
+      };
+
+      void dispatchProgrammaticMessage({
+        groupId,
+        text: buildAnnouncementBroadcastDispatchMessage(normalizedAnnouncement),
+        targetIds: members.map((member) => member.id),
+        visibleMessage,
+        source: {
+          senderId: leader.id,
+          senderName: leader.name,
+          depth: 0,
+          type: "announcement",
+        },
+        showReplyInUi: true,
+        showThinkingStatus: false,
+        requireReply: false,
+      })
+        .then((results) => {
+          const syncedAgentIds = results
+            .filter((result) => result.ok)
+            .map((result) => result.member.id);
+          if (syncedAgentIds.length > 0) {
+            markAnnouncementSynced(groupId, syncedAgentIds, announcementVersion);
+          }
+          console.log(
+            `[Announce] 群公告广播完成: ${group.name}，已同步=${syncedAgentIds.length}/${members.length}`,
+          );
+        })
+        .catch((error) => {
+          console.error(`[Announce] 群公告广播失败: ${group.name}`, error);
+        });
     },
 
     setGroupNotificationsEnabled: (groupId, enabled) => {
@@ -3078,7 +4368,38 @@ export const useGroupStore = create<GroupState>((set, get) => {
       });
     },
 
-    archiveGroupMessages: async (groupId) => {
+    mirrorCronReplyToGroup: ({ groupId, agentId, jobId, message }) => {
+      const normalizedGroupId = groupId.trim();
+      const normalizedAgentId = agentId.trim();
+      if (!normalizedGroupId || !normalizedAgentId) {
+        return;
+      }
+
+      const existingMessages = get().messagesByGroupId[normalizedGroupId] ?? [];
+      if (existingMessages.some((item) => item.id === message.id)) {
+        return;
+      }
+
+      const agent = useAgentStore.getState().agents.find((item) => item.id === normalizedAgentId);
+      appendGroupAssistantMessage(normalizedGroupId, {
+        ...message,
+        id: message.id,
+        role: "assistant",
+        isLoading: false,
+        isNew: true,
+        isHistorical: false,
+        senderId: normalizedAgentId,
+        senderName: agent?.name?.trim() || normalizedAgentId,
+        senderEmoji: agent?.emoji?.trim() || undefined,
+        senderAvatarUrl: (resolveAvatarImage(agent) ?? agent?.avatarUrl?.trim()) || undefined,
+      });
+
+      console.log(
+        `[Cron] mirror group reply: groupId=${normalizedGroupId}, agentId=${normalizedAgentId}, jobId=${jobId}`,
+      );
+    },
+
+    archiveGroupMessages: async (groupId, title) => {
       const group = get().groups.find((item) => item.id === groupId);
       const messages = get().messagesByGroupId[groupId] ?? [];
       if (!group || messages.length === 0) {
@@ -3088,19 +4409,21 @@ export const useGroupStore = create<GroupState>((set, get) => {
         };
       }
 
-      console.log(`[Group] 准备归档群聊记录: ${group.name}`);
+      console.log(`[Archive] 准备归档项目组会话: ${group.name}`);
       return cleanupGroupStateInternal(groupId, {
-        archive: createGroupArchive(group, messages),
+        archive: createGroupArchive(group, messages, get().archives, sanitizeArchiveTitle(title)),
       });
     },
 
-    archiveGroupSession: async (groupId) => {
-      return get().archiveGroupMessages(groupId);
+    archiveGroupSession: async (groupId, title) => {
+      return get().archiveGroupMessages(groupId, title);
     },
 
     resetGroupMessages: async (groupId) => {
       return cleanupGroupStateInternal(groupId);
     },
+
+    dissolveGroup: dissolveGroupInternal,
   };
 });
 
