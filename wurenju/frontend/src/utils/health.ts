@@ -26,6 +26,12 @@ export type HealthInteraction = {
   success: boolean;
   model?: string | null;
   provider?: string | null;
+  tokenInput?: number;
+  tokenOutput?: number;
+  tokenCacheRead?: number;
+  tokenCacheWrite?: number;
+  tokenTotal?: number;
+  tokenCostTotal?: number | null;
   usedFallback?: boolean;
   errorType?: HealthErrorType;
   errorMessage?: string;

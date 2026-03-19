@@ -2,6 +2,7 @@
 
 import { html, nothing } from "lit";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
+import { readLocalStorageItem, writeLocalStorageItem } from "@/utils/storage";
 import type { UserProfile } from "@/utils/userProfile";
 import { openUserProfilePopover } from "@/utils/userProfilePopoverDom";
 import type { AssistantIdentity } from "../assistant-identity.ts";
@@ -439,7 +440,7 @@ type DeleteConfirmSide = "left" | "right";
 
 function shouldSkipDeleteConfirm(): boolean {
   try {
-    return localStorage.getItem(SKIP_DELETE_CONFIRM_KEY) === "1";
+    return readLocalStorageItem(SKIP_DELETE_CONFIRM_KEY) === "1";
   } catch {
     return false;
   }
@@ -486,11 +487,7 @@ function renderDeleteButton(onDelete: () => void, side: DeleteConfirmSide) {
           cancel.addEventListener("click", () => popover.remove());
           yes.addEventListener("click", () => {
             if (check.checked) {
-              try {
-                localStorage.setItem(SKIP_DELETE_CONFIRM_KEY, "1");
-              } catch (error) {
-                void error;
-              }
+              writeLocalStorageItem(SKIP_DELETE_CONFIRM_KEY, "1", { silent: true });
             }
             popover.remove();
             onDelete();

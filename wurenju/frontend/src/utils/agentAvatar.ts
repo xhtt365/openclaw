@@ -1,4 +1,7 @@
+import { readLocalStorageItem, writeLocalStorageItem } from "@/utils/storage";
+
 export const AGENT_AVATAR_STORAGE_KEY = "xiaban_agent_avatars";
+
 const EMOJI_AVATAR_PATTERN = /[\p{Emoji_Presentation}\p{Extended_Pictographic}]/u;
 
 export type AgentAvatarInfo = {
@@ -7,18 +10,6 @@ export type AgentAvatarInfo = {
 };
 
 type AgentAvatarMap = Record<string, string>;
-
-function getStorage() {
-  if (typeof window !== "undefined" && window.localStorage) {
-    return window.localStorage;
-  }
-
-  if (typeof localStorage !== "undefined") {
-    return localStorage;
-  }
-
-  return null;
-}
 
 function isImageAvatar(value: string) {
   return (
@@ -31,17 +22,12 @@ function isImageAvatar(value: string) {
 }
 
 export function readAgentAvatarMap(): AgentAvatarMap {
-  const storage = getStorage();
-  if (!storage) {
+  const raw = readLocalStorageItem(AGENT_AVATAR_STORAGE_KEY);
+  if (!raw) {
     return {};
   }
 
   try {
-    const raw = storage.getItem(AGENT_AVATAR_STORAGE_KEY);
-    if (!raw) {
-      return {};
-    }
-
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? (parsed as AgentAvatarMap) : {};
   } catch {
@@ -56,14 +42,16 @@ export function saveAgentAvatarMapping(agentId: string, avatarSrc: string) {
     return;
   }
 
-  const storage = getStorage();
-  if (!storage) {
+  const avatarMap = readAgentAvatarMap();
+  const nextAvatarMap = Object.fromEntries(
+    [
+      ...Object.entries(avatarMap).filter(([agentId]) => agentId !== normalizedAgentId),
+      [normalizedAgentId, normalizedAvatarSrc],
+    ].filter(([agentId, avatar]) => agentId.trim() && avatar.trim()),
+  );
+  if (!writeLocalStorageItem(AGENT_AVATAR_STORAGE_KEY, JSON.stringify(nextAvatarMap))) {
     return;
   }
-
-  const avatarMap = readAgentAvatarMap();
-  avatarMap[normalizedAgentId] = normalizedAvatarSrc;
-  storage.setItem(AGENT_AVATAR_STORAGE_KEY, JSON.stringify(avatarMap));
 
   if (typeof window !== "undefined") {
     window.dispatchEvent(
@@ -83,18 +71,15 @@ export function removeAgentAvatarMapping(agentId: string) {
     return;
   }
 
-  const storage = getStorage();
-  if (!storage) {
-    return;
-  }
-
   const avatarMap = readAgentAvatarMap();
   if (!(normalizedAgentId in avatarMap)) {
     return;
   }
 
   delete avatarMap[normalizedAgentId];
-  storage.setItem(AGENT_AVATAR_STORAGE_KEY, JSON.stringify(avatarMap));
+  if (!writeLocalStorageItem(AGENT_AVATAR_STORAGE_KEY, JSON.stringify(avatarMap))) {
+    return;
+  }
 
   if (typeof window !== "undefined") {
     window.dispatchEvent(

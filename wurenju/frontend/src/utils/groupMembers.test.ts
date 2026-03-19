@@ -16,6 +16,7 @@ import {
 class MemoryStorage implements Storage {
   private storage = new Map<string, string>();
   private nextSetError: Error | null = null;
+  private persistentSetError: Error | null = null;
 
   get length() {
     return this.storage.size;
@@ -23,6 +24,8 @@ class MemoryStorage implements Storage {
 
   clear() {
     this.storage.clear();
+    this.nextSetError = null;
+    this.persistentSetError = null;
   }
 
   getItem(key: string) {
@@ -41,7 +44,15 @@ class MemoryStorage implements Storage {
     this.nextSetError = error;
   }
 
+  failAllSets(error: Error) {
+    this.persistentSetError = error;
+  }
+
   setItem(key: string, value: string) {
+    if (this.persistentSetError) {
+      throw this.persistentSetError;
+    }
+
     if (this.nextSetError) {
       const error = this.nextSetError;
       this.nextSetError = null;
@@ -320,7 +331,7 @@ void test("persistSnapshot 写失败时不会伪造成员变更成功", () => {
     archives: [],
   });
 
-  memoryStorage.failNextSet(createQuotaExceededError());
+  memoryStorage.failAllSets(createQuotaExceededError());
   const result = addAgentToGroup(group.id, QA_AGENT);
 
   assert.equal(result.changed, false);

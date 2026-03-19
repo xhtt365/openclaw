@@ -5,15 +5,20 @@ import { ThemeProvider } from "@/components/layout/ThemeProvider";
 import { OfficePage } from "@/pages/OfficePage";
 import { useChatStore } from "@/stores/chatStore";
 import { useHealthStore } from "@/stores/healthStore";
+import { useStatsStore } from "@/stores/statsStore";
+import { runStorageMaintenance } from "@/utils/storage";
 
 function App() {
   const connect = useChatStore((s) => s.connect);
   const initializeHealth = useHealthStore((state) => state.initialize);
+  const initializeStats = useStatsStore((state) => state.initialize);
 
   useEffect(() => {
+    runStorageMaintenance("startup");
     connect();
     initializeHealth();
-  }, [connect, initializeHealth]);
+    initializeStats(useHealthStore.getState().recordsByAgentId);
+  }, [connect, initializeHealth, initializeStats]);
 
   return (
     <ThemeProvider>

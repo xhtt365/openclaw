@@ -15,6 +15,7 @@ import {
 import { getPromptWorkbenchGuide } from "@/constants/promptWorkbenchGuides";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { readLocalStorageItem, writeLocalStorageItem } from "@/utils/storage";
 
 const GUIDE_COLLAPSE_STORAGE_PREFIX = "wurenju.promptWorkbench.guideCollapsed";
 
@@ -27,7 +28,7 @@ function readGuideCollapsed(fileName: string) {
     return false;
   }
 
-  return window.localStorage.getItem(getGuideCollapseStorageKey(fileName)) === "1";
+  return readLocalStorageItem(getGuideCollapseStorageKey(fileName)) === "1";
 }
 
 function writeGuideCollapsed(fileName: string, collapsed: boolean) {
@@ -35,10 +36,8 @@ function writeGuideCollapsed(fileName: string, collapsed: boolean) {
     return;
   }
 
-  try {
-    window.localStorage.setItem(getGuideCollapseStorageKey(fileName), collapsed ? "1" : "0");
-  } catch (error) {
-    console.warn("[Prompt] 写入指南折叠状态失败:", error);
+  if (!writeLocalStorageItem(getGuideCollapseStorageKey(fileName), collapsed ? "1" : "0")) {
+    console.warn("[Storage] 写入指南折叠状态失败");
   }
 }
 

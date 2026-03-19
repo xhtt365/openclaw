@@ -8,6 +8,7 @@ import { HealthStatusPanel } from "@/components/health/HealthWidgets";
 import { PromptWorkbenchGuideCard } from "@/components/layout/PromptWorkbenchGuideCard";
 import { ConfirmModal } from "@/components/modals/ConfirmModal";
 import { ModelSelectModal } from "@/components/modals/ModelSelectModal";
+import { AgentWorkStatsPanel } from "@/components/stats/AgentWorkStatsPanel";
 import { Button } from "@/components/ui/button";
 import { PROMPT_WORKBENCH_FILE_NAMES } from "@/constants/promptWorkbenchGuides";
 import { toast } from "@/hooks/use-toast";
@@ -666,6 +667,7 @@ export function EmployeeDetailPage() {
               </section>
 
               <HealthStatusPanel summary={healthSummary} />
+              <AgentWorkStatsPanel agentId={agent.id} />
 
               <section className="rounded-[24px] border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-4 shadow-[var(--shadow-sm)] backdrop-blur-xl">
                 <div

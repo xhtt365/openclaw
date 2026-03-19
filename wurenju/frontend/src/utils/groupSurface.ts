@@ -1,3 +1,4 @@
+import { readLocalStorageItem } from "@/utils/storage";
 import type { Agent } from "../stores/agentStore";
 import type { AgentInfo, Group, GroupChatMessage } from "../stores/groupStore";
 
@@ -241,7 +242,7 @@ export function resolveStoredGroupAvatarUrl(groupId: string) {
   }
 
   try {
-    const raw = window.localStorage.getItem(GROUP_STORAGE_KEY);
+    const raw = readLocalStorageItem(GROUP_STORAGE_KEY);
     if (!raw) {
       return null;
     }

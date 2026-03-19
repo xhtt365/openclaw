@@ -1,3 +1,5 @@
+import { readLocalStorageItem, writeLocalStorageItem } from "@/utils/storage";
+
 export type ChannelType = "dingtalk" | "feishu" | "telegram";
 
 export interface DingtalkChannelConfig {
@@ -35,22 +37,6 @@ export type ChannelSectionDraft =
   | TelegramChannelConfig;
 
 export const CHANNEL_STORAGE_KEY_PREFIX = "xiaban.channels.";
-
-type ChannelStorageWindow = Window & {
-  localStorage?: Storage;
-};
-
-function getStorage() {
-  if (typeof window !== "undefined" && (window as ChannelStorageWindow).localStorage) {
-    return (window as ChannelStorageWindow).localStorage ?? null;
-  }
-
-  if (typeof localStorage !== "undefined") {
-    return localStorage;
-  }
-
-  return null;
-}
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -146,13 +132,8 @@ export function readAgentChannelConfig(agentId: string): ChannelConfigDraft {
     return createEmptyChannelConfigDraft();
   }
 
-  const storage = getStorage();
-  if (!storage) {
-    return createEmptyChannelConfigDraft();
-  }
-
   try {
-    const raw = storage.getItem(getAgentChannelStorageKey(normalizedAgentId));
+    const raw = readLocalStorageItem(getAgentChannelStorageKey(normalizedAgentId));
     if (!raw) {
       return createEmptyChannelConfigDraft();
     }
@@ -184,16 +165,14 @@ export function saveAgentChannelConfig(agentId: string, value: ChannelConfigDraf
     throw new Error("员工标识不能为空");
   }
 
-  const storage = getStorage();
-  if (!storage) {
-    throw new Error("当前环境不支持本地保存");
-  }
-
   const normalized = normalizeChannelConfig(value);
-  storage.setItem(
+  const saved = writeLocalStorageItem(
     getAgentChannelStorageKey(normalizedAgentId),
     JSON.stringify(compactChannelConfig(normalized)),
   );
+  if (!saved) {
+    throw new Error("当前环境不支持本地保存");
+  }
   emitChannelConfigUpdated(normalizedAgentId, normalized);
   return normalized;
 }

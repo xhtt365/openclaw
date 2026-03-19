@@ -10,6 +10,7 @@ import { useGroupStore, type Group, type GroupChatMessage } from "./groupStore";
 class MemoryStorage implements Storage {
   private storage = new Map<string, string>();
   private nextSetError: Error | null = null;
+  private persistentSetError: Error | null = null;
 
   get length() {
     return this.storage.size;
@@ -17,6 +18,8 @@ class MemoryStorage implements Storage {
 
   clear() {
     this.storage.clear();
+    this.nextSetError = null;
+    this.persistentSetError = null;
   }
 
   getItem(key: string) {
@@ -35,7 +38,15 @@ class MemoryStorage implements Storage {
     this.nextSetError = error;
   }
 
+  failAllSets(error: Error) {
+    this.persistentSetError = error;
+  }
+
   setItem(key: string, value: string) {
+    if (this.persistentSetError) {
+      throw this.persistentSetError;
+    }
+
     if (this.nextSetError) {
       const error = this.nextSetError;
       this.nextSetError = null;
@@ -1120,7 +1131,7 @@ void test("项目组持久化写失败时会回滚内存态", () => {
     archives: [],
   });
 
-  memoryStorage.failNextSet(createQuotaExceededError());
+  memoryStorage.failAllSets(createQuotaExceededError());
   useGroupStore.getState().updateGroupInfo(group.id, {
     name: "M15 项目组",
     description: "新的描述",

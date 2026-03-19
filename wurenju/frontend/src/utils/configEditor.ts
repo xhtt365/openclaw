@@ -1,4 +1,5 @@
 import type { ConfigVersion } from "@/types/config";
+import { readLocalStorageItem, writeLocalStorageItem } from "@/utils/storage";
 
 export const CONFIG_HISTORY_STORAGE_KEY = "lobster-config-history";
 const MAX_CONFIG_HISTORY = 20;
@@ -99,7 +100,7 @@ export function readConfigHistory(): ConfigVersion[] {
   }
 
   try {
-    const raw = window.localStorage.getItem(CONFIG_HISTORY_STORAGE_KEY);
+    const raw = readLocalStorageItem(CONFIG_HISTORY_STORAGE_KEY);
     if (!raw) {
       return [];
     }
@@ -137,10 +138,8 @@ export function pushConfigHistoryVersion(params: {
     ...readConfigHistory(),
   ].slice(0, MAX_CONFIG_HISTORY);
 
-  try {
-    window.localStorage.setItem(CONFIG_HISTORY_STORAGE_KEY, JSON.stringify(nextHistory));
-  } catch (error) {
-    console.error("[Config] 写入配置历史失败:", error);
+  if (!writeLocalStorageItem(CONFIG_HISTORY_STORAGE_KEY, JSON.stringify(nextHistory))) {
+    console.error("[Config] 写入配置历史失败");
   }
 
   return nextHistory;

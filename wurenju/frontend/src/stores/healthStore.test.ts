@@ -132,3 +132,35 @@ void test("startOfficeProbe 会在 stopOfficeProbe 后停止额外的 Gateway �
   assert.equal(sendRequestCount, requestCountBeforeStop);
   assert.equal(useHealthStore.getState().getSummaryForAgent(HEALTH_AGENT.id).sessionState, "alive");
 });
+
+void test("recordAssistantMessage 会把 usage 写进 interaction 供统计聚合复用", () => {
+  useHealthStore.getState().recordAssistantMessage({
+    agentId: HEALTH_AGENT.id,
+    sessionKey: "agent:health-agent:main",
+    kind: "chat.send",
+    message: {
+      model: "openai/gpt-5.4",
+      provider: "openai",
+      usage: {
+        input: 120,
+        output: 45,
+        cacheRead: 30,
+        cacheWrite: 10,
+        totalTokens: 205,
+        cost: { total: 0.0123 },
+      },
+      timestamp: Date.now(),
+    },
+  });
+
+  const interaction = useHealthStore
+    .getState()
+    .recordsByAgentId[HEALTH_AGENT.id]?.interactions.at(-1);
+
+  assert.equal(interaction?.tokenInput, 120);
+  assert.equal(interaction?.tokenOutput, 45);
+  assert.equal(interaction?.tokenCacheRead, 30);
+  assert.equal(interaction?.tokenCacheWrite, 10);
+  assert.equal(interaction?.tokenTotal, 205);
+  assert.equal(interaction?.tokenCostTotal, 0.0123);
+});

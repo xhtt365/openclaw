@@ -5,11 +5,13 @@ import { ConfirmModal } from "@/components/modals/ConfirmModal";
 import { ActivityFeed } from "@/components/office/ActivityFeed";
 import { AgentCard } from "@/components/office/AgentCard";
 import { ConfigEditorModal } from "@/components/office/ConfigEditorModal";
+import { OfficeReportsPanel } from "@/components/office/OfficeReportsPanel";
 import { ScheduledTasks } from "@/components/office/ScheduledTasks";
 import { TopBar } from "@/components/office/TopBar";
 import { ZoneContainer } from "@/components/office/ZoneContainer";
 import { Toaster } from "@/components/ui/toaster";
 import { toast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import { gateway } from "@/services/gateway";
 import { useAgentStore } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
@@ -46,6 +48,7 @@ export function OfficePage() {
   const [isConfigEditorOpen, setIsConfigEditorOpen] = useState(false);
   const [isRestartModalOpen, setIsRestartModalOpen] = useState(false);
   const [isRestartingGateway, setIsRestartingGateway] = useState(false);
+  const [activePanel, setActivePanel] = useState<"activity" | "tasks" | "reports">("activity");
 
   useEffect(() => {
     console.log(
@@ -261,11 +264,41 @@ export function OfficePage() {
           </div>
 
           <div className="flex h-full min-h-0 w-[32%] min-w-[340px] max-w-[460px] flex-col gap-4">
-            <div className="min-h-0 flex-1">
-              <ActivityFeed items={activityLog} connected={gatewayStatus === "connected"} />
+            <div className="rounded-[24px] border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] p-2 backdrop-blur-xl">
+              <div className="flex gap-2">
+                {[
+                  { key: "activity", label: "⚡ 动态" },
+                  { key: "tasks", label: "⏰ 定时任务" },
+                  { key: "reports", label: "📊 报表" },
+                ].map((item) => {
+                  const active = item.key === activePanel;
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => setActivePanel(item.key as "activity" | "tasks" | "reports")}
+                      className={cn(
+                        "flex-1 rounded-[18px] px-3 py-2 text-sm font-medium transition-colors",
+                        active
+                          ? "bg-[var(--color-bg-card)] text-[var(--color-text-primary)] shadow-[var(--shadow-sm)]"
+                          : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]",
+                      )}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="h-[300px] shrink-0">
-              <ScheduledTasks />
+
+            <div className="min-h-0 flex-1">
+              {activePanel === "activity" ? (
+                <ActivityFeed items={activityLog} connected={gatewayStatus === "connected"} />
+              ) : activePanel === "tasks" ? (
+                <ScheduledTasks />
+              ) : (
+                <OfficeReportsPanel />
+              )}
             </div>
           </div>
         </div>

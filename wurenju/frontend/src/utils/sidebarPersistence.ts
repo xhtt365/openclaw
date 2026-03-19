@@ -2,6 +2,7 @@
 
 import { hydrateArchiveTitles, sanitizeArchiveTitle } from "@/utils/archiveTitle";
 import { adaptSidebarSyncMessage, type ChatMessage, type ChatUsage } from "@/utils/messageAdapter";
+import { readLocalStorageItem, writeLocalStorageItem } from "@/utils/storage";
 
 export type SidebarDepartment = {
   id: string;
@@ -56,7 +57,7 @@ function readStorageItem(key: string) {
     return null;
   }
 
-  return window.localStorage.getItem(key);
+  return readLocalStorageItem(key);
 }
 
 function writeStorageItem(key: string, value: string) {
@@ -64,10 +65,8 @@ function writeStorageItem(key: string, value: string) {
     return;
   }
 
-  try {
-    window.localStorage.setItem(key, value);
-  } catch (error) {
-    console.warn(`[Sidebar] 写入本地缓存失败: ${key}`, error);
+  if (!writeLocalStorageItem(key, value)) {
+    console.warn(`[Storage] 侧栏缓存写入失败: ${key}`);
   }
 }
 

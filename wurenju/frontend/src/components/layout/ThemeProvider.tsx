@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { ThemeContext, type ResolvedThemeMode, type ThemeMode } from "@/components/layout/useTheme";
+import {
+  readLocalStorageItem,
+  removeLocalStorageItem,
+  writeLocalStorageItem,
+} from "@/utils/storage";
 
 const THEME_STORAGE_KEY = "xiaban_theme";
 const LEGACY_THEME_STORAGE_KEY = "theme";
@@ -13,8 +18,7 @@ function readStoredThemePreference(): ThemeMode | null {
   }
 
   const storedTheme =
-    window.localStorage.getItem(THEME_STORAGE_KEY) ??
-    window.localStorage.getItem(LEGACY_THEME_STORAGE_KEY);
+    readLocalStorageItem(THEME_STORAGE_KEY) ?? readLocalStorageItem(LEGACY_THEME_STORAGE_KEY);
   return storedTheme === "system" || storedTheme === "light" || storedTheme === "dark"
     ? storedTheme
     : null;
@@ -92,7 +96,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
 
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    setSystemTheme(media.matches ? "dark" : "light");
     const handleChange = (event: MediaQueryListEvent) => {
       setSystemTheme(event.matches ? "dark" : "light");
     };
@@ -110,12 +113,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, [resolvedTheme]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
-      window.localStorage.removeItem(LEGACY_THEME_STORAGE_KEY);
-    } catch (error) {
-      console.error("[Theme] 保存主题失败:", error);
+    if (!writeLocalStorageItem(THEME_STORAGE_KEY, theme)) {
+      console.error("[Theme] 保存主题失败");
+      return;
     }
+    removeLocalStorageItem(LEGACY_THEME_STORAGE_KEY);
   }, [theme]);
 
   const setTheme = useCallback((nextTheme: ThemeMode) => {

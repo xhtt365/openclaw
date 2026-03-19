@@ -1,5 +1,7 @@
 // 复制自 openclaw 3.13 原版 ../../../ui/src/ui/chat/deleted-messages.ts，用于二开定制
 
+import { readLocalStorageItem, writeLocalStorageItem } from "@/utils/storage";
+
 const PREFIX = "openclaw:deleted:";
 
 export class DeletedMessages {
@@ -32,7 +34,7 @@ export class DeletedMessages {
 
   private load(): void {
     try {
-      const raw = localStorage.getItem(this.key);
+      const raw = readLocalStorageItem(this.key);
       if (!raw) {
         return;
       }
@@ -46,10 +48,6 @@ export class DeletedMessages {
   }
 
   private save(): void {
-    try {
-      localStorage.setItem(this.key, JSON.stringify([...this._keys]));
-    } catch {
-      // ignore
-    }
+    writeLocalStorageItem(this.key, JSON.stringify([...this._keys]), { silent: true });
   }
 }

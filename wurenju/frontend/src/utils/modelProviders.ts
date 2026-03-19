@@ -1,4 +1,5 @@
 import type { ModelApiProtocol } from "@/types/model";
+import { readLocalStorageItem, writeLocalStorageItem } from "@/utils/storage";
 
 export const MODEL_PROVIDERS_STORAGE_KEY = "xiaban.modelProviders";
 export const MODEL_PROVIDER_STATUS_STORAGE_KEY = "xiaban.modelProviderStatus";
@@ -163,18 +164,6 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     supportsCustomModels: true,
   },
 ];
-
-function getStorage() {
-  if (typeof window !== "undefined" && window.localStorage) {
-    return window.localStorage;
-  }
-
-  if (typeof localStorage !== "undefined") {
-    return localStorage;
-  }
-
-  return null;
-}
 
 function emitEvent(eventName: string, detail: Record<string, unknown>) {
   if (typeof window === "undefined") {
@@ -408,13 +397,8 @@ export function buildModelRef(providerId: string, modelId: string) {
 }
 
 export function readStoredProviderMetaMap(): StoredProviderMetaMap {
-  const storage = getStorage();
-  if (!storage) {
-    return {};
-  }
-
   try {
-    const raw = storage.getItem(MODEL_PROVIDERS_STORAGE_KEY);
+    const raw = readLocalStorageItem(MODEL_PROVIDERS_STORAGE_KEY);
     if (!raw) {
       return {};
     }
@@ -426,31 +410,25 @@ export function readStoredProviderMetaMap(): StoredProviderMetaMap {
 }
 
 export function saveStoredProviderMetaMap(value: StoredProviderMetaMap) {
-  const storage = getStorage();
-  if (!storage) {
+  const normalized = compactProviderMetaMap(value);
+  if (!writeLocalStorageItem(MODEL_PROVIDERS_STORAGE_KEY, JSON.stringify(normalized))) {
     throw new Error("当前环境不支持本地保存");
   }
-
-  const normalized = compactProviderMetaMap(value);
-  storage.setItem(MODEL_PROVIDERS_STORAGE_KEY, JSON.stringify(normalized));
   emitEvent(MODEL_PROVIDERS_UPDATED_EVENT, { providers: normalized });
   return normalized;
 }
 
 export function readModelProviderStatusMap() {
-  const storage = getStorage();
-  if (!storage) {
-    return {};
-  }
-
   try {
-    const raw = storage.getItem(MODEL_PROVIDER_STATUS_STORAGE_KEY);
+    const raw = readLocalStorageItem(MODEL_PROVIDER_STATUS_STORAGE_KEY);
     if (!raw) {
       return {};
     }
 
     const normalized = compactStatusMap(JSON.parse(raw));
-    storage.setItem(MODEL_PROVIDER_STATUS_STORAGE_KEY, JSON.stringify(normalized));
+    writeLocalStorageItem(MODEL_PROVIDER_STATUS_STORAGE_KEY, JSON.stringify(normalized), {
+      silent: true,
+    });
     return normalized;
   } catch {
     return {};
@@ -458,25 +436,17 @@ export function readModelProviderStatusMap() {
 }
 
 export function saveModelProviderStatusMap(value: ModelProviderRuntimeStatusMap) {
-  const storage = getStorage();
-  if (!storage) {
+  const normalized = compactStatusMap(value);
+  if (!writeLocalStorageItem(MODEL_PROVIDER_STATUS_STORAGE_KEY, JSON.stringify(normalized))) {
     return {};
   }
-
-  const normalized = compactStatusMap(value);
-  storage.setItem(MODEL_PROVIDER_STATUS_STORAGE_KEY, JSON.stringify(normalized));
   emitEvent(MODEL_PROVIDER_STATUS_UPDATED_EVENT, { providers: normalized });
   return normalized;
 }
 
 export function readAgentModelAccessMap() {
-  const storage = getStorage();
-  if (!storage) {
-    return {};
-  }
-
   try {
-    const raw = storage.getItem(AGENT_MODEL_ACCESS_STORAGE_KEY);
+    const raw = readLocalStorageItem(AGENT_MODEL_ACCESS_STORAGE_KEY);
     if (!raw) {
       return {};
     }
@@ -488,13 +458,10 @@ export function readAgentModelAccessMap() {
 }
 
 export function saveAgentModelAccessMap(value: AgentModelAccessMap) {
-  const storage = getStorage();
-  if (!storage) {
+  const normalized = compactAgentModelAccessMap(value);
+  if (!writeLocalStorageItem(AGENT_MODEL_ACCESS_STORAGE_KEY, JSON.stringify(normalized))) {
     throw new Error("当前环境不支持本地保存");
   }
-
-  const normalized = compactAgentModelAccessMap(value);
-  storage.setItem(AGENT_MODEL_ACCESS_STORAGE_KEY, JSON.stringify(normalized));
   emitEvent(AGENT_MODEL_ACCESS_UPDATED_EVENT, { access: normalized });
   return normalized;
 }

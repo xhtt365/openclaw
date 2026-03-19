@@ -35,6 +35,7 @@ import {
   type SessionRuntimeListPayload,
   type SessionRuntimeState,
 } from "@/utils/sessionRuntime";
+import { readLocalStorageItem, writeLocalStorageItem } from "@/utils/storage";
 import { normalizeUsage as normalizeGatewayUsage } from "@/utils/usage";
 
 const GATEWAY_URL =
@@ -1947,10 +1948,10 @@ class GatewayService {
       const queryParams = new URLSearchParams(window.location.search);
       const runtimeToken = hashParams.get("token")?.trim() || queryParams.get("token")?.trim();
       if (runtimeToken) {
-        window.localStorage.setItem(GATEWAY_TOKEN_STORAGE_KEY, runtimeToken);
+        writeLocalStorageItem(GATEWAY_TOKEN_STORAGE_KEY, runtimeToken, { silent: true });
         return runtimeToken;
       }
-      return window.localStorage.getItem(GATEWAY_TOKEN_STORAGE_KEY)?.trim() || undefined;
+      return readLocalStorageItem(GATEWAY_TOKEN_STORAGE_KEY)?.trim() || undefined;
     } catch (error) {
       console.error("[GW] error:", error);
       return undefined;
@@ -1962,7 +1963,7 @@ class GatewayService {
     if (typeof window === "undefined") {
       return null;
     }
-    const raw = window.localStorage.getItem(GATEWAY_DEVICE_IDENTITY_STORAGE_KEY);
+    const raw = readLocalStorageItem(GATEWAY_DEVICE_IDENTITY_STORAGE_KEY);
     if (!raw) {
       return null;
     }
@@ -2017,13 +2018,14 @@ class GatewayService {
     };
 
     if (typeof window !== "undefined") {
-      try {
-        window.localStorage.setItem(
+      if (
+        !writeLocalStorageItem(
           GATEWAY_DEVICE_IDENTITY_STORAGE_KEY,
           JSON.stringify(storedIdentity),
-        );
-      } catch (error) {
-        console.error("[GW] 保存设备身份失败:", error);
+          { silent: true },
+        )
+      ) {
+        console.error("[GW] 保存设备身份失败");
       }
     }
 

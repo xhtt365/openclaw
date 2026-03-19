@@ -2,12 +2,12 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { gateway, type GatewayLifecycleObserver, type GatewayMessage } from "@/services/gateway";
 import { useAgentStore, type Agent } from "@/stores/agentStore";
+import { useStatsStore } from "@/stores/statsStore";
 import {
   classifyHealthError,
   createEmptyHealthRecord,
   deriveHealthSummary,
   EMPTY_HEALTH_SUMMARY,
-  HEALTH_RETENTION_MS,
   trimHealthRecord,
   type AgentHealthRecord,
   type AgentHealthSummary,
@@ -18,27 +18,12 @@ import {
   type HealthUsageSnapshot,
 } from "@/utils/health";
 import { resolveSessionRuntimeState, type SessionRuntimeListPayload } from "@/utils/sessionRuntime";
+import { createSafeStorageAdapter } from "@/utils/storage";
 
 const HEALTH_STORAGE_KEY = "xiaban.health.v1";
-const HEALTH_STORAGE_MAX_BYTES = 2 * 1024 * 1024;
 const HEALTH_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const DEFAULT_OFFICE_PROBE_INTERVAL_MS = 60_000;
 const OFFICE_ALERT_REPLAY_MS = 15 * 60 * 1000;
-
-const FALLBACK_STORAGE: Storage = {
-  get length() {
-    return 0;
-  },
-  clear() {},
-  getItem() {
-    return null;
-  },
-  key() {
-    return null;
-  },
-  removeItem() {},
-  setItem() {},
-};
 
 type PendingHealthInteraction = {
   kind: HealthRequestKind;
@@ -189,192 +174,8 @@ function buildSessionKey(agentId: string, mainKey: string) {
   return `agent:${agentId}:${mainKey}`;
 }
 
-function isQuotaExceededError(error: unknown) {
-  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
-    return error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED";
-  }
-
-  return (
-    !!error &&
-    typeof error === "object" &&
-    "name" in error &&
-    (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED")
-  );
-}
-
-function resolveByteSize(value: string) {
-  if (typeof TextEncoder !== "undefined") {
-    return new TextEncoder().encode(value).length;
-  }
-
-  return value.length * 2;
-}
-
-function safeJsonParse(value: string) {
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    return null;
-  }
-}
-
-function trimHealthPayload(payload: { state?: PersistedHealthState; version?: number }) {
-  if (!payload.state) {
-    return payload;
-  }
-
-  const cutoff = Date.now() - HEALTH_RETENTION_MS;
-  const nextRecords = Object.fromEntries(
-    Object.entries(payload.state.recordsByAgentId ?? {}).map(([agentId, record]) => [
-      agentId,
-      trimHealthRecord(record, Date.now()),
-    ]),
-  );
-  const nextAlerts = (payload.state.alerts ?? []).filter((alert) => alert.timestamp >= cutoff);
-
-  return {
-    ...payload,
-    state: {
-      recordsByAgentId: nextRecords,
-      alerts: nextAlerts,
-    },
-  };
-}
-
-function shrinkHealthPayloadForSize(
-  payload: {
-    state?: PersistedHealthState;
-    version?: number;
-  },
-  maxBytes: number,
-) {
-  if (!payload.state) {
-    return payload;
-  }
-
-  const steps = [
-    { interactions: 40, usageSnapshots: 40, fallbackEvents: 15, alerts: 15, globalAlerts: 40 },
-    { interactions: 20, usageSnapshots: 20, fallbackEvents: 10, alerts: 10, globalAlerts: 20 },
-    { interactions: 10, usageSnapshots: 10, fallbackEvents: 5, alerts: 5, globalAlerts: 10 },
-    { interactions: 5, usageSnapshots: 5, fallbackEvents: 3, alerts: 3, globalAlerts: 5 },
-    { interactions: 2, usageSnapshots: 2, fallbackEvents: 2, alerts: 2, globalAlerts: 2 },
-    { interactions: 0, usageSnapshots: 0, fallbackEvents: 0, alerts: 0, globalAlerts: 0 },
-  ];
-
-  for (const step of steps) {
-    const nextRecords = Object.fromEntries(
-      Object.entries(payload.state.recordsByAgentId ?? {}).map(([agentId, record]) => [
-        agentId,
-        {
-          ...record,
-          interactions: record.interactions.slice(-step.interactions),
-          usageSnapshots: record.usageSnapshots.slice(-step.usageSnapshots),
-          fallbackEvents: record.fallbackEvents.slice(-step.fallbackEvents),
-          alerts: record.alerts.slice(-step.alerts),
-        },
-      ]),
-    );
-
-    const nextPayload = {
-      ...payload,
-      state: {
-        recordsByAgentId: nextRecords,
-        alerts: (payload.state.alerts ?? []).slice(-step.globalAlerts),
-      },
-    };
-
-    const raw = JSON.stringify(nextPayload);
-    if (resolveByteSize(raw) <= maxBytes) {
-      return nextPayload;
-    }
-  }
-
-  return payload;
-}
-
-function sanitizeHealthStorageValue(raw: string, aggressive = false) {
-  const parsed = safeJsonParse(raw);
-  if (!parsed || typeof parsed !== "object") {
-    return raw;
-  }
-
-  const trimmed = trimHealthPayload(parsed as { state?: PersistedHealthState; version?: number });
-  let nextRaw = JSON.stringify(trimmed);
-  if (resolveByteSize(nextRaw) <= HEALTH_STORAGE_MAX_BYTES) {
-    return nextRaw;
-  }
-
-  const shrunk = shrinkHealthPayloadForSize(trimmed, HEALTH_STORAGE_MAX_BYTES);
-  nextRaw = JSON.stringify(shrunk);
-  if (!aggressive || resolveByteSize(nextRaw) <= HEALTH_STORAGE_MAX_BYTES || !shrunk.state) {
-    return nextRaw;
-  }
-
-  // 激进模式：仍超限则清空最老的健康记录，优先保证写入成功。
-  const minimal = {
-    ...shrunk,
-    state: {
-      recordsByAgentId: {},
-      alerts: [],
-    },
-  };
-  nextRaw = JSON.stringify(minimal);
-  return nextRaw;
-}
-
 function resolveHealthStorage() {
-  if (typeof window !== "undefined" && window.localStorage) {
-    const storage = window.localStorage;
-    return {
-      getItem: (key: string) => {
-        try {
-          return storage.getItem(key);
-        } catch (error) {
-          console.warn(`[Health] 读取本地存储失败: ${key}`, error);
-          return null;
-        }
-      },
-      setItem: (key: string, value: string) => {
-        const sanitizedValue = sanitizeHealthStorageValue(value);
-        try {
-          storage.setItem(key, sanitizedValue);
-        } catch (error) {
-          if (!isQuotaExceededError(error)) {
-            console.warn(`[Health] 写入本地存储失败: ${key}`, error);
-            return;
-          }
-
-          console.warn(`[Health] 存储空间不足，尝试清理后重试: ${key}`);
-          const trimmedValue = sanitizeHealthStorageValue(value, true);
-          try {
-            storage.setItem(key, trimmedValue);
-          } catch (retryError) {
-            console.warn(`[Health] 清理后仍无法写入本地存储: ${key}`, retryError);
-          }
-        }
-      },
-      removeItem: (key: string) => {
-        try {
-          storage.removeItem(key);
-        } catch (error) {
-          console.warn(`[Health] 删除本地存储失败: ${key}`, error);
-        }
-      },
-      key: (index: number) => storage.key(index),
-      clear: () => {
-        try {
-          storage.clear();
-        } catch (error) {
-          console.warn("[Health] 清空本地存储失败:", error);
-        }
-      },
-      get length() {
-        return storage.length;
-      },
-    } satisfies Storage;
-  }
-
-  return FALLBACK_STORAGE;
+  return createSafeStorageAdapter();
 }
 
 export const useHealthStore = create<HealthState>()(
@@ -455,6 +256,7 @@ export const useHealthStore = create<HealthState>()(
       ) {
         const now = Date.now();
         let generatedAlerts: HealthAlert[] = [];
+        let nextRecordForStats: AgentHealthRecord | null = null;
         set((state) => {
           const current = trimHealthRecord(
             state.recordsByAgentId[agentId] ?? createEmptyHealthRecord(),
@@ -572,6 +374,7 @@ export const useHealthStore = create<HealthState>()(
             summary: nextSummary,
             alerts: trimmedAlerts,
           };
+          nextRecordForStats = nextRecord;
           const nextGlobalAlerts = [...state.alerts, ...generatedAlerts].slice(-120);
 
           return {
@@ -583,6 +386,9 @@ export const useHealthStore = create<HealthState>()(
           };
         });
 
+        if (nextRecordForStats) {
+          useStatsStore.getState().syncAgentRecord(agentId, nextRecordForStats);
+        }
         generatedAlerts.forEach((alert) => emitAlert(alert));
       }
 
@@ -616,6 +422,7 @@ export const useHealthStore = create<HealthState>()(
         provider?: string | null;
         errorMessage?: string;
         currentContextUsed?: number | null;
+        usage?: GatewayMessage["usage"];
       }) {
         const pending = params.pending ?? null;
         const messageError = params.errorMessage?.trim() ?? "";
@@ -642,6 +449,12 @@ export const useHealthStore = create<HealthState>()(
               success: params.success,
               model: params.model ?? current.lastKnownModel,
               provider: params.provider ?? undefined,
+              tokenInput: params.usage?.input ?? 0,
+              tokenOutput: params.usage?.output ?? 0,
+              tokenCacheRead: params.usage?.cacheRead ?? 0,
+              tokenCacheWrite: params.usage?.cacheWrite ?? 0,
+              tokenTotal: params.usage?.totalTokens ?? 0,
+              tokenCostTotal: params.usage?.cost?.total ?? null,
               usedFallback: pending?.usedFallback === true || current.fallbackActive,
               errorType: classified?.type,
               errorMessage: messageError || undefined,
@@ -770,6 +583,7 @@ export const useHealthStore = create<HealthState>()(
                   (event.message.usage.cacheRead ?? 0) +
                   (event.message.usage.cacheWrite ?? 0)
                 : null,
+            usage: event.message.usage,
           });
         },
         onRequestError: (event) => {
@@ -1029,6 +843,7 @@ export const useHealthStore = create<HealthState>()(
                   (message.usage.cacheRead ?? 0) +
                   (message.usage.cacheWrite ?? 0)
                 : null,
+            usage: message.usage,
           });
         },
 

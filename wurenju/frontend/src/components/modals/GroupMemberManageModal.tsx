@@ -12,6 +12,7 @@ import {
   removeAgentFromGroup,
   resolveDisplayAgentMembers,
 } from "@/utils/groupMembers";
+import { readLocalStorageItem } from "@/utils/storage";
 
 type GroupMemberManageModalProps = {
   open: boolean;
@@ -29,7 +30,7 @@ function readStoredAvatar() {
     return null;
   }
 
-  const value = window.localStorage.getItem("userAvatar");
+  const value = readLocalStorageItem("userAvatar");
   return value && value.trim() ? value : null;
 }
 

@@ -1,3 +1,9 @@
+import {
+  readLocalStorageItem,
+  removeLocalStorageItem,
+  writeLocalStorageItem,
+} from "@/utils/storage";
+
 export const USER_AVATAR_STORAGE_KEY = "xiaban_user_avatar";
 export const USER_NAME_STORAGE_KEY = "xiaban_user_name";
 
@@ -45,12 +51,7 @@ function readStorageValue(key: string) {
     return null;
   }
 
-  try {
-    return window.localStorage.getItem(key);
-  } catch (error) {
-    console.error(`[UserProfile] 读取 ${key} 失败:`, error);
-    return null;
-  }
+  return readLocalStorageItem(key);
 }
 
 function writeStorageValue(key: string, value: string | null) {
@@ -58,15 +59,12 @@ function writeStorageValue(key: string, value: string | null) {
     return;
   }
 
-  try {
-    if (value === null) {
-      window.localStorage.removeItem(key);
-    } else {
-      window.localStorage.setItem(key, value);
-    }
-  } catch (error) {
-    console.error(`[UserProfile] 写入 ${key} 失败:`, error);
+  if (value === null) {
+    removeLocalStorageItem(key);
+    return;
   }
+
+  writeLocalStorageItem(key, value);
 }
 
 function migrateLegacyAvatar() {

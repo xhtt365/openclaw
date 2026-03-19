@@ -33,6 +33,12 @@ import {
   clearSidebarGroupUnreadCount,
   incrementSidebarGroupUnreadCount,
 } from "@/utils/sidebarPersistence";
+import {
+  listLocalStorageKeys,
+  readLocalStorageItem,
+  removeLocalStorageItem,
+  writeLocalStorageItem,
+} from "@/utils/storage";
 
 const DEFAULT_GROUP_CONTEXT_WINDOW = 8192;
 const GROUP_HISTORY_PULL_LIMIT = 24;
@@ -597,7 +603,7 @@ function readStoredState(): GroupPersistence {
   }
 
   try {
-    const raw = window.localStorage.getItem(GROUP_STORAGE_KEY);
+    const raw = readLocalStorageItem(GROUP_STORAGE_KEY);
     if (!raw) {
       return emptyPersistence();
     }
@@ -1080,15 +1086,14 @@ function removeGroupCompactionBackups(groupId: string) {
   const backupPrefix = `compacted:${groupId}:`;
   const backupKeys: string[] = [];
 
-  for (let index = 0; index < window.localStorage.length; index += 1) {
-    const key = window.localStorage.key(index);
+  for (const key of listLocalStorageKeys()) {
     if (typeof key === "string" && key.startsWith(backupPrefix)) {
       backupKeys.push(key);
     }
   }
 
   backupKeys.forEach((key) => {
-    window.localStorage.removeItem(key);
+    removeLocalStorageItem(key);
   });
 
   if (backupKeys.length > 0) {
@@ -1822,7 +1827,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
 
     try {
       const backupKey = `compacted:${groupId}:${agentId}:${Date.now()}`;
-      window.localStorage.setItem(
+      const saved = writeLocalStorageItem(
         backupKey,
         JSON.stringify({
           groupId,
@@ -1830,7 +1835,11 @@ export const useGroupStore = create<GroupState>((set, get) => {
           createdAt: new Date().toISOString(),
           messages,
         }),
+        { silent: true },
       );
+      if (!saved) {
+        console.warn(`[Storage] 压缩备份写入失败: group=${groupId}, agent=${agentId}`);
+      }
     } catch (error) {
       console.warn(`[Compact] 写入压缩备份失败: group=${groupId}, agent=${agentId}`, error);
     }

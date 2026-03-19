@@ -1,5 +1,7 @@
 // 复制自 openclaw 3.13 原版 ../../../ui/src/ui/chat/pinned-messages.ts，用于二开定制
 
+import { readLocalStorageItem, writeLocalStorageItem } from "@/utils/storage";
+
 const PREFIX = "openclaw:pinned:";
 
 export class PinnedMessages {
@@ -44,7 +46,7 @@ export class PinnedMessages {
 
   private load(): void {
     try {
-      const raw = localStorage.getItem(this.key);
+      const raw = readLocalStorageItem(this.key);
       if (!raw) {
         return;
       }
@@ -58,10 +60,6 @@ export class PinnedMessages {
   }
 
   private save(): void {
-    try {
-      localStorage.setItem(this.key, JSON.stringify([...this._indices]));
-    } catch {
-      // ignore
-    }
+    writeLocalStorageItem(this.key, JSON.stringify([...this._indices]), { silent: true });
   }
 }
