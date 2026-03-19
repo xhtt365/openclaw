@@ -5,6 +5,7 @@ export type GrowthTriggerKind = "cron" | "manual" | "peer_teach";
 export type GrowthSuggestionStatus =
   | "pending_approval"
   | "applied"
+  | "rejected"
   | "verified"
   | "rolled_back"
   | "failed";
@@ -106,6 +107,7 @@ export type GrowthReviewRecord = {
   experienceId?: string;
   note?: string;
   appliedAt?: number;
+  rejectedAt?: number;
   verifiedAt?: number;
   rolledBackAt?: number;
 };

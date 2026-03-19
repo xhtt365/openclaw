@@ -30,6 +30,7 @@ import {
   createWeeklyWindow,
   extractSuggestionFromReport,
   formatGrowthDeltaBadge,
+  hasMetricSnapshotData,
   mapLeaderboardByAgentId,
   resolveLevelBadge,
   resolveReviewSourceLabel,
@@ -58,6 +59,7 @@ type GrowthState = {
     trigger?: "cron" | "manual";
   }) => Promise<GrowthReviewRecord[]>;
   applyReviewSuggestion: (reviewId: string) => Promise<void>;
+  rejectReviewSuggestion: (reviewId: string) => Promise<void>;
   evaluatePendingChanges: (options?: { force?: boolean; agentId?: string }) => Promise<void>;
   processTeachingQueue: (options?: { force?: boolean; agentId?: string }) => Promise<void>;
   getReviewsForAgent: (agentId: string) => GrowthReviewRecord[];
@@ -527,6 +529,23 @@ export const useGrowthStore = create<GrowthState>()(
                 ranking: rankingMap[agent.id] ?? null,
                 previousSnapshot,
               });
+              if (!hasMetricSnapshotData(snapshot.metrics)) {
+                console.log(
+                  `[Growth] 跳过周度自评: agent=${agent.id}, reason=no-stats, trigger=${options.trigger ?? "cron"}`,
+                );
+                pushEvent(
+                  buildEvent({
+                    time: Date.now(),
+                    tone: "system",
+                    title: "weekly-review-no-stats",
+                    agentId: agent.id,
+                    agentName: agent.name,
+                    text: `ℹ️ ${agent.name} 暂无统计数据，无法生成自评`,
+                  }),
+                );
+                continue;
+              }
+
               const conversationSummary = await loadConversationSummary(agent.id);
               const prompt = buildWeeklyReviewPrompt({
                 agentName: agent.name,
@@ -545,6 +564,17 @@ export const useGrowthStore = create<GrowthState>()(
                 .sendProgrammaticMessageToAgent(agent.id, prompt);
               const reply = immediateReply ?? findLatestReviewMessageReply(agent.id, createdAt);
               if (!reply?.content.trim()) {
+                console.log(`[Growth] 周度自评未收到回复: agent=${agent.id}`);
+                pushEvent(
+                  buildEvent({
+                    time: createdAt,
+                    tone: "error",
+                    title: "weekly-review-missing-reply",
+                    agentId: agent.id,
+                    agentName: agent.name,
+                    text: `⚠️ ${agent.name} 未返回周度自评，已跳过本次记录`,
+                  }),
+                );
                 continue;
               }
 
@@ -760,6 +790,50 @@ export const useGrowthStore = create<GrowthState>()(
           }
         },
 
+        rejectReviewSuggestion: async (reviewId) => {
+          const review = get().reviews.find((item) => item.id === reviewId);
+          if (!review || review.status !== "pending_approval") {
+            return;
+          }
+
+          const now = Date.now();
+          set((state) => ({
+            reviews: state.reviews.map((item) =>
+              item.id === reviewId
+                ? {
+                    ...item,
+                    status: "rejected",
+                    rejectedAt: now,
+                  }
+                : item,
+            ),
+          }));
+
+          const relatedDispatch = useExperienceStore
+            .getState()
+            .teachingDispatches.find((dispatch) => dispatch.relatedReviewId === review.id);
+          if (relatedDispatch) {
+            useExperienceStore
+              .getState()
+              .updateTeachingDispatch(relatedDispatch.id, (dispatch) => ({
+                ...dispatch,
+                status: "skipped",
+              }));
+          }
+
+          const agentName = resolveAgentName(review.agentId);
+          pushEvent(
+            buildEvent({
+              time: now,
+              tone: "system",
+              title: "suggestion-rejected",
+              agentId: review.agentId,
+              agentName,
+              text: `🗑️ ${agentName} 的建议已驳回，IDENTITY.md 未变更`,
+            }),
+          );
+        },
+
         evaluatePendingChanges: async (options = {}) => {
           if (validationRunning) {
             return;
@@ -792,7 +866,7 @@ export const useGrowthStore = create<GrowthState>()(
               const agentName = resolveAgentName(entry.source);
 
               if (comparison.status === "improved") {
-                console.log(`[Experience] 经验验证通过: entry=${entry.id}`);
+                console.log(`[Growth] 经验验证通过: entry=${entry.id}`);
                 useExperienceStore.getState().updateEntry(entry.id, (current) => ({
                   ...current,
                   status: "verified",

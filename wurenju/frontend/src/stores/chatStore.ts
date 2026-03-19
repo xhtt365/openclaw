@@ -168,6 +168,38 @@ function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]) {
   return [...baseMessages, ...incoming];
 }
 
+function appendAssistantReplyIfMissing(current: ChatMessage[], reply: ChatMessage) {
+  const baseMessages = current.filter((message) => !message.isLoading);
+  const exists = baseMessages.some((message) => {
+    if (message.role !== "assistant" || reply.role !== "assistant") {
+      return false;
+    }
+
+    const sameTimestamp =
+      typeof message.timestamp === "number" &&
+      typeof reply.timestamp === "number" &&
+      message.timestamp === reply.timestamp;
+    return sameTimestamp && message.content.trim() === reply.content.trim();
+  });
+
+  if (exists) {
+    return baseMessages;
+  }
+
+  return [
+    ...baseMessages,
+    {
+      ...reply,
+      isHistorical: false,
+      isNew: true,
+    },
+  ].toSorted((left, right) => {
+    const leftTimestamp = typeof left.timestamp === "number" ? left.timestamp : 0;
+    const rightTimestamp = typeof right.timestamp === "number" ? right.timestamp : 0;
+    return leftTimestamp - rightTimestamp;
+  });
+}
+
 function withMessages(
   map: MessageBuckets,
   agentId: string,
@@ -425,10 +457,27 @@ export const useChatStore = create<ChatState>((set, get) => {
       }
 
       const history = await gateway.loadHistory(sessionKey, 16);
+      const mappedHistory = adaptHistoryMessages(history);
       const reply =
-        adaptHistoryMessages(history)
-          .toReversed()
-          .find((message) => message.role === "assistant") ?? null;
+        mappedHistory.toReversed().find((message) => message.role === "assistant") ?? null;
+      set((state) => ({
+        ...(reply
+          ? updateMessagesAndUsage(
+              state.messagesByAgentId,
+              state.usageByAgentId,
+              state.currentContextUsedByAgentId,
+              agentId,
+              (current) => appendAssistantReplyIfMissing(current, reply),
+            )
+          : {
+              messagesByAgentId: withMessages(state.messagesByAgentId, agentId, (current) =>
+                current.filter((message) => !message.isLoading),
+              ),
+              usageByAgentId: state.usageByAgentId,
+              currentContextUsedByAgentId: state.currentContextUsedByAgentId,
+            }),
+        activeReplyAgentId: state.activeReplyAgentId === agentId ? null : state.activeReplyAgentId,
+      }));
       return reply;
     } catch (error) {
       const errorText =

@@ -540,6 +540,16 @@ function summarizeErrorTypes(errorTypes: MetricSnapshot["errorTypes"]) {
   return items.length > 0 ? items.join("、") : "无";
 }
 
+export function hasMetricSnapshotData(snapshot: MetricSnapshot) {
+  return (
+    snapshot.messageCount > 0 ||
+    snapshot.turnCount > 0 ||
+    snapshot.tokenTotal > 0 ||
+    snapshot.errorCount > 0 ||
+    snapshot.avgResponseMs !== null
+  );
+}
+
 export function buildWeeklyReviewPrompt(params: {
   agentName: string;
   snapshot: MetricSnapshot;
@@ -551,16 +561,27 @@ export function buildWeeklyReviewPrompt(params: {
   const healthTrend = previousMetrics
     ? `${params.snapshot.healthScore - previousMetrics.healthScore > 0 ? "↑" : "↓"}${Math.abs(params.snapshot.healthScore - previousMetrics.healthScore)}`
     : "暂无对比数据";
+  const averageLatencyLabel =
+    params.snapshot.avgResponseMs === null
+      ? "暂无"
+      : `${Math.round(params.snapshot.avgResponseMs)}ms`;
 
   return [
     "【系统成长任务 / 周度自评】",
-    `你是虾班公司的员工 ${params.agentName}，以下是你最近一周的工作数据：`,
+    `你是虾班公司的员工 ${params.agentName}。`,
+    "以下数据来自 statsStore 的真实统计结果，严禁编造、补全或猜测任何不存在的数字。",
+    "如果某项数据为空，就直接按“暂无”理解，不要自己补数字。",
     "",
-    `- 处理消息：${params.snapshot.messageCount} 条`,
-    `- 平均响应时间：${formatLatency(params.snapshot.avgResponseMs)}`,
-    `- 错误次数：${params.snapshot.errorCount} 次（${summarizeErrorTypes(params.snapshot.errorTypes)}）`,
-    `- Token 消耗：${formatTokenValue(params.snapshot.tokenTotal)}`,
+    "【statsStore 真实工作数据】",
+    `- 消息量：${params.snapshot.messageCount} 条`,
     `- 对话轮次：${params.snapshot.turnCount} 轮`,
+    `- Token 消耗：${formatTokenValue(params.snapshot.tokenTotal)}`,
+    `- 错误次数：${params.snapshot.errorCount} 次（${summarizeErrorTypes(params.snapshot.errorTypes)}）`,
+    `- 平均延迟：${averageLatencyLabel}`,
+    "",
+    "【辅助分析数据】",
+    `- 健康评分：${params.snapshot.healthScore}`,
+    `- 平均响应时间：${formatLatency(params.snapshot.avgResponseMs)}`,
     `- 模型使用：主模型 ${params.snapshot.mainModel ?? "未识别"}，备用模型 ${params.snapshot.backupModel ?? "未触发"}`,
     `- 健康评分变化：${healthTrend}`,
     params.ranking
@@ -570,10 +591,11 @@ export function buildWeeklyReviewPrompt(params: {
     "典型对话摘要：",
     params.conversationSummary,
     "",
-    "请写一份简短的周度自评（200字以内），严格包含以下 3 点：",
+    "请基于以上真实数据写一份简短的周度自评（200 字以内），严格包含以下 3 点：",
     "1. 本周做得最好的一件事，为什么好？",
     "2. 本周最大的失误或不足，原因是什么？",
     "3. 给自己提一条具体、可执行的改进建议",
+    "禁止引用上面没有出现过的统计数字。",
   ].join("\n");
 }
 

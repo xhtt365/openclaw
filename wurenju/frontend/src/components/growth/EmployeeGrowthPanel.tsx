@@ -2,6 +2,7 @@
 
 import { memo, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/hooks/use-toast";
 import { useAchievementStore } from "@/stores/achievementStore";
 import { useGrowthStore } from "@/stores/growthStore";
 import { useHealthStore } from "@/stores/healthStore";
@@ -23,6 +24,10 @@ function resolveStatusBadge(status: string) {
     return "bg-[var(--color-bg-brand-soft)] text-[var(--color-brand)]";
   }
 
+  if (status === "rejected") {
+    return "bg-[var(--surface-soft-strong)] text-[var(--color-text-secondary)]";
+  }
+
   if (status === "rolled_back") {
     return "bg-[var(--surface-danger-soft)] text-[var(--surface-danger-text)]";
   }
@@ -41,6 +46,10 @@ function resolveStatusLabel(status: string) {
 
   if (status === "applied") {
     return "已应用";
+  }
+
+  if (status === "rejected") {
+    return "已驳回";
   }
 
   if (status === "rolled_back") {
@@ -112,6 +121,9 @@ function TrendChart({ points }: { points: Array<{ label: string; score: number }
 
 function EmployeeGrowthPanelInner({ agentId }: { agentId: string }) {
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
+  const [isTriggeringWeeklyReview, setIsTriggeringWeeklyReview] = useState(false);
+  const [isEvaluatingGrowth, setIsEvaluatingGrowth] = useState(false);
+  const [pendingReviewActionId, setPendingReviewActionId] = useState<string | null>(null);
   const growthStore = useGrowthStore();
   const achievementStore = useAchievementStore();
   const promptVersionStore = usePromptVersionStore();
@@ -151,6 +163,111 @@ function EmployeeGrowthPanelInner({ agentId }: { agentId: string }) {
         (selectedVersionId ?? activeVersionIdByFileName["IDENTITY.md"] ?? versions[0]?.id),
     ) ?? null;
 
+  async function handleTriggerWeeklyReview() {
+    if (isTriggeringWeeklyReview) {
+      return;
+    }
+
+    setIsTriggeringWeeklyReview(true);
+    try {
+      const createdReviews = await growthStore.runWeeklyReviews({
+        agentId,
+        force: true,
+        trigger: "manual",
+      });
+
+      if (createdReviews.length > 0) {
+        toast({
+          title: "已触发周报",
+          description: "员工已收到基于真实 statsStore 数据的自评任务。",
+        });
+        return;
+      }
+
+      toast({
+        title: "暂无统计数据，无法生成自评",
+        description: "最近 7 天没有可用的真实统计数据，本次已跳过。",
+      });
+    } catch (error) {
+      toast({
+        title: "触发周报失败",
+        description: error instanceof Error ? error.message : "请稍后重试",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTriggeringWeeklyReview(false);
+    }
+  }
+
+  async function handleEvaluateGrowth() {
+    if (isEvaluatingGrowth) {
+      return;
+    }
+
+    setIsEvaluatingGrowth(true);
+    try {
+      await growthStore.evaluatePendingChanges({ force: true, agentId });
+      toast({
+        title: "已触发效果验证",
+        description: "已按真实 statsStore 数据重新比对最近窗口。",
+      });
+    } catch (error) {
+      toast({
+        title: "验证效果失败",
+        description: error instanceof Error ? error.message : "请稍后重试",
+        variant: "destructive",
+      });
+    } finally {
+      setIsEvaluatingGrowth(false);
+    }
+  }
+
+  async function handleApplyReview(reviewId: string) {
+    if (pendingReviewActionId) {
+      return;
+    }
+
+    setPendingReviewActionId(reviewId);
+    try {
+      await growthStore.applyReviewSuggestion(reviewId);
+      toast({
+        title: "已应用到 IDENTITY",
+        description: "建议已写入员工的 IDENTITY.md。",
+      });
+    } catch (error) {
+      toast({
+        title: "应用建议失败",
+        description: error instanceof Error ? error.message : "请稍后重试",
+        variant: "destructive",
+      });
+    } finally {
+      setPendingReviewActionId(null);
+    }
+  }
+
+  async function handleRejectReview(reviewId: string) {
+    if (pendingReviewActionId) {
+      return;
+    }
+
+    setPendingReviewActionId(reviewId);
+    try {
+      await growthStore.rejectReviewSuggestion(reviewId);
+      toast({
+        title: "已驳回",
+        description: "已驳回",
+      });
+    } catch (error) {
+      toast({
+        title: "驳回建议失败",
+        description: error instanceof Error ? error.message : "请稍后重试",
+        variant: "destructive",
+      });
+    } finally {
+      setPendingReviewActionId(null);
+    }
+  }
+
   return (
     <section className="rounded-[24px] border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-4 shadow-[var(--shadow-sm)] backdrop-blur-xl">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -164,25 +281,23 @@ function EmployeeGrowthPanelInner({ agentId }: { agentId: string }) {
           <Button
             type="button"
             className="h-9 rounded-2xl px-3"
+            disabled={isTriggeringWeeklyReview}
             onClick={() => {
-              void growthStore.runWeeklyReviews({
-                agentId,
-                force: true,
-                trigger: "manual",
-              });
+              void handleTriggerWeeklyReview();
             }}
           >
-            立即触发周报
+            {isTriggeringWeeklyReview ? "周报触发中..." : "立即触发周报"}
           </Button>
           <Button
             type="button"
             variant="outline"
             className="h-9 rounded-2xl px-3"
+            disabled={isEvaluatingGrowth}
             onClick={() => {
-              void growthStore.evaluatePendingChanges({ force: true, agentId });
+              void handleEvaluateGrowth();
             }}
           >
-            立即验证效果
+            {isEvaluatingGrowth ? "验证中..." : "立即验证效果"}
           </Button>
         </div>
       </div>
@@ -243,15 +358,27 @@ function EmployeeGrowthPanelInner({ agentId }: { agentId: string }) {
                     </div>
 
                     {review.status === "pending_approval" ? (
-                      <div className="mt-4">
+                      <div className="mt-4 flex flex-wrap gap-2">
                         <Button
                           type="button"
                           className="h-9 rounded-2xl px-3"
+                          disabled={pendingReviewActionId === review.id}
                           onClick={() => {
-                            void growthStore.applyReviewSuggestion(review.id);
+                            void handleApplyReview(review.id);
                           }}
                         >
                           应用到 IDENTITY
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-9 rounded-2xl px-3"
+                          disabled={pendingReviewActionId === review.id}
+                          onClick={() => {
+                            void handleRejectReview(review.id);
+                          }}
+                        >
+                          驳回
                         </Button>
                       </div>
                     ) : null}
