@@ -43,6 +43,7 @@ interface ChatState {
   disconnect: () => void;
   switchAgent: (agentId: string) => Promise<void>;
   sendMessage: (text: string) => Promise<void>;
+  sendProgrammaticMessageToAgent: (agentId: string, text: string) => Promise<ChatMessage | null>;
   refreshTokenUsage: () => Promise<SessionActionResult>;
   compactCurrentSession: () => Promise<SessionActionResult>;
   resetCurrentSession: () => Promise<SessionActionResult>;
@@ -355,6 +356,109 @@ function formatFriendlyChatError(errorText: string) {
 }
 
 export const useChatStore = create<ChatState>((set, get) => {
+  async function dispatchMessageToAgent(agentId: string, text: string) {
+    const agentStore = useAgentStore.getState();
+    const mainKey = agentStore.mainKey?.trim();
+    if (!mainKey) {
+      throw new Error("主会话还没准备好");
+    }
+
+    const sessionKey = buildSessionKey(agentId, mainKey);
+    console.log(`[Store] dispatchMessageToAgent: agent=${agentId}, sessionKey=${sessionKey}`);
+
+    const userMsg: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: text,
+      timestamp: Date.now(),
+      isNew: true,
+      isHistorical: false,
+    };
+
+    const loadingMsg: ChatMessage = {
+      id: `loading:${agentId}:${Date.now()}`,
+      role: "assistant",
+      content: "",
+      timestamp: Date.now(),
+      isLoading: true,
+      isNew: true,
+      isHistorical: false,
+    };
+
+    set((state) => ({
+      ...updateMessagesAndUsage(
+        state.messagesByAgentId,
+        state.usageByAgentId,
+        state.currentContextUsedByAgentId,
+        agentId,
+        (current) => [...current.filter((message) => !message.isLoading), userMsg, loadingMsg],
+      ),
+      historyLoadedByAgentId: withBoolean(state.historyLoadedByAgentId, agentId, true),
+      activeReplyAgentId: agentId,
+    }));
+
+    try {
+      const result = await gateway.sendChat(text, sessionKey);
+      if (!result.ok) {
+        const errorText = result.error?.message?.trim() || "连接 Gateway 失败，请确认服务已启动";
+        set((state) => ({
+          ...updateMessagesAndUsage(
+            state.messagesByAgentId,
+            state.usageByAgentId,
+            state.currentContextUsedByAgentId,
+            agentId,
+            (current) => [
+              ...current.filter((message) => !message.isLoading),
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: formatFriendlyChatError(errorText),
+                timestamp: Date.now(),
+                isNew: true,
+                isHistorical: false,
+              },
+            ],
+          ),
+          activeReplyAgentId: null,
+        }));
+        return null;
+      }
+
+      const history = await gateway.loadHistory(sessionKey, 16);
+      const reply =
+        adaptHistoryMessages(history)
+          .toReversed()
+          .find((message) => message.role === "assistant") ?? null;
+      return reply;
+    } catch (error) {
+      const errorText =
+        error instanceof Error && error.message.trim()
+          ? error.message
+          : "连接 Gateway 失败，请确认服务已启动";
+      set((state) => ({
+        ...updateMessagesAndUsage(
+          state.messagesByAgentId,
+          state.usageByAgentId,
+          state.currentContextUsedByAgentId,
+          agentId,
+          (current) => [
+            ...current.filter((message) => !message.isLoading),
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: formatFriendlyChatError(errorText),
+              timestamp: Date.now(),
+              isNew: true,
+              isHistorical: false,
+            },
+          ],
+        ),
+        activeReplyAgentId: null,
+      }));
+      return null;
+    }
+  }
+
   async function loadSessionRuntimeState(agentId: string, sessionKey: string) {
     try {
       const runtimeState = await gateway.getSessionRuntimeState(sessionKey, agentId);
@@ -649,110 +753,21 @@ export const useChatStore = create<ChatState>((set, get) => {
         throw new Error("current agent is not ready");
       }
 
-      const sessionKey = agentStore.getCurrentSessionKey();
-      console.log(`[Store] sendMessage: agent=${agentId}, sessionKey=${sessionKey}, text=${text}`);
-
-      const userMsg: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: "user",
-        content: text,
-        timestamp: Date.now(),
-        isNew: true,
-        isHistorical: false,
-      };
-
-      const loadingMsg: ChatMessage = {
-        id: `loading:${agentId}`,
-        role: "assistant",
-        content: "",
-        timestamp: Date.now(),
-        isLoading: true,
-        isNew: true,
-        isHistorical: false,
-      };
-
-      set((state) => ({
-        ...updateMessagesAndUsage(
-          state.messagesByAgentId,
-          state.usageByAgentId,
-          state.currentContextUsedByAgentId,
-          agentId,
-          (current) => [...current.filter((message) => !message.isLoading), userMsg, loadingMsg],
-        ),
-        historyLoadedByAgentId: withBoolean(state.historyLoadedByAgentId, agentId, true),
-        activeReplyAgentId: agentId,
-      }));
-
-      console.log(
-        `[Store] sendMessage: user msg added, agent=${agentId}, total=${get().getMessagesForAgent(agentId).length}`,
-      );
-
-      try {
-        const currentModelRef =
-          agentStore.agents.find((agent) => agent.id === agentId)?.modelName?.trim() ||
-          agentStore.currentAgentModel?.trim() ||
-          agentStore.defaultModelLabel?.trim() ||
-          "";
-        if (currentModelRef && currentModelRef.startsWith("openai/")) {
-          console.log(`[Store] sendMessage: 发送前检查模型运行时配置 ${currentModelRef}`);
-          await agentStore.ensureModelRuntimeConfig(agentId, currentModelRef);
-        }
-
-        const result = await gateway.sendChat(text, sessionKey);
-        if (!result.ok) {
-          const errorText = result.error?.message?.trim() || "连接 Gateway 失败，请确认服务已启动";
-          console.error("[Store] send failed:", errorText);
-
-          set((state) => ({
-            ...updateMessagesAndUsage(
-              state.messagesByAgentId,
-              state.usageByAgentId,
-              state.currentContextUsedByAgentId,
-              agentId,
-              (current) => [
-                ...current.filter((message) => !message.isLoading),
-                {
-                  id: crypto.randomUUID(),
-                  role: "assistant",
-                  content: formatFriendlyChatError(errorText),
-                  timestamp: Date.now(),
-                  isNew: true,
-                  isHistorical: false,
-                },
-              ],
-            ),
-            activeReplyAgentId: null,
-          }));
-        }
-      } catch (error) {
-        console.error("[GW] error:", error);
-        const errorText =
-          error instanceof Error && error.message.trim()
-            ? error.message
-            : "连接 Gateway 失败，请确认服务已启动";
-        console.error("[Store] send failed:", errorText);
-
-        set((state) => ({
-          ...updateMessagesAndUsage(
-            state.messagesByAgentId,
-            state.usageByAgentId,
-            state.currentContextUsedByAgentId,
-            agentId,
-            (current) => [
-              ...current.filter((message) => !message.isLoading),
-              {
-                id: crypto.randomUUID(),
-                role: "assistant",
-                content: formatFriendlyChatError(errorText),
-                timestamp: Date.now(),
-                isNew: true,
-                isHistorical: false,
-              },
-            ],
-          ),
-          activeReplyAgentId: null,
-        }));
+      const currentModelRef =
+        agentStore.agents.find((agent) => agent.id === agentId)?.modelName?.trim() ||
+        agentStore.currentAgentModel?.trim() ||
+        agentStore.defaultModelLabel?.trim() ||
+        "";
+      if (currentModelRef && currentModelRef.startsWith("openai/")) {
+        console.log(`[Store] sendMessage: 发送前检查模型运行时配置 ${currentModelRef}`);
+        await agentStore.ensureModelRuntimeConfig(agentId, currentModelRef);
       }
+
+      await dispatchMessageToAgent(agentId, text);
+    },
+
+    sendProgrammaticMessageToAgent: async (agentId, text) => {
+      return dispatchMessageToAgent(agentId, text);
     },
 
     refreshTokenUsage: async () => {

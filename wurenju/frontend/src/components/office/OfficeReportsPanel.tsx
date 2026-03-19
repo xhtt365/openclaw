@@ -5,7 +5,11 @@ import { AgentAvatar } from "@/components/stats/AgentAvatar";
 import { cn } from "@/lib/utils";
 import type { Agent } from "@/stores/agentStore";
 import { useAgentStore } from "@/stores/agentStore";
+import { useGrowthStore } from "@/stores/growthStore";
+import { useHealthStore } from "@/stores/healthStore";
 import { useStatsStore } from "@/stores/statsStore";
+import type { RankingEntry } from "@/types/growth";
+import { buildLeaderboard, createWeekKey, resolveLevelBadge } from "@/utils/growth";
 import {
   aggregateHourlyStats,
   formatLatencyMs,
@@ -14,7 +18,6 @@ import {
   getStatsEntriesForWindow,
   resolvePercentChange,
   resolveStatsTimeWindow,
-  type HourlyStats,
   type StatsTimeRangeKey,
 } from "@/utils/stats";
 
@@ -27,8 +30,7 @@ const RANGE_OPTIONS: Array<{ key: StatsTimeRangeKey; label: string }> = [
 
 type RankingItem = {
   agent: Agent;
-  summary: ReturnType<typeof aggregateHourlyStats>;
-  share: number;
+  ranking: RankingEntry;
 };
 
 function SummaryCard({
@@ -109,15 +111,15 @@ function RankingCard({ item }: { item: RankingItem }) {
           />
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
-              {item.agent.name}
+              #{item.ranking.rank} {item.agent.name}
             </div>
             <div className="truncate text-xs text-[var(--color-text-secondary)]">
-              {item.agent.role?.trim() || "AI 员工"}
+              {item.agent.role?.trim() || "AI 员工"} · {resolveLevelBadge(item.ranking.level)}
             </div>
           </div>
         </div>
         <div className="rounded-full bg-[var(--color-bg-brand-soft)] px-3 py-1 text-xs font-semibold text-[var(--color-brand)]">
-          {item.summary.messageCount} 条
+          {item.ranking.score} 分
         </div>
       </div>
 
@@ -125,70 +127,55 @@ function RankingCard({ item }: { item: RankingItem }) {
         <div>
           <div className="text-[11px] text-[var(--color-text-secondary)]">对话轮次</div>
           <div className="mt-1 text-sm font-medium text-[var(--color-text-primary)]">
-            {item.summary.turnCount}
+            {item.ranking.metrics.turnCount}
           </div>
         </div>
         <div>
-          <div className="text-[11px] text-[var(--color-text-secondary)]">Token 消耗</div>
+          <div className="text-[11px] text-[var(--color-text-secondary)]">错误率</div>
           <div className="mt-1 text-sm font-medium text-[var(--color-text-primary)]">
-            {formatTokenCount(item.summary.tokenTotal)}
+            {(item.ranking.metrics.errorRate * 100).toFixed(
+              item.ranking.metrics.errorRate >= 0.1 ? 0 : 1,
+            )}
+            %
           </div>
         </div>
         <div>
           <div className="text-[11px] text-[var(--color-text-secondary)]">平均延迟</div>
           <div className="mt-1 text-sm font-medium text-[var(--color-text-primary)]">
-            {formatLatencyMs(item.summary.avgResponseMs)}
+            {formatLatencyMs(item.ranking.metrics.avgResponseMs)}
           </div>
         </div>
       </div>
 
-      <div className="mt-4">
-        <div className="flex items-center justify-between gap-3 text-[11px] text-[var(--color-text-secondary)]">
-          <span>消息量占比</span>
-          <span>{item.share.toFixed(item.share >= 10 ? 0 : 1)}%</span>
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <div className="rounded-[18px] border border-[var(--color-border)] bg-[var(--color-bg-soft)] px-3 py-3">
+          <div className="text-[11px] text-[var(--color-text-secondary)]">本周成长幅度</div>
+          <div className="mt-1 text-sm font-medium text-[var(--color-text-primary)]">
+            {item.ranking.growthDelta !== null
+              ? `${item.ranking.growthDelta >= 0 ? "+" : ""}${Math.round(item.ranking.growthDelta)}`
+              : "—"}
+            {item.ranking.fastestImprover ? " 🔥" : ""}
+          </div>
         </div>
-        <div className="mt-2 h-2 rounded-full bg-[var(--color-bg-soft)]">
-          <div
-            className="h-full rounded-full bg-[var(--color-brand)] transition-[width]"
-            style={{ width: `${Math.max(0, Math.min(100, item.share))}%` }}
-          />
+        <div className="rounded-[18px] border border-[var(--color-border)] bg-[var(--color-bg-soft)] px-3 py-3">
+          <div className="text-[11px] text-[var(--color-text-secondary)]">分数变化</div>
+          <div className="mt-1 text-sm font-medium text-[var(--color-text-primary)]">
+            {item.ranking.scoreDelta !== null
+              ? `${item.ranking.scoreDelta >= 0 ? "+" : ""}${item.ranking.scoreDelta}`
+              : "—"}
+            {item.ranking.warning ? " ⚠️" : ""}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function buildRankingItems(agents: Agent[], entries: HourlyStats[]) {
-  const grouped = new Map<string, HourlyStats[]>();
-
-  for (const item of entries) {
-    const current = grouped.get(item.agentId) ?? [];
-    grouped.set(item.agentId, [...current, item]);
-  }
-
-  const teamMessageCount = Math.max(1, aggregateHourlyStats(entries).messageCount);
-
-  return agents
-    .map((agent) => {
-      const summary = aggregateHourlyStats(grouped.get(agent.id) ?? []);
-      return {
-        agent,
-        summary,
-        share: (summary.messageCount / teamMessageCount) * 100,
-      } satisfies RankingItem;
-    })
-    .filter((item) => item.summary.turnCount > 0 || item.summary.messageCount > 0)
-    .toSorted(
-      (left, right) =>
-        right.summary.messageCount - left.summary.messageCount ||
-        right.summary.turnCount - left.summary.turnCount ||
-        right.summary.tokenTotal - left.summary.tokenTotal,
-    );
-}
-
 function OfficeReportsPanelInner() {
   const agents = useAgentStore((state) => state.agents);
   const hourlyStatsByKey = useStatsStore((state) => state.hourlyStatsByKey);
+  const healthRecordsByAgentId = useHealthStore((state) => state.recordsByAgentId);
+  const weeklySnapshots = useGrowthStore((state) => state.weeklySnapshots);
   const [range, setRange] = useState<StatsTimeRangeKey>("today");
 
   const report = useMemo(() => {
@@ -200,13 +187,49 @@ function OfficeReportsPanelInner() {
     });
     const currentSummary = aggregateHourlyStats(currentEntries);
     const previousSummary = aggregateHourlyStats(previousEntries);
+    const currentWeekKey = createWeekKey(Math.max(window.startAt, window.endAt - 1));
+    const previousSnapshotsByAgentId = Object.fromEntries(
+      agents.map((agent) => {
+        const latestSnapshot =
+          weeklySnapshots
+            .filter(
+              (snapshot) => snapshot.agentId === agent.id && snapshot.weekKey !== currentWeekKey,
+            )
+            .toSorted((left, right) => right.capturedAt - left.capturedAt)
+            .at(0) ?? null;
+
+        return [
+          agent.id,
+          latestSnapshot ? { metrics: latestSnapshot.metrics, score: latestSnapshot.score } : null,
+        ] as const;
+      }),
+    );
+    const rankingEntries = buildLeaderboard({
+      agents,
+      hourlyStatsByKey,
+      healthRecordsByAgentId,
+      previousSnapshotsByAgentId,
+      startAt: window.startAt,
+      endAt: window.endAt,
+      label:
+        range === "month"
+          ? "本月"
+          : range === "week"
+            ? "本周"
+            : range === "yesterday"
+              ? "昨日"
+              : "今日",
+    });
 
     return {
       currentSummary,
       previousSummary,
-      rankingItems: buildRankingItems(agents, currentEntries),
+      rankingItems: rankingEntries.map((ranking) => ({
+        agent: agents.find((agent) => agent.id === ranking.agentId)!,
+        ranking,
+      })),
     };
-  }, [agents, hourlyStatsByKey, range]);
+  }, [agents, healthRecordsByAgentId, hourlyStatsByKey, range, weeklySnapshots]);
 
   return (
     <section className="flex h-full min-h-0 flex-col rounded-[24px] border border-[var(--modal-shell-border)] bg-[var(--surface-glass)] backdrop-blur-xl">

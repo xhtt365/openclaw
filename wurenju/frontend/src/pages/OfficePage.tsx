@@ -1,6 +1,7 @@
 import { AnimatePresence, LayoutGroup } from "framer-motion";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ExperienceLibraryPanel } from "@/components/growth/ExperienceLibraryPanel";
 import { ConfirmModal } from "@/components/modals/ConfirmModal";
 import { ActivityFeed } from "@/components/office/ActivityFeed";
 import { AgentCard } from "@/components/office/AgentCard";
@@ -16,8 +17,31 @@ import { gateway } from "@/services/gateway";
 import { useAgentStore } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
 import { useCronStore } from "@/stores/cronStore";
+import { useGrowthStore } from "@/stores/growthStore";
 import { useHealthStore } from "@/stores/healthStore";
 import { useOfficeStore } from "@/stores/officeStore";
+import { useStatsStore } from "@/stores/statsStore";
+import { buildLeaderboard, createWeekKey, mapLeaderboardByAgentId } from "@/utils/growth";
+
+function resolveGrowthActivityType(tone: "system" | "done" | "error" | "executing" | "thinking") {
+  if (tone === "done") {
+    return "done";
+  }
+
+  if (tone === "error") {
+    return "error";
+  }
+
+  if (tone === "executing") {
+    return "executing";
+  }
+
+  if (tone === "thinking") {
+    return "thinking";
+  }
+
+  return "system";
+}
 
 export function OfficePage() {
   console.log("[Office] render");
@@ -36,6 +60,10 @@ export function OfficePage() {
   const initialize = useOfficeStore((state) => state.initialize);
   const syncAgents = useOfficeStore((state) => state.syncAgents);
   const initializeCron = useCronStore((state) => state.initialize);
+  const growthEvents = useGrowthStore((state) => state.events);
+  const weeklySnapshots = useGrowthStore((state) => state.weeklySnapshots);
+  const hourlyStatsByKey = useStatsStore((state) => state.hourlyStatsByKey);
+  const healthRecordsByAgentId = useHealthStore((state) => state.recordsByAgentId);
 
   const gatewayStatus = useChatStore((state) => state.status);
   const startOfficeProbe = useHealthStore((state) => state.startOfficeProbe);
@@ -48,7 +76,9 @@ export function OfficePage() {
   const [isConfigEditorOpen, setIsConfigEditorOpen] = useState(false);
   const [isRestartModalOpen, setIsRestartModalOpen] = useState(false);
   const [isRestartingGateway, setIsRestartingGateway] = useState(false);
-  const [activePanel, setActivePanel] = useState<"activity" | "tasks" | "reports">("activity");
+  const [activePanel, setActivePanel] = useState<"activity" | "tasks" | "reports" | "experience">(
+    "activity",
+  );
 
   useEffect(() => {
     console.log(
@@ -111,6 +141,44 @@ export function OfficePage() {
   const loungeAgents = agents.filter(
     (agent) => (agentZones.get(agent.id) ?? "lounge") === "lounge",
   );
+  const currentWeekKey = createWeekKey(Date.now());
+  const previousSnapshotsByAgentId = Object.fromEntries(
+    agents.map((agent) => {
+      const latestSnapshot =
+        weeklySnapshots
+          .filter(
+            (snapshot) => snapshot.agentId === agent.id && snapshot.weekKey !== currentWeekKey,
+          )
+          .toSorted((left, right) => right.capturedAt - left.capturedAt)
+          .at(0) ?? null;
+
+      return [
+        agent.id,
+        latestSnapshot ? { metrics: latestSnapshot.metrics, score: latestSnapshot.score } : null,
+      ] as const;
+    }),
+  );
+  const liveRankingMap = mapLeaderboardByAgentId(
+    buildLeaderboard({
+      agents,
+      hourlyStatsByKey,
+      healthRecordsByAgentId,
+      previousSnapshotsByAgentId,
+    }),
+  );
+  const mergedActivityLog = [...activityLog]
+    .concat(
+      growthEvents.map((event) => ({
+        id: event.id,
+        time: event.time,
+        agentId: event.agentId ?? "growth",
+        agentName: event.agentName ?? "Growth",
+        text: event.text,
+        type: resolveGrowthActivityType(event.tone),
+      })),
+    )
+    .toSorted((left, right) => right.time - left.time)
+    .slice(0, 120);
 
   async function handleToggleFullscreen() {
     try {
@@ -204,6 +272,7 @@ export function OfficePage() {
                         }
                         motionState={agentAnimations.get(agent.id)}
                         metrics={agentMetrics.get(agent.id)}
+                        ranking={liveRankingMap[agent.id]}
                       />
                     ))}
                   </AnimatePresence>
@@ -232,6 +301,7 @@ export function OfficePage() {
                         }
                         motionState={agentAnimations.get(agent.id)}
                         metrics={agentMetrics.get(agent.id)}
+                        ranking={liveRankingMap[agent.id]}
                       />
                     ))}
                   </AnimatePresence>
@@ -256,6 +326,7 @@ export function OfficePage() {
                       status={agentStatus.get(agent.id) ?? { action: "standby", detail: "STANDBY" }}
                       motionState={agentAnimations.get(agent.id)}
                       metrics={agentMetrics.get(agent.id)}
+                      ranking={liveRankingMap[agent.id]}
                     />
                   ))}
                 </AnimatePresence>
@@ -270,13 +341,16 @@ export function OfficePage() {
                   { key: "activity", label: "⚡ 动态" },
                   { key: "tasks", label: "⏰ 定时任务" },
                   { key: "reports", label: "📊 报表" },
+                  { key: "experience", label: "📚 经验库" },
                 ].map((item) => {
                   const active = item.key === activePanel;
                   return (
                     <button
                       key={item.key}
                       type="button"
-                      onClick={() => setActivePanel(item.key as "activity" | "tasks" | "reports")}
+                      onClick={() =>
+                        setActivePanel(item.key as "activity" | "tasks" | "reports" | "experience")
+                      }
                       className={cn(
                         "flex-1 rounded-[18px] px-3 py-2 text-sm font-medium transition-colors",
                         active
@@ -293,9 +367,11 @@ export function OfficePage() {
 
             <div className="min-h-0 flex-1">
               {activePanel === "activity" ? (
-                <ActivityFeed items={activityLog} connected={gatewayStatus === "connected"} />
+                <ActivityFeed items={mergedActivityLog} connected={gatewayStatus === "connected"} />
               ) : activePanel === "tasks" ? (
                 <ScheduledTasks />
+              ) : activePanel === "experience" ? (
+                <ExperienceLibraryPanel />
               ) : (
                 <OfficeReportsPanel />
               )}

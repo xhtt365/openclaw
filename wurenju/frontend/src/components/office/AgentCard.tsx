@@ -10,6 +10,8 @@ import type {
   OfficeAnimationKind,
   OfficeZone,
 } from "@/stores/officeStore";
+import type { RankingEntry } from "@/types/growth";
+import { resolveLevelBadge } from "@/utils/growth";
 import { EMPTY_HEALTH_SUMMARY } from "@/utils/health";
 
 type AgentCardProps = {
@@ -18,6 +20,7 @@ type AgentCardProps = {
   status: OfficeAgentStatus;
   motionState?: OfficeAgentMotion;
   metrics?: OfficeAgentMetrics;
+  ranking?: RankingEntry;
 };
 
 const AVATAR_COLORS = [
@@ -134,7 +137,7 @@ function normalizeModelName(modelName?: string | null) {
   return suffix || trimmed;
 }
 
-function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCardProps) {
+function AgentCardInner({ agent, zone, status, motionState, metrics, ranking }: AgentCardProps) {
   const pulseKey = motionState?.pulseKey ?? 0;
   const transition = motionState?.transition ?? "idle";
   const healthSummary = useHealthStore(
@@ -187,6 +190,11 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
           <div className="mt-2 flex justify-center">
             <HealthBadge summary={healthSummary} compact showTooltip />
           </div>
+          {ranking ? (
+            <div className="mt-2 text-[10px] text-[var(--color-text-secondary)]">
+              #{ranking.rank} · {Math.round(ranking.score)} 分
+            </div>
+          ) : null}
           {lastActiveText ? (
             <div className="mt-1 text-[10px] text-[var(--color-text-secondary)]">
               {lastActiveText}
@@ -278,6 +286,11 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
                       第 {metrics.turnCount} 轮
                     </span>
                   ) : null}
+                  {ranking ? (
+                    <span className="rounded-full bg-[var(--color-bg-brand-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-brand)]">
+                      #{ranking.rank} · {Math.round(ranking.score)} 分
+                    </span>
+                  ) : null}
                 </div>
               </div>
 
@@ -292,7 +305,14 @@ function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCard
 
             <div className="mt-5 flex items-start justify-between gap-3 text-sm text-[var(--color-text-primary)]">
               <div className="min-w-0 flex-1 text-sm text-[var(--color-text-primary)]">
-                {status.detail}
+                <div>{status.detail}</div>
+                {ranking ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-text-secondary)]">
+                    <span>{resolveLevelBadge(ranking.level)}</span>
+                    {ranking.fastestImprover ? <span>🔥 进步最快</span> : null}
+                    {ranking.warning ? <span>⚠️ 本周回落</span> : null}
+                  </div>
+                ) : null}
               </div>
               {healthSummary.avgLatencyMs || metrics?.lastResponseMs ? (
                 <div className="shrink-0 text-[11px] tabular-nums text-[var(--color-text-secondary)]">

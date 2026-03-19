@@ -4,6 +4,7 @@ import { ArrowLeft, Bot, BriefcaseBusiness, FileText, Loader2, Save } from "luci
 import { type ChangeEvent, useEffect, useRef, useState } from "react";
 import { ChannelConfigModal } from "@/components/channel/ChannelConfigModal";
 import { CronTaskList } from "@/components/cron/CronTaskList";
+import { EmployeeGrowthPanel } from "@/components/growth/EmployeeGrowthPanel";
 import { HealthStatusPanel } from "@/components/health/HealthWidgets";
 import { PromptWorkbenchGuideCard } from "@/components/layout/PromptWorkbenchGuideCard";
 import { ConfirmModal } from "@/components/modals/ConfirmModal";
@@ -18,6 +19,8 @@ import { useAgentStore } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
 import { useCronStore } from "@/stores/cronStore";
 import { useHealthStore } from "@/stores/healthStore";
+import { usePromptVersionStore } from "@/stores/promptVersionStore";
+import { useStatsStore } from "@/stores/statsStore";
 import type { AgentFile } from "@/types/agent";
 import { getAgentAvatarInfo, saveAgentAvatarMapping } from "@/utils/agentAvatar";
 import {
@@ -27,6 +30,7 @@ import {
   pickAgentCreatedAtMs,
 } from "@/utils/agentIdentity";
 import { filterCronJobsByAgent } from "@/utils/cronTask";
+import { collectRollingMetricSnapshot } from "@/utils/growth";
 import { EMPTY_HEALTH_SUMMARY } from "@/utils/health";
 
 const EMPTY_FILES: AgentFile[] = [];
@@ -84,13 +88,6 @@ function formatModelShortName(modelRef: string | null | undefined) {
   }
 
   return trimmed.slice(separatorIndex + 1) || trimmed;
-}
-
-function upsertAgentFile(files: AgentFile[], nextFile: AgentFile) {
-  const exists = files.some((file) => file.name === nextFile.name);
-  return exists
-    ? files.map((file) => (file.name === nextFile.name ? nextFile : file))
-    : [...files, nextFile];
 }
 
 function isSupportedAvatarFile(file: File) {
@@ -182,6 +179,7 @@ export function EmployeeDetailPage() {
   const toastTimerRef = useRef<number | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const scheduleSectionRef = useRef<HTMLDivElement | null>(null);
+  const handleSaveRef = useRef<() => Promise<void>>(async () => undefined);
 
   const agent = agents.find((item) => item.id === showDetailFor) ?? null;
   const files = showDetailFor ? (agentFiles.get(showDetailFor) ?? EMPTY_FILES) : EMPTY_FILES;
@@ -253,27 +251,14 @@ export function EmployeeDetailPage() {
         return;
       }
 
-      void (async () => {
-        const ok = await saveFile();
-        if (!ok) {
-          return;
-        }
-
-        setShowSavedToast(true);
-        if (toastTimerRef.current !== null) {
-          window.clearTimeout(toastTimerRef.current);
-        }
-        toastTimerRef.current = window.setTimeout(() => {
-          setShowSavedToast(false);
-        }, 3000);
-      })();
+      void handleSaveRef.current();
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [activeFileName, fileLoading, fileSaving, saveFile, showDetailFor]);
+  }, [activeFileName, fileLoading, fileSaving, showDetailFor]);
 
   useEffect(() => {
     if (!agent) {
@@ -369,7 +354,34 @@ export function EmployeeDetailPage() {
   }
 
   async function handleSave() {
-    const ok = await saveFile();
+    if (!agent || !activeFileName) {
+      return;
+    }
+
+    const isVersionedPrompt = activeFileName === "IDENTITY.md" || activeFileName === "SOUL.md";
+    let ok = false;
+
+    if (isVersionedPrompt) {
+      const previousContent = files.find((file) => file.name === activeFileName)?.content ?? "";
+      await usePromptVersionStore.getState().saveVersionedPrompt({
+        agentId: agent.id,
+        fileName: activeFileName,
+        previousContent,
+        nextContent: fileContent,
+        changeDescription: `手动保存 ${activeFileName}`,
+        source: "manual",
+        metrics: collectRollingMetricSnapshot({
+          agentId: agent.id,
+          hourlyStatsByKey: useStatsStore.getState().hourlyStatsByKey,
+          healthRecord: useHealthStore.getState().recordsByAgentId[agent.id],
+          label: "保存时快照",
+        }),
+      });
+      ok = true;
+    } else {
+      ok = await saveFile();
+    }
+
     if (!ok) {
       return;
     }
@@ -382,6 +394,8 @@ export function EmployeeDetailPage() {
       setShowSavedToast(false);
     }, 3000);
   }
+
+  handleSaveRef.current = handleSave;
 
   async function handleSelectFile(name: string) {
     if (name === activeFileName) {
@@ -429,45 +443,19 @@ export function EmployeeDetailPage() {
 
     try {
       await gateway.updateAgent(agent.id, { name: nextName });
-      await gateway.setAgentFile(agent.id, "IDENTITY.md", nextIdentityContent);
-
-      const updatedAtMs = Date.now();
-      const nextIdentityFile: AgentFile = {
-        name: "IDENTITY.md",
-        size: new TextEncoder().encode(nextIdentityContent).length,
-        updatedAtMs,
-        content: nextIdentityContent,
-      };
-
-      useAgentStore.setState((state) => {
-        const currentFiles = state.agentFiles.get(agent.id) ?? [];
-        const nextFiles = upsertAgentFile(currentFiles, nextIdentityFile);
-        const nextAgentFiles = new Map(state.agentFiles);
-        nextAgentFiles.set(agent.id, nextFiles);
-
-        return {
-          agents: state.agents.map((item) =>
-            item.id === agent.id
-              ? {
-                  ...item,
-                  name: nextName,
-                  role: nextRole || "AI 员工",
-                  description: nextDescription || undefined,
-                  emoji: nextEmoji,
-                  createdAtMs: item.createdAtMs ?? updatedAtMs,
-                }
-              : item,
-          ),
-          agentFiles: nextAgentFiles,
-          fileContent:
-            state.showDetailFor === agent.id && state.activeFileName === "IDENTITY.md"
-              ? nextIdentityContent
-              : state.fileContent,
-          fileDirty:
-            state.showDetailFor === agent.id && state.activeFileName === "IDENTITY.md"
-              ? false
-              : state.fileDirty,
-        };
+      await usePromptVersionStore.getState().saveVersionedPrompt({
+        agentId: agent.id,
+        fileName: "IDENTITY.md",
+        previousContent: previousIdentityContent ?? "",
+        nextContent: nextIdentityContent,
+        changeDescription: "资料面板更新员工档案",
+        source: "manual",
+        metrics: collectRollingMetricSnapshot({
+          agentId: agent.id,
+          hourlyStatsByKey: useStatsStore.getState().hourlyStatsByKey,
+          healthRecord: useHealthStore.getState().recordsByAgentId[agent.id],
+          label: "资料保存快照",
+        }),
       });
 
       const nextProfile = {
@@ -786,110 +774,114 @@ export function EmployeeDetailPage() {
               </section>
             </aside>
 
-            <section className="min-h-0 rounded-[28px] border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-5 shadow-[var(--shadow-md)] backdrop-blur-xl">
-              <div className="flex flex-col gap-4 border-b border-[var(--color-border)] pb-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 text-base font-semibold text-[var(--color-text-primary)]">
-                    <span aria-hidden="true">📝</span>
-                    <span>核心提示词工作台</span>
-                  </div>
-                  <div className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
-                    关键文件直接放到首屏，减少滚动；支持 Cmd+S / Ctrl+S 快速保存。
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  onClick={() => void handleSave()}
-                  disabled={!activeFileName || fileLoading || fileSaving}
-                  className={cn(
-                    "h-10 rounded-xl px-4",
-                    fileDirty
-                      ? "bg-[var(--color-brand)] text-[var(--color-text-on-brand)] hover:bg-[var(--color-brand-light)]"
-                      : "border border-[var(--color-border)] bg-[var(--color-bg-card)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]",
-                  )}
-                >
-                  {fileSaving ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                  {fileDirty ? "保存 *" : "保存"}
-                </Button>
-              </div>
+            <div className="min-h-0 space-y-4">
+              <EmployeeGrowthPanel agentId={agent.id} />
 
-              <div className="mt-4 overflow-x-auto pb-1">
-                <div className="flex min-w-max flex-nowrap gap-2">
-                  {visibleFiles.map((file) => {
-                    const isActive = file.name === activeFileName;
-                    return (
-                      <button
-                        key={file.name}
-                        type="button"
-                        onClick={() => void handleSelectFile(file.name)}
-                        className={cn(
-                          "shrink-0 rounded-full border px-3 py-1.5 text-sm transition-colors",
-                          isActive
-                            ? "border-[var(--color-brand)] bg-[var(--color-bg-brand-soft)] text-[var(--color-brand)]"
-                            : "border-[var(--color-border)] bg-[var(--color-bg-card)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]",
-                        )}
-                      >
-                        {formatFileTabLabel(file.name)}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="mt-4 flex min-h-[calc(100vh-220px)] min-w-0 flex-col rounded-[24px] border border-[var(--color-border)] bg-[var(--color-bg-card)]">
-                <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] px-4 py-3">
+              <section className="min-h-0 rounded-[28px] border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-5 shadow-[var(--shadow-md)] backdrop-blur-xl">
+                <div className="flex flex-col gap-4 border-b border-[var(--color-border)] pb-4 lg:flex-row lg:items-center lg:justify-between">
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">
-                      {activeFileName ?? "请选择文件"}
+                    <div className="flex items-center gap-2 text-base font-semibold text-[var(--color-text-primary)]">
+                      <span aria-hidden="true">📝</span>
+                      <span>核心提示词工作台</span>
                     </div>
-                    <div className="mt-1 text-xs text-[var(--color-text-secondary)]">
-                      {activeFileName
-                        ? "优先文件已上提到首屏，减少来回滚动"
-                        : "从上方选择一个提示词文件开始编辑"}
+                    <div className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+                      关键文件直接放到首屏，减少滚动；支持 Cmd+S / Ctrl+S 快速保存。
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
-                    <FileText className="h-4 w-4" />
-                    <span>{activeFileName ? "Markdown" : "未选中"}</span>
+                  <Button
+                    type="button"
+                    onClick={() => void handleSave()}
+                    disabled={!activeFileName || fileLoading || fileSaving}
+                    className={cn(
+                      "h-10 rounded-xl px-4",
+                      fileDirty
+                        ? "bg-[var(--color-brand)] text-[var(--color-text-on-brand)] hover:bg-[var(--color-brand-light)]"
+                        : "border border-[var(--color-border)] bg-[var(--color-bg-card)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]",
+                    )}
+                  >
+                    {fileSaving ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    {fileDirty ? "保存 *" : "保存"}
+                  </Button>
+                </div>
+
+                <div className="mt-4 overflow-x-auto pb-1">
+                  <div className="flex min-w-max flex-nowrap gap-2">
+                    {visibleFiles.map((file) => {
+                      const isActive = file.name === activeFileName;
+                      return (
+                        <button
+                          key={file.name}
+                          type="button"
+                          onClick={() => void handleSelectFile(file.name)}
+                          className={cn(
+                            "shrink-0 rounded-full border px-3 py-1.5 text-sm transition-colors",
+                            isActive
+                              ? "border-[var(--color-brand)] bg-[var(--color-bg-brand-soft)] text-[var(--color-brand)]"
+                              : "border-[var(--color-border)] bg-[var(--color-bg-card)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]",
+                          )}
+                        >
+                          {formatFileTabLabel(file.name)}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
-                <PromptWorkbenchGuideCard
-                  key={activeFileName ?? "no-active-file"}
-                  fileName={activeFileName}
-                />
-
-                <div className="relative flex min-h-0 flex-1">
-                  {fileLoading ? (
-                    <div className="flex flex-1 items-center justify-center gap-3 text-sm text-[var(--color-text-secondary)]">
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                      <span>正在加载文件内容...</span>
-                    </div>
-                  ) : (
-                    <textarea
-                      value={fileContent}
-                      onChange={(event) => updateFileContent(event.target.value)}
-                      disabled={!activeFileName || fileSaving}
-                      placeholder={activeFileName ? "在这里编辑提示词内容..." : "请选择上方文件"}
-                      className="min-h-[420px] flex-1 resize-none bg-transparent px-5 py-4 font-mono text-sm leading-7 text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-secondary)] disabled:cursor-not-allowed disabled:text-[var(--color-text-secondary)]"
-                    />
-                  )}
-
-                  {fileSaving ? (
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-end px-4 pb-3">
-                      <div className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-soft)] px-3 py-1 text-xs text-[var(--color-text-secondary)] backdrop-blur">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        正在保存
+                <div className="mt-4 flex min-h-[calc(100vh-220px)] min-w-0 flex-col rounded-[24px] border border-[var(--color-border)] bg-[var(--color-bg-card)]">
+                  <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">
+                        {activeFileName ?? "请选择文件"}
+                      </div>
+                      <div className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                        {activeFileName
+                          ? "优先文件已上提到首屏，减少来回滚动"
+                          : "从上方选择一个提示词文件开始编辑"}
                       </div>
                     </div>
-                  ) : null}
+                    <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+                      <FileText className="h-4 w-4" />
+                      <span>{activeFileName ? "Markdown" : "未选中"}</span>
+                    </div>
+                  </div>
+
+                  <PromptWorkbenchGuideCard
+                    key={activeFileName ?? "no-active-file"}
+                    fileName={activeFileName}
+                  />
+
+                  <div className="relative flex min-h-0 flex-1">
+                    {fileLoading ? (
+                      <div className="flex flex-1 items-center justify-center gap-3 text-sm text-[var(--color-text-secondary)]">
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                        <span>正在加载文件内容...</span>
+                      </div>
+                    ) : (
+                      <textarea
+                        value={fileContent}
+                        onChange={(event) => updateFileContent(event.target.value)}
+                        disabled={!activeFileName || fileSaving}
+                        placeholder={activeFileName ? "在这里编辑提示词内容..." : "请选择上方文件"}
+                        className="min-h-[420px] flex-1 resize-none bg-transparent px-5 py-4 font-mono text-sm leading-7 text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-secondary)] disabled:cursor-not-allowed disabled:text-[var(--color-text-secondary)]"
+                      />
+                    )}
+
+                    {fileSaving ? (
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-end px-4 pb-3">
+                        <div className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-soft)] px-3 py-1 text-xs text-[var(--color-text-secondary)] backdrop-blur">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          正在保存
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            </section>
+              </section>
+            </div>
           </div>
         </div>
       </div>
