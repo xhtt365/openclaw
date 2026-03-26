@@ -4,12 +4,9 @@ import { ArrowLeft, Bot, BriefcaseBusiness, FileText, Loader2, Save } from "luci
 import { type ChangeEvent, useEffect, useRef, useState } from "react";
 import { ChannelConfigModal } from "@/components/channel/ChannelConfigModal";
 import { CronTaskList } from "@/components/cron/CronTaskList";
-import { EmployeeGrowthPanel } from "@/components/growth/EmployeeGrowthPanel";
-import { HealthStatusPanel } from "@/components/health/HealthWidgets";
 import { PromptWorkbenchGuideCard } from "@/components/layout/PromptWorkbenchGuideCard";
 import { ConfirmModal } from "@/components/modals/ConfirmModal";
 import { ModelSelectModal } from "@/components/modals/ModelSelectModal";
-import { AgentWorkStatsPanel } from "@/components/stats/AgentWorkStatsPanel";
 import { Button } from "@/components/ui/button";
 import { PROMPT_WORKBENCH_FILE_NAMES } from "@/constants/promptWorkbenchGuides";
 import { toast } from "@/hooks/use-toast";
@@ -18,9 +15,7 @@ import { gateway } from "@/services/gateway";
 import { useAgentStore } from "@/stores/agentStore";
 import { useChatStore } from "@/stores/chatStore";
 import { useCronStore } from "@/stores/cronStore";
-import { useHealthStore } from "@/stores/healthStore";
 import { usePromptVersionStore } from "@/stores/promptVersionStore";
-import { useStatsStore } from "@/stores/statsStore";
 import type { AgentFile } from "@/types/agent";
 import { getAgentAvatarInfo, saveAgentAvatarMapping } from "@/utils/agentAvatar";
 import {
@@ -30,8 +25,7 @@ import {
   pickAgentCreatedAtMs,
 } from "@/utils/agentIdentity";
 import { filterCronJobsByAgent } from "@/utils/cronTask";
-import { collectRollingMetricSnapshot } from "@/utils/growth";
-import { EMPTY_HEALTH_SUMMARY } from "@/utils/health";
+import { collectRollingMetricSnapshot } from "@/utils/promptMetrics";
 
 const EMPTY_FILES: AgentFile[] = [];
 const EMPTY_MESSAGES: Array<{ id?: string }> = [];
@@ -147,11 +141,6 @@ export function EmployeeDetailPage() {
   const updateFileContent = useAgentStore((state) => state.updateFileContent);
   const saveFile = useAgentStore((state) => state.saveFile);
   const messagesByAgentId = useChatStore((state) => state.messagesByAgentId);
-  const healthSummary = useHealthStore(
-    (state) =>
-      (showDetailFor ? state.recordsByAgentId[showDetailFor]?.summary : undefined) ??
-      EMPTY_HEALTH_SUMMARY,
-  );
   const cronJobs = useCronStore((state) => state.jobs);
   const focusRequest = useCronStore((state) => state.focusRequest);
   const clearAgentScheduleFocus = useCronStore((state) => state.clearAgentScheduleFocus);
@@ -372,8 +361,6 @@ export function EmployeeDetailPage() {
         source: "manual",
         metrics: collectRollingMetricSnapshot({
           agentId: agent.id,
-          hourlyStatsByKey: useStatsStore.getState().hourlyStatsByKey,
-          healthRecord: useHealthStore.getState().recordsByAgentId[agent.id],
           label: "保存时快照",
         }),
       });
@@ -452,8 +439,6 @@ export function EmployeeDetailPage() {
         source: "manual",
         metrics: collectRollingMetricSnapshot({
           agentId: agent.id,
-          hourlyStatsByKey: useStatsStore.getState().hourlyStatsByKey,
-          healthRecord: useHealthStore.getState().recordsByAgentId[agent.id],
           label: "资料保存快照",
         }),
       });
@@ -654,9 +639,6 @@ export function EmployeeDetailPage() {
                 </dl>
               </section>
 
-              <HealthStatusPanel summary={healthSummary} />
-              <AgentWorkStatsPanel agentId={agent.id} />
-
               <section className="rounded-[24px] border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-4 shadow-[var(--shadow-sm)] backdrop-blur-xl">
                 <div
                   ref={scheduleSectionRef}
@@ -775,8 +757,6 @@ export function EmployeeDetailPage() {
             </aside>
 
             <div className="min-h-0 space-y-4">
-              <EmployeeGrowthPanel agentId={agent.id} />
-
               <section className="min-h-0 rounded-[28px] border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-5 shadow-[var(--shadow-md)] backdrop-blur-xl">
                 <div className="flex flex-col gap-4 border-b border-[var(--color-border)] pb-4 lg:flex-row lg:items-center lg:justify-between">
                   <div className="min-w-0">

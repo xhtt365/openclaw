@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { gateway, type GatewayChatAttachmentInput } from "@/services/gateway";
 import { useAgentStore, type Agent } from "@/stores/agentStore";
 import { useDirectArchiveStore } from "@/stores/directArchiveStore";
-import { useHealthStore } from "@/stores/healthStore";
 import {
   hydrateArchiveTitles,
   resolveArchiveTitle,
@@ -3254,19 +3253,6 @@ export const useGroupStore = create<GroupState>((set, get) => {
         throw new Error("未获取到 Agent 回复");
       }
 
-      if (reply) {
-        useHealthStore.getState().recordAssistantMessage({
-          agentId: targetMember.id,
-          sessionKey,
-          kind: attachments.length > 0 ? "chat.send" : "agent",
-          message: {
-            model: reply.model,
-            usage: reply.usage,
-            timestamp: reply.timestamp ?? Date.now(),
-          },
-        });
-      }
-
       if (getGroupEpoch(groupId) !== epoch) {
         return {
           member: targetMember,
@@ -3517,12 +3503,6 @@ export const useGroupStore = create<GroupState>((set, get) => {
       const errorText = getErrorMessage(error, "连接 Gateway 失败，请确认服务已启动");
       const logPrefix = resolveDispatchLogPrefix(source.type);
       console.error(`${logPrefix} 群消息发送失败: ${member.name}`, error);
-      useHealthStore.getState().recordRequestError({
-        agentId: member.id,
-        sessionKey: buildGroupSessionKey(member.id, groupId),
-        kind: attachments.length > 0 ? "chat.send" : "agent",
-        message: errorText,
-      });
 
       const removeResult = removeThinkingAgentInternal(groupId, member.id);
       console.log(

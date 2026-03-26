@@ -3,7 +3,7 @@ import { after, afterEach, before } from "node:test";
 import test from "node:test";
 import { gateway } from "@/services/gateway";
 import { useAgentStore } from "@/stores/agentStore";
-import type { MetricSnapshot } from "@/types/growth";
+import type { MetricSnapshot } from "@/types/promptVersion";
 import { usePromptVersionStore } from "./promptVersionStore";
 
 class MemoryStorage implements Storage {

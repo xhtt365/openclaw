@@ -1,8 +1,6 @@
 import { motion } from "framer-motion";
 import { memo } from "react";
-import { HealthBadge, formatHealthLatency } from "@/components/health/HealthWidgets";
 import type { Agent } from "@/stores/agentStore";
-import { useHealthStore } from "@/stores/healthStore";
 import type {
   OfficeAgentMetrics,
   OfficeAgentMotion,
@@ -10,9 +8,6 @@ import type {
   OfficeAnimationKind,
   OfficeZone,
 } from "@/stores/officeStore";
-import type { RankingEntry } from "@/types/growth";
-import { resolveLevelBadge } from "@/utils/growth";
-import { EMPTY_HEALTH_SUMMARY } from "@/utils/health";
 
 type AgentCardProps = {
   agent: Agent;
@@ -20,7 +15,6 @@ type AgentCardProps = {
   status: OfficeAgentStatus;
   motionState?: OfficeAgentMotion;
   metrics?: OfficeAgentMetrics;
-  ranking?: RankingEntry;
 };
 
 const AVATAR_COLORS = [
@@ -137,15 +131,22 @@ function normalizeModelName(modelName?: string | null) {
   return suffix || trimmed;
 }
 
-function AgentCardInner({ agent, zone, status, motionState, metrics, ranking }: AgentCardProps) {
+function formatLatencyMs(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(1)}s`;
+  }
+
+  return `${Math.round(value)}ms`;
+}
+
+function AgentCardInner({ agent, zone, status, motionState, metrics }: AgentCardProps) {
   const pulseKey = motionState?.pulseKey ?? 0;
   const transition = motionState?.transition ?? "idle";
-  const healthSummary = useHealthStore(
-    (state) => state.recordsByAgentId[agent.id]?.summary ?? EMPTY_HEALTH_SUMMARY,
-  );
-  const modelName = normalizeModelName(
-    healthSummary.currentModel ?? metrics?.modelName ?? agent.modelName ?? null,
-  );
+  const modelName = normalizeModelName(metrics?.modelName ?? agent.modelName ?? null);
 
   if (zone === "lounge") {
     const shouldFadeIn = transition === "return";
@@ -187,14 +188,6 @@ function AgentCardInner({ agent, zone, status, motionState, metrics, ranking }: 
           <div className="mt-1 text-[10px] font-semibold tracking-[0.18em] text-[var(--color-text-secondary)]">
             STANDBY
           </div>
-          <div className="mt-2 flex justify-center">
-            <HealthBadge summary={healthSummary} compact showTooltip />
-          </div>
-          {ranking ? (
-            <div className="mt-2 text-[10px] text-[var(--color-text-secondary)]">
-              #{ranking.rank} · {Math.round(ranking.score)} 分
-            </div>
-          ) : null}
           {lastActiveText ? (
             <div className="mt-1 text-[10px] text-[var(--color-text-secondary)]">
               {lastActiveText}
@@ -275,7 +268,6 @@ function AgentCardInner({ agent, zone, status, motionState, metrics, ranking }: 
                   {resolveRole(agent)}
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <HealthBadge summary={healthSummary} showTooltip />
                   {modelName ? (
                     <span className="rounded bg-[var(--surface-soft-strong)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-secondary)]">
                       {modelName}
@@ -284,11 +276,6 @@ function AgentCardInner({ agent, zone, status, motionState, metrics, ranking }: 
                   {metrics?.turnCount ? (
                     <span className="rounded-full bg-[var(--surface-soft-strong)] px-2 py-0.5 text-[10px] text-[var(--color-text-secondary)]">
                       第 {metrics.turnCount} 轮
-                    </span>
-                  ) : null}
-                  {ranking ? (
-                    <span className="rounded-full bg-[var(--color-bg-brand-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-brand)]">
-                      #{ranking.rank} · {Math.round(ranking.score)} 分
                     </span>
                   ) : null}
                 </div>
@@ -306,17 +293,10 @@ function AgentCardInner({ agent, zone, status, motionState, metrics, ranking }: 
             <div className="mt-5 flex items-start justify-between gap-3 text-sm text-[var(--color-text-primary)]">
               <div className="min-w-0 flex-1 text-sm text-[var(--color-text-primary)]">
                 <div>{status.detail}</div>
-                {ranking ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-text-secondary)]">
-                    <span>{resolveLevelBadge(ranking.level)}</span>
-                    {ranking.fastestImprover ? <span>🔥 进步最快</span> : null}
-                    {ranking.warning ? <span>⚠️ 本周回落</span> : null}
-                  </div>
-                ) : null}
               </div>
-              {healthSummary.avgLatencyMs || metrics?.lastResponseMs ? (
+              {metrics?.lastResponseMs ? (
                 <div className="shrink-0 text-[11px] tabular-nums text-[var(--color-text-secondary)]">
-                  {formatHealthLatency(healthSummary.avgLatencyMs ?? metrics?.lastResponseMs)}
+                  {formatLatencyMs(metrics.lastResponseMs)}
                 </div>
               ) : null}
             </div>

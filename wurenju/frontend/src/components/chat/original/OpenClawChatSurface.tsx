@@ -40,7 +40,6 @@ import {
   type FallbackIndicatorStatus,
 } from "@/components/chat/original/views/chat";
 import { CronManageModal } from "@/components/cron/CronManageModal";
-import { formatHealthWarningTitle } from "@/components/health/HealthWidgets";
 import type { Employee } from "@/components/layout/EmployeeList";
 import { useTheme } from "@/components/layout/useTheme";
 import { ConfirmModal } from "@/components/modals/ConfirmModal";
@@ -63,7 +62,6 @@ import {
   type Group,
   type GroupChatMessage,
 } from "@/stores/groupStore";
-import { useHealthStore } from "@/stores/healthStore";
 import type { ModelProviderGroup } from "@/types/model";
 import { getAgentAvatarInfo } from "@/utils/agentAvatar";
 import { isScrollNearBottom } from "@/utils/chatScroll";
@@ -88,7 +86,6 @@ import {
   resolveInitialAvatarText,
   resolveGroupMembersForSurface,
 } from "@/utils/groupSurface";
-import { EMPTY_HEALTH_SUMMARY } from "@/utils/health";
 import { adaptSidebarSyncMessages } from "@/utils/messageAdapter";
 import { getUserProfile, subscribeToUserProfile, type UserProfile } from "@/utils/userProfile";
 import "@/styles/openclaw-chat.css";
@@ -768,13 +765,7 @@ function OpenClawChatSurfaceInner({
       ),
     };
   }, [group, groupCronJobs]);
-  const directHealthSummary = useHealthStore(
-    (state) => state.recordsByAgentId[displayedAgentId]?.summary ?? EMPTY_HEALTH_SUMMARY,
-  );
-  const directHealthWarningTitle = useMemo(
-    () => (isGroupMode ? null : formatHealthWarningTitle(directHealthSummary)),
-    [directHealthSummary, isGroupMode],
-  );
+  const directHealthWarningTitle = null;
   const activeGroupMention = useMemo(
     () => (isGroupMode ? findActiveGroupMention(currentDraft, groupCaretPosition) : null),
     [currentDraft, groupCaretPosition, isGroupMode],
