@@ -2,8 +2,10 @@ import { Router } from "express";
 import { nowIso } from "../db";
 import { ApiError } from "../errors";
 import {
+  deprecateExperience,
   getExperienceById,
   getExperiencesForInject,
+  getLastFeedbackEvent,
   getProcessEvents,
   listExperienceItems,
   promoteExperience,
@@ -167,6 +169,16 @@ router.post("/events", (req, res) => {
   res.status(201).json({ success: true });
 });
 
+router.get("/events/last", (req, res) => {
+  res.json(
+    getLastFeedbackEvent(
+      asRequiredText(req.query.groupId, "项目组 ID"),
+      asRequiredText(req.query.targetAgentId, "目标 Agent ID"),
+      asOptionalText(req.query.sessionKey, "会话键") ?? undefined,
+    ),
+  );
+});
+
 router.get("/items", (req, res) => {
   res.json(
     listExperienceItems({
@@ -278,6 +290,18 @@ router.post("/items/:id/promote", (req, res) => {
   const experience = getExperienceById(id);
   if (!experience) {
     throw new ApiError(500, "晋升经验失败");
+  }
+
+  res.json(experience);
+});
+
+router.post("/items/:id/deprecate", (req, res) => {
+  const id = readRouteParam(req.params.id, "经验 ID");
+  deprecateExperience(id);
+
+  const experience = getExperienceById(id);
+  if (!experience) {
+    throw new ApiError(500, "降级经验失败");
   }
 
   res.json(experience);

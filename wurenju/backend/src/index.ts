@@ -11,6 +11,7 @@ import groupsRouter from "./routes/groups";
 import migrateRouter from "./routes/migrate";
 import settingsRouter from "./routes/settings";
 import storageRouter from "./routes/storage";
+import { startReviewScheduler } from "./services/reviewService";
 
 const app = express();
 const port = Number(process.env.PORT ?? 3001);
@@ -86,4 +87,5 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
 
 app.listen(port, () => {
   console.log(`[API] 后端已启动: http://localhost:${port}`);
+  startReviewScheduler();
 });
