@@ -1,5 +1,6 @@
 "use client";
 
+import { ApiError, archivesApi, type BackendArchive } from "@/services/api";
 import { hydrateArchiveTitles, sanitizeArchiveTitle } from "@/utils/archiveTitle";
 import { adaptSidebarSyncMessage, type ChatMessage, type ChatUsage } from "@/utils/messageAdapter";
 import { readLocalStorageItem, writeLocalStorageItem } from "@/utils/storage";
@@ -47,11 +48,20 @@ export const EMPLOYEE_DEPARTMENT_MAP_STORAGE_KEY = "employeeDepartmentMap";
 export const PINNED_EMPLOYEES_STORAGE_KEY = "pinnedEmployees";
 export const SIDEBAR_COLLAPSED_SECTIONS_STORAGE_KEY = "xiaban.sidebar.collapsedSections.v2";
 export const SIDEBAR_DIRECT_ARCHIVES_STORAGE_KEY = "xiaban.sidebar.directArchives";
+const SIDEBAR_DIRECT_ARCHIVE_PENDING_DELETE_STORAGE_KEY =
+  "xiaban.sidebar.directArchives.pendingDelete";
 export const SIDEBAR_UNREAD_STORAGE_KEY = "xiaban.sidebar.unreadState";
 export const SIDEBAR_VISUAL_PRESET_STORAGE_KEY = "xiaban.sidebar.visualPreset";
 const SIDEBAR_STORAGE_CHANGE_EVENT = "xiaban:sidebar-storage-change";
 
-// 这几类数据当前都先走本地 mock，后续接后端时统一从这里替换读写入口。
+let cachedDirectArchives: SidebarDirectArchive[] | null = null;
+let directArchiveHydrationPromise: Promise<SidebarDirectArchive[]> | null = null;
+let directArchiveSyncChain: Promise<void> = Promise.resolve();
+let directArchiveSnapshotVersion = 0;
+const DIRECT_ARCHIVE_SYNC_ATTEMPTS = 3;
+const DIRECT_ARCHIVE_SYNC_RETRY_DELAY_MS = 1_000;
+
+// 侧栏数据统一从这里管理：本地缓存优先保证响应速度，部分能力再向后端 hydrate / sync。
 function readStorageItem(key: string) {
   if (typeof window === "undefined") {
     return null;
@@ -80,6 +90,12 @@ function emitStorageChange(key: string) {
       detail: { key },
     }),
   );
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    globalThis.setTimeout(resolve, ms);
+  });
 }
 
 function parseStorageValue(key: string) {
@@ -548,8 +564,20 @@ export function writeSidebarVisualPreset(value: SidebarVisualPreset) {
   return value;
 }
 
-export function readSidebarDirectArchives(): SidebarDirectArchive[] {
-  const parsed = parseStorageValue(SIDEBAR_DIRECT_ARCHIVES_STORAGE_KEY);
+function computeDirectArchivePreview(messages: ChatMessage[]) {
+  const latestVisibleMessage = [...messages]
+    .toReversed()
+    .find((message) => message.content.trim().length > 0);
+
+  if (!latestVisibleMessage) {
+    return "已归档，可稍后回看";
+  }
+
+  const previewText = latestVisibleMessage.content.replace(/\s+/g, " ").trim();
+  return latestVisibleMessage.role === "user" ? `你：${previewText}` : previewText;
+}
+
+function normalizeDirectArchivesFromParsed(parsed: unknown) {
   if (!Array.isArray(parsed)) {
     return [];
   }
@@ -608,7 +636,395 @@ export function readSidebarDirectArchives(): SidebarDirectArchive[] {
   );
 }
 
-export function writeSidebarDirectArchives(value: SidebarDirectArchive[]) {
+function normalizePendingDirectArchiveIds(parsed: unknown) {
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      parsed.flatMap((value) => {
+        if (typeof value !== "string" || !value.trim()) {
+          return [];
+        }
+
+        return [value.trim()];
+      }),
+    ),
+  );
+}
+
+function readLocalSidebarDirectArchives() {
+  return normalizeDirectArchivesFromParsed(parseStorageValue(SIDEBAR_DIRECT_ARCHIVES_STORAGE_KEY));
+}
+
+function readPendingDirectArchiveDeletionIds() {
+  return normalizePendingDirectArchiveIds(
+    parseStorageValue(SIDEBAR_DIRECT_ARCHIVE_PENDING_DELETE_STORAGE_KEY),
+  );
+}
+
+function writePendingDirectArchiveDeletionIds(value: string[]) {
+  writeStorageItem(
+    SIDEBAR_DIRECT_ARCHIVE_PENDING_DELETE_STORAGE_KEY,
+    JSON.stringify(normalizePendingDirectArchiveIds(value)),
+  );
+}
+
+function markPendingDirectArchiveDeletion(archiveId: string) {
+  const nextIds = new Set(readPendingDirectArchiveDeletionIds());
+  nextIds.add(archiveId);
+  writePendingDirectArchiveDeletionIds(Array.from(nextIds));
+}
+
+function clearPendingDirectArchiveDeletion(archiveId: string) {
+  const nextIds = readPendingDirectArchiveDeletionIds().filter((id) => id !== archiveId);
+  writePendingDirectArchiveDeletionIds(nextIds);
+}
+
+function areDirectArchivesEqual(left: SidebarDirectArchive[], right: SidebarDirectArchive[]) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function getCachedDirectArchives() {
+  const localArchives = readLocalSidebarDirectArchives();
+  if (
+    cachedDirectArchives === null ||
+    !areDirectArchivesEqual(cachedDirectArchives, localArchives)
+  ) {
+    cachedDirectArchives = localArchives;
+    directArchiveSnapshotVersion += 1;
+  }
+
+  return cachedDirectArchives;
+}
+
+function writeLocalSidebarDirectArchives(value: SidebarDirectArchive[]) {
+  if (cachedDirectArchives === null || !areDirectArchivesEqual(cachedDirectArchives, value)) {
+    directArchiveSnapshotVersion += 1;
+  }
+
+  cachedDirectArchives = value;
+  writeStorageItem(SIDEBAR_DIRECT_ARCHIVES_STORAGE_KEY, JSON.stringify(value));
+  emitStorageChange(SIDEBAR_DIRECT_ARCHIVES_STORAGE_KEY);
+  return value;
+}
+
+function normalizeDirectArchiveFromBackend(archive: BackendArchive): SidebarDirectArchive | null {
+  if (archive.type !== "direct") {
+    return null;
+  }
+
+  const messages = normalizeArchivedMessages(archive.messages);
+  const id = archive.id.trim();
+  const agentId = archive.source_id.trim();
+  const agentName = archive.source_name?.trim() || agentId;
+  const archivedAt = archive.archived_at?.trim() || archive.created_at.trim();
+  if (!id || !agentId || !agentName || !archivedAt) {
+    return null;
+  }
+
+  const metadata =
+    Array.isArray(archive.messages) && isRecord(archive.messages[0]) ? archive.messages[0] : null;
+
+  return {
+    id,
+    agentId,
+    agentName,
+    title: archive.title?.trim() || "",
+    agentRole: metadata
+      ? readTrimmedString(metadata, ["agentRole", "role"]) || undefined
+      : undefined,
+    agentAvatarUrl: metadata
+      ? readTrimmedString(metadata, ["agentAvatarUrl", "avatarUrl", "avatar"]) || undefined
+      : undefined,
+    agentAvatarText: metadata
+      ? readTrimmedString(metadata, ["agentAvatarText", "avatarText"]) || undefined
+      : undefined,
+    agentEmoji: metadata
+      ? readTrimmedString(metadata, ["agentEmoji", "emoji"]) || undefined
+      : undefined,
+    preview: computeDirectArchivePreview(messages),
+    archivedAt,
+    messages,
+  } satisfies SidebarDirectArchive;
+}
+
+function buildPersistedDirectArchiveMessages(archive: SidebarDirectArchive) {
+  return cloneArchivedMessages(archive.messages ?? []).map((message, index) => ({
+    ...message,
+    agentRole: index === 0 ? archive.agentRole : undefined,
+    agentAvatarUrl: index === 0 ? archive.agentAvatarUrl : undefined,
+    agentAvatarText: index === 0 ? archive.agentAvatarText : undefined,
+    agentEmoji: index === 0 ? archive.agentEmoji : undefined,
+  }));
+}
+
+function buildBackendDirectArchivePayload(archive: SidebarDirectArchive) {
+  return {
+    id: archive.id,
+    type: "direct",
+    source_id: archive.agentId,
+    source_name: archive.agentName,
+    title: sanitizeArchiveTitle(archive.title),
+    archived_at: archive.archivedAt,
+    messages: buildPersistedDirectArchiveMessages(archive),
+    message_count: archive.messages.length,
+  };
+}
+
+async function createRemoteDirectArchive(archive: SidebarDirectArchive) {
+  console.log(
+    `[ArchiveFS] createRemoteDirectArchive called: id=${archive.id}, type=direct, source_id=${archive.agentId}, source_name=${archive.agentName}, archivedAt=${archive.archivedAt}, messagesCount=${archive.messages.length}`,
+  );
+  try {
+    await archivesApi.create(buildBackendDirectArchivePayload(archive));
+    console.log(`[ArchiveFS] createRemoteDirectArchive SUCCESS: id=${archive.id}`);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 409) {
+      console.log(
+        `[ArchiveFS] createRemoteDirectArchive CONFLICT (already exists): id=${archive.id}`,
+      );
+      return;
+    }
+    console.error(`[ArchiveFS] createRemoteDirectArchive ERROR: id=${archive.id}`, error);
+    throw error;
+  }
+}
+
+async function updateRemoteDirectArchiveTitle(archive: SidebarDirectArchive) {
+  try {
+    await archivesApi.update(archive.id, {
+      title: sanitizeArchiveTitle(archive.title),
+    });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      await createRemoteDirectArchive(archive);
+      return;
+    }
+
+    throw error;
+  }
+}
+
+async function deleteRemoteDirectArchive(archiveId: string) {
+  console.log(
+    `[ArchiveFS] deleteRemoteDirectArchive called: archiveId=${archiveId}, timestamp=${new Date().toISOString()}`,
+  );
+  try {
+    await archivesApi.remove(archiveId);
+    console.log(`[ArchiveFS] deleteRemoteDirectArchive SUCCESS: archiveId=${archiveId}`);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      console.log(
+        `[ArchiveFS] deleteRemoteDirectArchive 404 (already gone): archiveId=${archiveId}`,
+      );
+      return;
+    }
+    console.error(`[ArchiveFS] deleteRemoteDirectArchive ERROR: archiveId=${archiveId}`, error);
+    throw error;
+  }
+}
+
+async function runDirectArchiveApiSync(
+  task: () => Promise<void>,
+  label: string,
+  options: {
+    attempts?: number;
+    retryDelayMs?: number;
+  } = {},
+) {
+  const attempts = Math.max(1, Math.floor(options.attempts ?? DIRECT_ARCHIVE_SYNC_ATTEMPTS));
+  const retryDelayMs = Math.max(
+    0,
+    Math.floor(options.retryDelayMs ?? DIRECT_ARCHIVE_SYNC_RETRY_DELAY_MS),
+  );
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await task();
+      return true;
+    } catch (error) {
+      if (attempt >= attempts) {
+        console.warn(`[Archive] ${label} 失败，保留本地回退:`, error);
+        return false;
+      }
+
+      console.warn(`[Archive] ${label} 第 ${attempt}/${attempts} 次失败，准备重试:`, error);
+      if (retryDelayMs > 0) {
+        await delay(retryDelayMs);
+      }
+    }
+  }
+
+  return false;
+}
+
+function queueDirectArchiveSync(task: () => Promise<void>, label: string) {
+  directArchiveSyncChain = directArchiveSyncChain
+    .then(async () => {
+      await runDirectArchiveApiSync(task, label);
+    })
+    .catch((error) => {
+      console.warn(`[Archive] ${label} 失败，保留本地回退:`, error);
+    });
+
+  return directArchiveSyncChain;
+}
+
+function syncSidebarDirectArchiveDelta(
+  previousArchives: SidebarDirectArchive[],
+  nextArchives: SidebarDirectArchive[],
+) {
+  const previousById = new Map(previousArchives.map((archive) => [archive.id, archive]));
+  const nextById = new Map(nextArchives.map((archive) => [archive.id, archive]));
+  const addedArchives = nextArchives.filter((archive) => !previousById.has(archive.id));
+  const removedArchiveIds = previousArchives
+    .filter((archive) => !nextById.has(archive.id))
+    .map((archive) => archive.id);
+  const renamedArchives = nextArchives.filter((archive) => {
+    const previous = previousById.get(archive.id);
+    return previous && sanitizeArchiveTitle(previous.title) !== sanitizeArchiveTitle(archive.title);
+  });
+
+  if (
+    addedArchives.length === 0 &&
+    removedArchiveIds.length === 0 &&
+    renamedArchives.length === 0
+  ) {
+    return;
+  }
+
+  void queueDirectArchiveSync(async () => {
+    for (const archive of addedArchives) {
+      await createRemoteDirectArchive(archive);
+    }
+
+    for (const archive of renamedArchives) {
+      await updateRemoteDirectArchiveTitle(archive);
+    }
+
+    for (const archiveId of removedArchiveIds) {
+      await deleteRemoteDirectArchive(archiveId);
+    }
+  }, "同步 1v1 归档到后端");
+}
+
+export async function hydrateSidebarDirectArchivesFromApi() {
+  console.log(`[ArchiveFS] hydrateSidebarDirectArchivesFromApi START`);
+  if (directArchiveHydrationPromise) {
+    console.log(`[ArchiveFS] hydrateSidebarDirectArchivesFromApi: using existing promise`);
+    return directArchiveHydrationPromise;
+  }
+
+  directArchiveHydrationPromise = (async () => {
+    const localArchives = getCachedDirectArchives();
+    console.log(
+      `[ArchiveFS] hydrate: localArchives from cache: ids=[${localArchives.map((a) => a.id).join(", ")}]`,
+    );
+    const snapshotVersionAtStart = directArchiveSnapshotVersion;
+    const pendingAtStart = new Set(readPendingDirectArchiveDeletionIds());
+    const remoteArchivesResponse = await archivesApi.list("direct");
+    const pendingAtEnd = new Set(readPendingDirectArchiveDeletionIds());
+    console.log(
+      `[ArchiveFS] hydrate: raw response from /api/archives?type=direct: count=${remoteArchivesResponse.length}, ids=[${remoteArchivesResponse.map((archive) => archive.id).join(", ")}]`,
+    );
+    const remoteArchives = sortDirectArchivesByNewest(
+      hydrateArchiveTitles(
+        remoteArchivesResponse
+          .map(normalizeDirectArchiveFromBackend)
+          .filter((archive): archive is SidebarDirectArchive => archive !== null),
+        {
+          getTitle: (archive) => archive.title,
+          getSourceName: (archive) => archive.agentName,
+          getArchivedAt: (archive) => archive.archivedAt,
+          setTitle: (archive, title) => ({
+            ...archive,
+            title,
+          }),
+        },
+      ),
+    );
+    console.log(
+      `[ArchiveFS] hydrate: normalized remoteArchives: ids=[${remoteArchives.map((a) => a.id).join(", ")}]`,
+    );
+    const latestLocalArchives = getCachedDirectArchives();
+    console.log(
+      `[ArchiveFS] hydrate: latestLocalArchives (after normalize): ids=[${latestLocalArchives.map((a) => a.id).join(", ")}]`,
+    );
+    if (snapshotVersionAtStart !== directArchiveSnapshotVersion) {
+      console.log(
+        `[ArchiveFS] hydrate: snapshotVersion changed during hydration, returning latestLocalArchives`,
+      );
+      return latestLocalArchives;
+    }
+
+    const pendingDeletedArchiveIds = new Set([...pendingAtStart, ...pendingAtEnd]);
+    console.log(
+      `[ArchiveFS] hydrate: pendingDeletedArchiveIds: ids=[${[...pendingDeletedArchiveIds].join(", ")}]`,
+    );
+    if (pendingDeletedArchiveIds.size > 0) {
+      void queueDirectArchiveSync(async () => {
+        console.log(
+          `[ArchiveFS] hydrate: processing pending deletes: ids=[${[...pendingDeletedArchiveIds].join(", ")}]`,
+        );
+        for (const archiveId of readPendingDirectArchiveDeletionIds()) {
+          await deleteRemoteDirectArchive(archiveId);
+          clearPendingDirectArchiveDeletion(archiveId);
+        }
+      }, "补删已移除的 1v1 归档");
+    }
+
+    const visibleRemoteArchives = remoteArchives.filter(
+      (archive) => !pendingDeletedArchiveIds.has(archive.id),
+    );
+    console.log(
+      `[ArchiveFS] hydrate: visibleRemoteArchives (filtered by pendingDelete): ids=[${visibleRemoteArchives.map((a) => a.id).join(", ")}]`,
+    );
+    const mergedArchives = sortDirectArchivesByNewest(visibleRemoteArchives);
+    console.log(
+      `[ArchiveFS] hydrate: mergedArchives: ids=[${mergedArchives.map((a) => a.id).join(", ")}]`,
+    );
+    console.log(
+      `[ArchiveFS] hydrate: comparing local vs merged: localCount=${localArchives.length}, mergedCount=${mergedArchives.length}, areEqual=${areDirectArchivesEqual(localArchives, mergedArchives)}`,
+    );
+    if (!areDirectArchivesEqual(localArchives, mergedArchives)) {
+      console.log(
+        `[ArchiveFS] hydrate: DIFFERENCE DETECTED - writing mergedArchives to localStorage`,
+      );
+      writeLocalSidebarDirectArchives(mergedArchives);
+      return mergedArchives;
+    }
+
+    console.log(`[ArchiveFS] hydrate: no difference - using cached`);
+    cachedDirectArchives = mergedArchives;
+    return mergedArchives;
+  })()
+    .catch((error) => {
+      console.warn("[ArchiveFS] hydrate: ERROR:", error);
+      return getCachedDirectArchives();
+    })
+    .finally(() => {
+      console.log(`[ArchiveFS] hydrateSidebarDirectArchivesFromApi END`);
+      directArchiveHydrationPromise = null;
+    });
+
+  return directArchiveHydrationPromise;
+}
+
+export function readSidebarDirectArchives(): SidebarDirectArchive[] {
+  const archives = getCachedDirectArchives();
+  void hydrateSidebarDirectArchivesFromApi();
+  return archives;
+}
+
+export function writeSidebarDirectArchives(
+  value: SidebarDirectArchive[],
+  options: {
+    skipRemoteSync?: boolean;
+  } = {},
+) {
+  const previousArchives = getCachedDirectArchives();
   const mappedArchives: Array<SidebarDirectArchive | null> = value.map((archive) => {
     const id = archive.id.trim();
     const agentId = archive.agentId.trim();
@@ -639,9 +1055,27 @@ export function writeSidebarDirectArchives(value: SidebarDirectArchive[]) {
     mappedArchives.filter((archive): archive is SidebarDirectArchive => archive !== null),
   );
 
-  writeStorageItem(SIDEBAR_DIRECT_ARCHIVES_STORAGE_KEY, JSON.stringify(normalized));
-  emitStorageChange(SIDEBAR_DIRECT_ARCHIVES_STORAGE_KEY);
+  writeLocalSidebarDirectArchives(normalized);
+  if (!options.skipRemoteSync) {
+    syncSidebarDirectArchiveDelta(previousArchives, normalized);
+  }
   return normalized;
+}
+
+export async function persistSidebarDirectArchive(archive: SidebarDirectArchive) {
+  console.log(
+    `[ArchiveFS] persistSidebarDirectArchive called: id=${archive.id}, agentId=${archive.agentId}, agentName=${archive.agentName}`,
+  );
+  const synced = await runDirectArchiveApiSync(async () => {
+    await createRemoteDirectArchive(archive);
+  }, "创建 1v1 归档");
+  if (!synced) {
+    throw new Error("1v1 归档同步失败，请检查虾班后端是否可用");
+  }
+}
+
+export async function deleteSidebarDirectArchiveFromBackend(archiveId: string) {
+  await deleteRemoteDirectArchive(archiveId.trim());
 }
 
 export function appendSidebarDirectArchive(archive: SidebarDirectArchive) {
@@ -663,26 +1097,64 @@ export function removeSidebarDirectArchivesByAgentId(agentId: string) {
   return writeSidebarDirectArchives(nextArchives);
 }
 
-export function removeSidebarDirectArchiveById(archiveId: string) {
+export async function removeSidebarDirectArchiveById(archiveId: string) {
+  console.log(
+    `[ArchiveFS] removeSidebarDirectArchiveById called: archiveId=${archiveId}, timestamp=${new Date().toISOString()}`,
+  );
   const normalizedArchiveId = archiveId.trim();
   if (!normalizedArchiveId) {
+    console.log(`[ArchiveFS] removeSidebarDirectArchiveById: empty archiveId, returning current`);
     return readSidebarDirectArchives();
   }
 
-  const currentArchives = readSidebarDirectArchives();
-  const nextArchives = currentArchives.filter((archive) => archive.id !== normalizedArchiveId);
-  if (nextArchives.length === currentArchives.length) {
+  const currentArchives = getCachedDirectArchives();
+  console.log(
+    `[ArchiveFS] removeSidebarDirectArchiveById: currentArchives: ids=[${currentArchives.map((a) => a.id).join(", ")}]`,
+  );
+  if (!currentArchives.some((archive) => archive.id === normalizedArchiveId)) {
+    console.log(
+      `[ArchiveFS] removeSidebarDirectArchiveById: archive ${normalizedArchiveId} not found in currentArchives`,
+    );
     return currentArchives;
   }
 
-  console.log(`[Archive] 删除 1v1 归档: ${normalizedArchiveId}`);
-  return writeSidebarDirectArchives(nextArchives);
+  const nextArchives = currentArchives.filter((archive) => archive.id !== normalizedArchiveId);
+  console.log(
+    `[ArchiveFS] removeSidebarDirectArchiveById: nextArchives (after filter): ids=[${nextArchives.map((a) => a.id).join(", ")}]`,
+  );
+  markPendingDirectArchiveDeletion(normalizedArchiveId);
+  console.log(
+    `[ArchiveFS] removeSidebarDirectArchiveById: pendingDelete marked for ${normalizedArchiveId}`,
+  );
+  writeSidebarDirectArchives(nextArchives, {
+    skipRemoteSync: true,
+  });
+  console.log(
+    `[ArchiveFS] removeSidebarDirectArchiveById: localStorage updated, now calling backend delete`,
+  );
+
+  const removed = await runDirectArchiveApiSync(async () => {
+    await deleteRemoteDirectArchive(normalizedArchiveId);
+  }, "删除 1v1 归档");
+  if (removed) {
+    console.log(
+      `[ArchiveFS] removeSidebarDirectArchiveById: backend delete SUCCESS for ${normalizedArchiveId}`,
+    );
+    clearPendingDirectArchiveDeletion(normalizedArchiveId);
+  } else {
+    console.warn(
+      `[ArchiveFS] removeSidebarDirectArchiveById: backend delete FAILED for ${normalizedArchiveId}, keeping pendingDelete marker`,
+    );
+  }
+
+  console.log(`[ArchiveFS] removeSidebarDirectArchiveById: DONE for ${normalizedArchiveId}`);
+  return nextArchives;
 }
 
-export function renameSidebarDirectArchiveById(archiveId: string, title: string) {
+export async function renameSidebarDirectArchiveById(archiveId: string, title: string) {
   const normalizedArchiveId = archiveId.trim();
   const nextTitle = sanitizeArchiveTitle(title);
-  const currentArchives = readSidebarDirectArchives();
+  const currentArchives = getCachedDirectArchives();
   if (!normalizedArchiveId || !nextTitle) {
     return {
       archives: currentArchives,
@@ -717,9 +1189,27 @@ export function renameSidebarDirectArchiveById(archiveId: string, title: string)
     };
   }
 
+  writeSidebarDirectArchives(nextArchives, {
+    skipRemoteSync: true,
+  });
+  const renamedRemotely = await runDirectArchiveApiSync(async () => {
+    const updatedArchive = nextArchives.find((archive) => archive.id === normalizedArchiveId);
+    if (!updatedArchive) {
+      return;
+    }
+
+    await updateRemoteDirectArchiveTitle(updatedArchive);
+  }, "重命名 1v1 归档");
+  if (!renamedRemotely) {
+    writeSidebarDirectArchives(currentArchives, {
+      skipRemoteSync: true,
+    });
+    throw new Error("1v1 归档标题同步失败，请稍后重试");
+  }
+
   console.log(`[Archive] 归档重命名: ${previousTitle} → ${nextTitle}`);
   return {
-    archives: writeSidebarDirectArchives(nextArchives),
+    archives: nextArchives,
     renamed: true,
   };
 }
