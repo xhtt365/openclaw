@@ -7,7 +7,13 @@ let capturedPayload: RestartSentinelPayload | undefined;
 
 const runGatewayUpdateMock = vi.fn<() => Promise<UpdateRunResult>>();
 
-const scheduleGatewaySigusr1RestartMock = vi.fn(() => ({ scheduled: true }));
+const scheduleGatewaySigusr1RestartMock = vi.fn(() => ({ ok: true, scheduled: true }));
+const triggerOpenClawRestartMock = vi.fn(() => ({ ok: true, method: "launchctl" as const }));
+const isRestartEnabledMock = vi.fn(() => true);
+
+vi.mock("../../config/commands.js", () => ({
+  isRestartEnabled: isRestartEnabledMock,
+}));
 
 vi.mock("../../config/config.js", () => ({
   loadConfig: () => ({ update: {} }),
@@ -49,6 +55,7 @@ vi.mock("../../infra/restart-sentinel.js", async (importOriginal) => {
 
 vi.mock("../../infra/restart.js", () => ({
   scheduleGatewaySigusr1Restart: scheduleGatewaySigusr1RestartMock,
+  triggerOpenClawRestart: triggerOpenClawRestartMock,
 }));
 
 vi.mock("../../infra/update-channels.js", () => ({
@@ -59,9 +66,13 @@ vi.mock("../../infra/update-runner.js", () => ({
   runGatewayUpdate: runGatewayUpdateMock,
 }));
 
-vi.mock("../protocol/index.js", () => ({
-  validateUpdateRunParams: () => true,
-}));
+vi.mock("../protocol/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../protocol/index.js")>();
+  return {
+    ...actual,
+    validateUpdateRunParams: () => true,
+  };
+});
 
 vi.mock("./restart-request.js", () => ({
   parseRestartRequestParams: (params: Record<string, unknown>) => ({
@@ -85,7 +96,11 @@ beforeEach(() => {
     durationMs: 100,
   });
   scheduleGatewaySigusr1RestartMock.mockClear();
-  scheduleGatewaySigusr1RestartMock.mockReturnValue({ scheduled: true });
+  scheduleGatewaySigusr1RestartMock.mockReturnValue({ ok: true, scheduled: true });
+  triggerOpenClawRestartMock.mockClear();
+  triggerOpenClawRestartMock.mockReturnValue({ ok: true, method: "launchctl" });
+  isRestartEnabledMock.mockReset();
+  isRestartEnabledMock.mockReturnValue(true);
 });
 
 async function invokeUpdateRun(
@@ -166,7 +181,7 @@ describe("update.run restart scheduling", () => {
 
     expect(scheduleGatewaySigusr1RestartMock).toHaveBeenCalledTimes(1);
     expect(payload?.ok).toBe(true);
-    expect(payload?.restart).toEqual({ scheduled: true });
+    expect(payload?.restart).toEqual({ ok: true, scheduled: true });
   });
 
   it("skips restart when update fails", async () => {
@@ -188,5 +203,78 @@ describe("update.run restart scheduling", () => {
     expect(scheduleGatewaySigusr1RestartMock).not.toHaveBeenCalled();
     expect(payload?.ok).toBe(false);
     expect(payload?.restart).toBeNull();
+  });
+});
+
+describe("gateway.restart", () => {
+  it("uses in-process restart when SIGUSR1 listener exists", async () => {
+    const sigusr1Handler = () => {};
+    process.on("SIGUSR1", sigusr1Handler);
+
+    try {
+      const { updateHandlers } = await import("./update.js");
+      let payload:
+        | {
+            ok: boolean;
+            restart: unknown;
+          }
+        | undefined;
+
+      await updateHandlers["gateway.restart"]({
+        params: {},
+        respond: ((_ok: boolean, response: unknown) => {
+          payload = response as { ok: boolean; restart: unknown };
+        }) as never,
+      } as never);
+
+      expect(scheduleGatewaySigusr1RestartMock).toHaveBeenCalledTimes(1);
+      expect(triggerOpenClawRestartMock).not.toHaveBeenCalled();
+      expect(payload?.ok).toBe(true);
+    } finally {
+      process.off("SIGUSR1", sigusr1Handler);
+    }
+  });
+
+  it("falls back to supervisor restart when no SIGUSR1 listener exists", async () => {
+    const { updateHandlers } = await import("./update.js");
+    let payload:
+      | {
+          ok: boolean;
+          restart: unknown;
+        }
+      | undefined;
+
+    await updateHandlers["gateway.restart"]({
+      params: {},
+      respond: ((_ok: boolean, response: unknown) => {
+        payload = response as { ok: boolean; restart: unknown };
+      }) as never,
+    } as never);
+
+    expect(scheduleGatewaySigusr1RestartMock).not.toHaveBeenCalled();
+    expect(triggerOpenClawRestartMock).toHaveBeenCalledTimes(1);
+    expect(payload?.ok).toBe(true);
+    expect(payload?.restart).toEqual({ ok: true, method: "launchctl" });
+  });
+
+  it("rejects restart when commands.restart is disabled", async () => {
+    isRestartEnabledMock.mockReturnValueOnce(false);
+    const { updateHandlers } = await import("./update.js");
+    const respond = vi.fn();
+
+    await updateHandlers["gateway.restart"]({
+      params: {},
+      respond: respond as never,
+    } as never);
+
+    expect(scheduleGatewaySigusr1RestartMock).not.toHaveBeenCalled();
+    expect(triggerOpenClawRestartMock).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        message: expect.stringContaining("Gateway restart is disabled"),
+      }),
+    );
   });
 });

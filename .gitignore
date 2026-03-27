@@ -113,6 +113,8 @@ Swabble/build/
 # Generated protocol schema (produced via pnpm protocol:gen)
 dist/protocol.schema.json
 .ant-colony/
+wurenju_backup/
+wurenju/frontend/tests/*.log
 
 # Eclipse
 **/.project
