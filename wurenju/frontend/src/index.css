@@ -94,11 +94,9 @@ body.light,
   --workbench-panel-border: rgba(31, 28, 24, 0.08);
   --workbench-panel-border-strong: rgba(31, 28, 24, 0.14);
   --workbench-card-shadow:
-    0 8px 18px rgba(15, 18, 24, 0.045),
-    inset 0 1px 0 rgba(255, 255, 255, 0.84);
+    0 8px 18px rgba(15, 18, 24, 0.045), inset 0 1px 0 rgba(255, 255, 255, 0.84);
   --workbench-elevated-shadow:
-    0 14px 30px rgba(15, 18, 24, 0.075),
-    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+    0 14px 30px rgba(15, 18, 24, 0.075), inset 0 1px 0 rgba(255, 255, 255, 0.72);
   --workbench-glass-bg: rgba(255, 252, 247, 0.84);
   --workbench-pill-bg: rgba(247, 244, 239, 0.92);
   --workbench-pill-border: rgba(31, 28, 24, 0.08);
@@ -150,7 +148,8 @@ body.light,
   --danger-muted: color-mix(in srgb, var(--error) 72%, transparent);
   --danger-subtle: var(--surface-danger-soft);
   --focus: rgba(220, 38, 38, 0.15);
-  --focus-ring: 0 0 0 2px var(--bg-main), 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
+  --focus-ring:
+    0 0 0 2px var(--bg-main), 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
   --focus-glow: 0 0 0 2px var(--bg-main), 0 0 0 3px var(--ring), 0 0 12px var(--accent-glow);
   --text-inverse-muted: rgba(255, 255, 255, 0.82);
   --grid-line: rgba(0, 0, 0, 0.04);
@@ -341,12 +340,9 @@ body.dark,
   );
   --workbench-panel-border: rgba(255, 255, 255, 0.09);
   --workbench-panel-border-strong: rgba(255, 255, 255, 0.15);
-  --workbench-card-shadow:
-    0 10px 22px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --workbench-card-shadow: 0 10px 22px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   --workbench-elevated-shadow:
-    0 16px 32px rgba(0, 0, 0, 0.26),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    0 16px 32px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.05);
   --workbench-glass-bg: rgba(24, 21, 17, 0.84);
   --workbench-pill-bg: rgba(36, 31, 26, 0.92);
   --workbench-pill-border: rgba(255, 255, 255, 0.08);
@@ -398,7 +394,8 @@ body.dark,
   --danger-muted: color-mix(in srgb, var(--error) 72%, transparent);
   --danger-subtle: var(--surface-danger-soft);
   --focus: rgba(220, 38, 38, 0.2);
-  --focus-ring: 0 0 0 2px var(--bg-main), 0 0 0 3px color-mix(in srgb, var(--ring) 60%, transparent);
+  --focus-ring:
+    0 0 0 2px var(--bg-main), 0 0 0 3px color-mix(in srgb, var(--ring) 60%, transparent);
   --focus-glow: 0 0 0 2px var(--bg-main), 0 0 0 3px var(--ring), 0 0 16px var(--accent-glow);
   --text-inverse-muted: rgba(255, 255, 255, 0.82);
   --grid-line: rgba(255, 255, 255, 0.03);
@@ -905,7 +902,11 @@ body.dark .theme-toggle__thumb,
   height: 44px;
   border-radius: 14px;
   color: var(--text-inverse);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-2) 92%, var(--text-inverse) 8%), var(--accent));
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent-2) 92%, var(--text-inverse) 8%),
+    var(--accent)
+  );
   box-shadow: var(--shadow-sm);
 }
 

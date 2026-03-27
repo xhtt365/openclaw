@@ -151,6 +151,7 @@ export function EmployeeDetailPage() {
   const [showUnsavedChangesModal, setShowUnsavedChangesModal] = useState(false);
   const [pendingFileName, setPendingFileName] = useState<string | null>(null);
   const [switchingFile, setSwitchingFile] = useState(false);
+  const [isUpdatingAvatar, setIsUpdatingAvatar] = useState(false);
   const [, setAvatarVersion] = useState(0);
   const [profileDraft, setProfileDraft] = useState({
     name: "",
@@ -467,6 +468,10 @@ export function EmployeeDetailPage() {
   }
 
   function handleTriggerAvatarUpload() {
+    if (isUpdatingAvatar) {
+      return;
+    }
+
     avatarInputRef.current?.click();
   }
 
@@ -496,21 +501,38 @@ export function EmployeeDetailPage() {
       return;
     }
 
+    setIsUpdatingAvatar(true);
+
     try {
-      // 头像只走本地映射，避免影响网关文件结构。
+      // 头像文件本身仍保存在浏览器缓存，但会优先确认后端映射已落库。
       const avatarSrc = await readFileAsDataUrl(file);
-      saveAgentAvatarMapping(agent.id, avatarSrc);
+      const result = await saveAgentAvatarMapping(agent.id, avatarSrc);
       setAvatarVersion((current) => current + 1);
-      toast({
-        title: "头像已更新",
-        description: "资料页、侧栏和聊天头像会同步刷新",
-      });
+      if (result.persistedTo === "remote") {
+        toast({
+          title: "头像已更新",
+          description: "资料页、侧栏和聊天头像会同步刷新，换浏览器也能看到",
+        });
+      } else if (result.reason === "backend-unavailable") {
+        toast({
+          title: "头像已更新",
+          description: "当前后端不可用，头像先保存在本浏览器；后端恢复后可再次上传以同步",
+        });
+      } else {
+        toast({
+          title: "头像仅保存在当前浏览器",
+          description: "后端同步失败，请稍后重试，否则换浏览器后可能看不到",
+          variant: "destructive",
+        });
+      }
     } catch (error) {
       toast({
         title: "头像更新失败",
         description: error instanceof Error && error.message.trim() ? error.message : "请稍后重试",
         variant: "destructive",
       });
+    } finally {
+      setIsUpdatingAvatar(false);
     }
   }
 
@@ -572,9 +594,11 @@ export function EmployeeDetailPage() {
                     <button
                       type="button"
                       onClick={handleTriggerAvatarUpload}
-                      className="group relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[28px] border border-[var(--color-border)] bg-[var(--color-bg-card)] shadow-[0_18px_48px_var(--color-shadow-card)]"
+                      disabled={isUpdatingAvatar}
+                      className="group relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[28px] border border-[var(--color-border)] bg-[var(--color-bg-card)] shadow-[0_18px_48px_var(--color-shadow-card)] disabled:cursor-wait disabled:opacity-80"
                       aria-label="点击修改头像"
                       title="点击修改头像"
+                      aria-busy={isUpdatingAvatar}
                     >
                       {avatarInfo?.type === "image" ? (
                         <img
@@ -588,7 +612,7 @@ export function EmployeeDetailPage() {
                         </span>
                       )}
                       <div className="absolute inset-x-2 bottom-2 rounded-full bg-[color:color-mix(in_srgb,var(--color-bg-card)_82%,transparent)] px-2 py-1 text-[11px] font-medium text-[var(--color-text-primary)] opacity-0 transition-opacity group-hover:opacity-100">
-                        点击修改头像
+                        {isUpdatingAvatar ? "保存中..." : "点击修改头像"}
                       </div>
                     </button>
                     <input

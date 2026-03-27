@@ -329,6 +329,32 @@ export function ChannelConfigModal({
       return;
     }
 
+    const handleStorageRefresh = (event: Event) => {
+      const detail =
+        event instanceof CustomEvent && event.detail && typeof event.detail === "object"
+          ? (event.detail as { agentId?: string; config?: ChannelConfigDraft })
+          : null;
+      if (detail?.agentId !== agentId || !detail.config) {
+        return;
+      }
+
+      setBaseline(detail.config);
+      if (!isDirty) {
+        setDraft(detail.config);
+      }
+    };
+
+    window.addEventListener("xiaban-agent-channel-updated", handleStorageRefresh);
+    return () => {
+      window.removeEventListener("xiaban-agent-channel-updated", handleStorageRefresh);
+    };
+  }, [agentId, isDirty, open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || isSaving) {
         return;

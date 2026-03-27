@@ -1,6 +1,6 @@
 export interface ConfigVersion {
-  id: string
-  timestamp: number
-  content: string
-  label?: string
+  id: string;
+  timestamp: number;
+  content: string;
+  label?: string;
 }

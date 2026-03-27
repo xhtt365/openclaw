@@ -1,5 +1,7 @@
+import { storageApi } from "@/services/api";
 import type { ModelApiProtocol } from "@/types/model";
 import { readLocalStorageItem, writeLocalStorageItem } from "@/utils/storage";
+import { ensureStorageApiAvailable, scheduleStorageApiSync } from "@/utils/storageBackend";
 
 export const MODEL_PROVIDERS_STORAGE_KEY = "xiaban.modelProviders";
 export const MODEL_PROVIDER_STATUS_STORAGE_KEY = "xiaban.modelProviderStatus";
@@ -82,6 +84,9 @@ const MODEL_PROVIDER_BADGES: Record<ModelProviderHealthStatus, ModelProviderStat
     toneClassName: "text-[var(--danger)]",
   },
 };
+
+let cachedProviderMetaMap: StoredProviderMetaMap | null = null;
+let providerMetaHydrationPromise: Promise<void> | null = null;
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
@@ -396,7 +401,7 @@ export function buildModelRef(providerId: string, modelId: string) {
   return `${providerId.trim()}/${modelId.trim()}`;
 }
 
-export function readStoredProviderMetaMap(): StoredProviderMetaMap {
+function readLocalStoredProviderMetaMap(): StoredProviderMetaMap {
   try {
     const raw = readLocalStorageItem(MODEL_PROVIDERS_STORAGE_KEY);
     if (!raw) {
@@ -409,11 +414,72 @@ export function readStoredProviderMetaMap(): StoredProviderMetaMap {
   }
 }
 
+async function hydrateProviderMetaMapFromApi() {
+  if (providerMetaHydrationPromise) {
+    return providerMetaHydrationPromise;
+  }
+
+  providerMetaHydrationPromise = (async () => {
+    const localMap = cachedProviderMetaMap ?? readLocalStoredProviderMetaMap();
+    const available = await ensureStorageApiAvailable();
+    if (!available) {
+      return;
+    }
+
+    const remoteMap = compactProviderMetaMap(
+      await storageApi.get<StoredProviderMetaMap>("model-providers"),
+    );
+    const hasRemoteData = Object.keys(remoteMap).length > 0;
+    const hasLocalData = Object.keys(localMap).length > 0;
+
+    if (!hasRemoteData && hasLocalData) {
+      await storageApi.put("model-providers", {
+        items: localMap,
+      });
+      return;
+    }
+
+    if (!hasRemoteData) {
+      return;
+    }
+
+    cachedProviderMetaMap = remoteMap;
+    writeLocalStorageItem(MODEL_PROVIDERS_STORAGE_KEY, JSON.stringify(remoteMap));
+    emitEvent(MODEL_PROVIDERS_UPDATED_EVENT, { providers: remoteMap });
+  })()
+    .catch((error) => {
+      console.warn("[Model] 拉取后端模型供应商配置失败，继续使用本地缓存:", error);
+    })
+    .finally(() => {
+      providerMetaHydrationPromise = null;
+    });
+
+  return providerMetaHydrationPromise;
+}
+
+export function readStoredProviderMetaMap(): StoredProviderMetaMap {
+  const localProviderMetaMap = readLocalStoredProviderMetaMap();
+  const providerMetaMap =
+    cachedProviderMetaMap &&
+    JSON.stringify(cachedProviderMetaMap) === JSON.stringify(localProviderMetaMap)
+      ? cachedProviderMetaMap
+      : localProviderMetaMap;
+  cachedProviderMetaMap = providerMetaMap;
+  void hydrateProviderMetaMapFromApi();
+  return providerMetaMap;
+}
+
 export function saveStoredProviderMetaMap(value: StoredProviderMetaMap) {
   const normalized = compactProviderMetaMap(value);
+  cachedProviderMetaMap = normalized;
   if (!writeLocalStorageItem(MODEL_PROVIDERS_STORAGE_KEY, JSON.stringify(normalized))) {
     throw new Error("当前环境不支持本地保存");
   }
+  scheduleStorageApiSync(async () => {
+    await storageApi.put("model-providers", {
+      items: normalized,
+    });
+  }, "同步模型供应商配置到后端");
   emitEvent(MODEL_PROVIDERS_UPDATED_EVENT, { providers: normalized });
   return normalized;
 }

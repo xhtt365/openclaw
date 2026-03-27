@@ -12,7 +12,11 @@ import {
   normalizeGroupAnnouncement,
   type GroupMember,
 } from "@/utils/groupContext";
-import { GROUP_STORAGE_KEY, writeGroupStorageSnapshot } from "@/utils/groupPersistence";
+import {
+  hydrateGroupStorageSnapshot,
+  readGroupStorageSnapshot,
+  writeGroupStorageSnapshot,
+} from "@/utils/groupPersistence";
 import {
   DEFAULT_GROUP_RELAY_FALLBACK_LIMIT,
   inspectSequentialRelayRequest,
@@ -34,7 +38,6 @@ import {
 } from "@/utils/sidebarPersistence";
 import {
   listLocalStorageKeys,
-  readLocalStorageItem,
   removeLocalStorageItem,
   writeLocalStorageItem,
 } from "@/utils/storage";
@@ -140,6 +143,7 @@ export type CleanupGroupStateOptions = {
 };
 
 type GroupState = GroupPersistence & {
+  isHydrating: boolean;
   thinkingAgentsByGroupId: Map<string, Map<string, ThinkingAgent>>;
   announcementSyncStatus: Map<string, Record<string, number>>;
   isSendingByGroupId: Record<string, boolean>;
@@ -602,12 +606,10 @@ function readStoredState(): GroupPersistence {
   }
 
   try {
-    const raw = readLocalStorageItem(GROUP_STORAGE_KEY);
-    if (!raw) {
+    const parsed = readGroupStorageSnapshot();
+    if (!parsed) {
       return emptyPersistence();
     }
-
-    const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       const groups = parsed.map(normalizeGroup).filter((group): group is Group => group !== null);
       return {
@@ -3720,12 +3722,22 @@ export const useGroupStore = create<GroupState>((set, get) => {
 
   return {
     ...initialState,
+    isHydrating: false,
     thinkingAgentsByGroupId: new Map(),
     announcementSyncStatus: new Map(),
     isSendingByGroupId: {},
 
-    fetchGroups: () => {
-      const nextState = readStoredState();
+    fetchGroups: async () => {
+      set({ isHydrating: true });
+      let nextState = readStoredState();
+      try {
+        const remoteSnapshot = await hydrateGroupStorageSnapshot();
+        if (remoteSnapshot) {
+          nextState = readStoredState();
+        }
+      } catch (error) {
+        console.warn("[Group] 拉取后端群聊快照失败，继续使用本地缓存:", error);
+      }
       Array.from(groupRoundStates.keys()).forEach((groupId) => {
         clearGroupRoundState(groupId, "刷新项目组列表");
       });
@@ -3735,6 +3747,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
       console.log(`[Group] 获取项目组列表: ${nextState.groups.length} 个`);
       set({
         ...nextState,
+        isHydrating: false,
         thinkingAgentsByGroupId: new Map(),
         announcementSyncStatus: new Map(),
         isSendingByGroupId: {},
