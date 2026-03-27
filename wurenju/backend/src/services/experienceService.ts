@@ -116,6 +116,12 @@ type ExperienceInjectQueryParams = {
   limit: number;
 };
 
+type LastFeedbackQueryParams = {
+  group_id: string;
+  target_agent_id: string;
+  session_key: string | null;
+};
+
 const insertProcessEventStmt = db.prepare<ProcessEventMutationParams>(`
   INSERT INTO process_events (
     id,
@@ -171,10 +177,7 @@ const getProcessEventsStmt = db.prepare<ProcessEventsQueryParams, ProcessEventRo
   LIMIT @limit
 `);
 
-const getLastFeedbackEventStmt = db.prepare<
-  { group_id: string; target_agent_id: string },
-  ProcessEventRow
->(`
+const getLastFeedbackEventStmt = db.prepare<LastFeedbackQueryParams, ProcessEventRow>(`
   SELECT
     id,
     session_key,
@@ -192,6 +195,7 @@ const getLastFeedbackEventStmt = db.prepare<
   FROM process_events
   WHERE group_id = @group_id
     AND target_agent_id = @target_agent_id
+    AND (@session_key IS NULL OR session_key = @session_key)
     AND type = 'feedback'
   ORDER BY CAST(created_at AS INTEGER) DESC, id DESC
   LIMIT 1
@@ -250,6 +254,33 @@ const listExperienceItemsStmt = db.prepare<ExperienceListQueryParams, Experience
     AND (@kind IS NULL OR kind = @kind)
   ORDER BY CAST(updated_at AS INTEGER) DESC, CAST(created_at AS INTEGER) DESC, id ASC
   LIMIT @limit
+`);
+
+const getExperienceItemsByStatusStmt = db.prepare<{ status: ExperienceStatus }, ExperienceRow>(`
+  SELECT
+    id,
+    status,
+    kind,
+    task_type_json,
+    trigger,
+    rule,
+    anti_pattern,
+    group_id,
+    session_key,
+    feedback_score,
+    repeated_hits,
+    confidence,
+    conflict_with,
+    superseded_by,
+    created_at,
+    updated_at,
+    last_seen_at,
+    valid_from,
+    expires_at,
+    risk
+  FROM experience_items
+  WHERE status = @status
+  ORDER BY CAST(updated_at AS INTEGER) DESC, CAST(created_at AS INTEGER) DESC, id ASC
 `);
 
 const insertExperienceItemStmt = db.prepare<ExperienceMutationParams>(`
@@ -679,11 +710,16 @@ export function getProcessEvents(params: {
   });
 }
 
-export function getLastFeedbackEvent(groupId: string, targetAgentId: string) {
+export function getLastFeedbackEvent(
+  groupId: string,
+  targetAgentId: string,
+  sessionKey?: string | null,
+) {
   return (
     getLastFeedbackEventStmt.get({
       group_id: normalizeRequiredText(groupId, "项目组 ID"),
       target_agent_id: normalizeRequiredText(targetAgentId, "目标 Agent ID"),
+      session_key: normalizeOptionalText(sessionKey),
     }) ?? null
   );
 }
@@ -703,6 +739,12 @@ export function listExperienceItems(params: { status?: string; kind?: string; li
         ? null
         : normalizeEnumValue(params.kind, "经验类型", EXPERIENCE_KIND),
     limit: normalizeLimit(params.limit, 50),
+  });
+}
+
+export function getExperienceItemsByStatus(status: string) {
+  return getExperienceItemsByStatusStmt.all({
+    status: normalizeEnumValue(status, "经验状态", EXPERIENCE_STATUS),
   });
 }
 

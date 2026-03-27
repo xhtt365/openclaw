@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, afterEach, before } from "node:test";
 import test from "node:test";
+import { experienceApi } from "../services/experienceApi";
 import { gateway } from "../services/gateway";
 import { removeAgentFromGroup } from "../utils/groupMembers";
 import { GROUP_STORAGE_KEY } from "../utils/groupPersistence";
@@ -61,6 +62,11 @@ const memoryStorage = new MemoryStorage();
 const originalWindow = globalThis.window;
 const originalDocument = globalThis.document;
 const originalDateNow = Date.now;
+const originalWriteProcessEvent = experienceApi.writeProcessEvent.bind(experienceApi);
+const originalListProcessEvents = experienceApi.listProcessEvents.bind(experienceApi);
+const originalGetLastFeedbackEvent = experienceApi.getLastFeedbackEvent.bind(experienceApi);
+const originalUpsertExperienceCandidate =
+  experienceApi.upsertExperienceCandidate.bind(experienceApi);
 const pendingWindowTimers = new Map<number, () => void>();
 const visibilityChangeListeners = new Set<() => void>();
 
@@ -103,6 +109,49 @@ function createQuotaExceededError() {
   const error = new Error("Quota exceeded");
   error.name = "QuotaExceededError";
   return error;
+}
+
+function createMockExperienceItem(
+  input: Parameters<typeof experienceApi.upsertExperienceCandidate>[0],
+) {
+  return {
+    id: input.id ?? "candidate-1",
+    status: input.status ?? "pending",
+    kind: input.kind ?? "lesson",
+    task_type_json:
+      input.taskTypeJson == null
+        ? null
+        : typeof input.taskTypeJson === "string"
+          ? input.taskTypeJson
+          : JSON.stringify(input.taskTypeJson),
+    trigger: input.trigger ?? null,
+    rule: input.rule,
+    anti_pattern: input.antiPattern ?? null,
+    group_id: input.groupId ?? null,
+    session_key: input.sessionKey ?? null,
+    feedback_score: input.feedbackScore ?? null,
+    repeated_hits: input.repeatedHits ?? 0,
+    confidence: input.confidence ?? 0.5,
+    conflict_with: input.conflictWith ?? null,
+    superseded_by: input.supersededBy ?? null,
+    created_at: input.createdAt ?? "0",
+    updated_at: input.updatedAt ?? input.createdAt ?? "0",
+    last_seen_at: input.lastSeenAt ?? null,
+    valid_from: input.validFrom ?? null,
+    expires_at: input.expiresAt ?? null,
+    risk: input.risk ?? "medium",
+  };
+}
+
+function installDefaultExperienceApiStubs() {
+  experienceApi.writeProcessEvent = (async () => ({
+    success: true,
+  })) as typeof experienceApi.writeProcessEvent;
+  experienceApi.listProcessEvents = (async () => []) as typeof experienceApi.listProcessEvents;
+  experienceApi.getLastFeedbackEvent = (async () =>
+    null) as typeof experienceApi.getLastFeedbackEvent;
+  experienceApi.upsertExperienceCandidate = (async (input) =>
+    createMockExperienceItem(input)) as typeof experienceApi.upsertExperienceCandidate;
 }
 
 async function flushAsyncWork() {
@@ -303,6 +352,7 @@ function resetGroupStore() {
 }
 
 before(() => {
+  installDefaultExperienceApiStubs();
   Date.now = () => {
     nextTimestamp += 1_000;
     return nextTimestamp;
@@ -312,6 +362,8 @@ before(() => {
     value: {
       localStorage: memoryStorage,
       dispatchEvent: () => true,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
       setTimeout: (handler: TimerHandler) => {
         const timerId = nextWindowTimerId++;
         pendingWindowTimers.set(timerId, () => {
@@ -350,6 +402,7 @@ before(() => {
 
 afterEach(() => {
   resetGroupStore();
+  installDefaultExperienceApiStubs();
   const document = globalThis.document as { hidden?: boolean } | undefined;
   if (document) {
     document.hidden = false;
@@ -357,6 +410,10 @@ afterEach(() => {
 });
 
 after(() => {
+  experienceApi.writeProcessEvent = originalWriteProcessEvent;
+  experienceApi.listProcessEvents = originalListProcessEvents;
+  experienceApi.getLastFeedbackEvent = originalGetLastFeedbackEvent;
+  experienceApi.upsertExperienceCandidate = originalUpsertExperienceCandidate;
   Date.now = originalDateNow;
 
   if (originalWindow === undefined) {
@@ -466,6 +523,198 @@ void test("removeAgentData 会清掉员工关联的项目组空间数据", () =>
   );
   assert.equal(state.selectedGroupId, null);
   assert.equal(state.selectedArchiveId, null);
+});
+
+void test("sendGroupMessage 会为负反馈异步写入 process_events", async () => {
+  const group = createGroup({
+    members: [toGroupMember(DEV_AGENT)],
+    leaderId: DEV_AGENT.id,
+  });
+  const scenario = installGatewayScenario({
+    dev: [{ type: "success", content: "我会先保存再继续处理。" }],
+  });
+  const calls: Array<Parameters<typeof experienceApi.writeProcessEvent>[0]> = [];
+
+  experienceApi.writeProcessEvent = (async (input) => {
+    calls.push(input);
+    return { success: true };
+  }) as typeof experienceApi.writeProcessEvent;
+
+  try {
+    seedRelayState(group, [DEV_AGENT]);
+
+    await useGroupStore.getState().sendGroupMessage(group.id, "错了，应该先保存");
+    await flushAsyncWork();
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.targetAgentId, DEV_AGENT.id);
+    assert.equal(calls[0]?.sessionKey, "agent:dev:group:group-1");
+    assert.equal(calls[0]?.feedbackType, "negative_explicit");
+    assert.equal(calls[0]?.content, "错了，应该先保存");
+    assert.equal(calls[0]?.normalizedContent, "错 应该先");
+    assert.equal(calls[0]?.senderId, "user");
+    assert.deepEqual(calls[0]?.taskTypeJson, null);
+
+    const messages = useGroupStore.getState().messagesByGroupId[group.id] ?? [];
+    assert.equal(
+      messages.some((message) => message.role === "assistant"),
+      true,
+    );
+  } finally {
+    scenario.restore();
+  }
+});
+
+void test("sendGroupMessage 遇到中性消息时不会写入 feedback 事件", async () => {
+  const group = createGroup({
+    members: [toGroupMember(DEV_AGENT)],
+    leaderId: DEV_AGENT.id,
+  });
+  const scenario = installGatewayScenario({
+    dev: [{ type: "success", content: "收到，我继续处理。" }],
+  });
+  const calls: Array<Parameters<typeof experienceApi.writeProcessEvent>[0]> = [];
+
+  experienceApi.writeProcessEvent = (async (input) => {
+    calls.push(input);
+    return { success: true };
+  }) as typeof experienceApi.writeProcessEvent;
+
+  try {
+    seedRelayState(group, [DEV_AGENT]);
+
+    await useGroupStore.getState().sendGroupMessage(group.id, "今天天气不错");
+    await flushAsyncWork();
+
+    assert.equal(calls.length, 0);
+  } finally {
+    scenario.restore();
+  }
+});
+
+void test("反馈采集失败不会影响正常群聊流程", async () => {
+  const group = createGroup({
+    members: [toGroupMember(DEV_AGENT)],
+    leaderId: DEV_AGENT.id,
+  });
+  const scenario = installGatewayScenario({
+    dev: [{ type: "success", content: "我已经继续处理任务。" }],
+  });
+  const originalConsoleError = console.error;
+  const errorLogs: unknown[][] = [];
+
+  console.error = (...args: unknown[]) => {
+    errorLogs.push(args);
+  };
+  experienceApi.writeProcessEvent = (async () => {
+    throw new Error("experience offline");
+  }) as typeof experienceApi.writeProcessEvent;
+
+  try {
+    seedRelayState(group, [DEV_AGENT]);
+
+    await useGroupStore.getState().sendGroupMessage(group.id, "错了，重新来");
+    await flushAsyncWork();
+
+    const messages = useGroupStore.getState().messagesByGroupId[group.id] ?? [];
+    assert.equal(
+      messages.some(
+        (message) => message.role === "assistant" && message.content === "我已经继续处理任务。",
+      ),
+      true,
+    );
+    assert.equal(
+      errorLogs.some((args) => String(args[0]).includes("[Group] 反馈采集失败")),
+      true,
+    );
+  } finally {
+    console.error = originalConsoleError;
+    scenario.restore();
+  }
+});
+
+void test("负反馈后的成功回复会异步写入经验候选", async () => {
+  const group = createGroup({
+    members: [toGroupMember(DEV_AGENT)],
+    leaderId: DEV_AGENT.id,
+  });
+  const scenario = installGatewayScenario({
+    dev: [{ type: "success", content: "已按反馈重新整理答案。" }],
+  });
+  const candidateCalls: Array<Parameters<typeof experienceApi.upsertExperienceCandidate>[0]> = [];
+
+  experienceApi.getLastFeedbackEvent = (async () => ({
+    id: "event-1",
+    session_key: "agent:dev:group:group-1",
+    group_id: group.id,
+    target_agent_id: DEV_AGENT.id,
+    type: "feedback",
+    feedback_type: "negative_explicit",
+    sender_id: "user",
+    sender_name: "用户",
+    content: "错了，应该先保存",
+    normalized_content: "错 应该先",
+    task_type_json: '["修复"]',
+    confidence_delta: 0.8,
+    created_at: "1742000000000",
+  })) as typeof experienceApi.getLastFeedbackEvent;
+  experienceApi.upsertExperienceCandidate = (async (input) => {
+    candidateCalls.push(input);
+    return createMockExperienceItem(input);
+  }) as typeof experienceApi.upsertExperienceCandidate;
+
+  try {
+    seedRelayState(group, [DEV_AGENT]);
+
+    await useGroupStore.getState().sendGroupMessage(group.id, "请处理新的任务");
+    await flushAsyncWork();
+
+    assert.equal(candidateCalls.length, 1);
+    assert.equal(candidateCalls[0]?.kind, "lesson");
+    assert.equal(candidateCalls[0]?.taskTypeJson, '["修复"]');
+    assert.equal(candidateCalls[0]?.trigger, "错 应该先");
+    assert.equal(candidateCalls[0]?.rule, "已按反馈重新整理答案。");
+    assert.equal(candidateCalls[0]?.antiPattern, "错了，应该先保存");
+    assert.equal(candidateCalls[0]?.groupId, group.id);
+    assert.equal(candidateCalls[0]?.sessionKey, "agent:dev:group:group-1");
+    assert.equal(candidateCalls[0]?.feedbackScore, 0.8);
+    assert.equal(candidateCalls[0]?.repeatedHits, 1);
+    assert.equal(candidateCalls[0]?.confidence, 0.8);
+  } finally {
+    scenario.restore();
+  }
+});
+
+void test("成功回复只会查询同一 sessionKey 的最近负反馈", async () => {
+  const group = createGroup({
+    members: [toGroupMember(DEV_AGENT)],
+    leaderId: DEV_AGENT.id,
+  });
+  const scenario = installGatewayScenario({
+    dev: [{ type: "success", content: "我按当前会话反馈修正完成。" }],
+  });
+  const feedbackQueries: Array<Parameters<typeof experienceApi.getLastFeedbackEvent>[0]> = [];
+
+  experienceApi.getLastFeedbackEvent = (async (input) => {
+    feedbackQueries.push(input);
+    return null;
+  }) as typeof experienceApi.getLastFeedbackEvent;
+
+  try {
+    seedRelayState(group, [DEV_AGENT]);
+
+    await useGroupStore.getState().sendGroupMessage(group.id, "请继续处理");
+    await flushAsyncWork();
+
+    assert.equal(feedbackQueries.length, 1);
+    assert.deepEqual(feedbackQueries[0], {
+      groupId: group.id,
+      targetAgentId: DEV_AGENT.id,
+      sessionKey: "agent:dev:group:group-1",
+    });
+  } finally {
+    scenario.restore();
+  }
 });
 
 void test("项目组提醒、音效与基础信息会同步持久化", () => {
@@ -650,6 +899,123 @@ void test("archiveGroupMessages 会保存归档、关闭督促并重置 session"
     assert.equal(persisted.groups[0].urgeStartedAt, undefined);
     assert.equal(persisted.groups[0].urgeCount, 0);
     assert.equal(persisted.groups[0].urgeLastCheckedAt, undefined);
+  } finally {
+    gateway.resetSession = originalResetSession;
+  }
+});
+
+void test("archiveGroupMessages 会异步聚类负反馈并生成经验候选", async () => {
+  const group = createGroup({
+    members: [toGroupMember(DEV_AGENT)],
+    leaderId: DEV_AGENT.id,
+  });
+  const originalResetSession = gateway.resetSession.bind(gateway);
+  const candidateCalls: Array<Parameters<typeof experienceApi.upsertExperienceCandidate>[0]> = [];
+  let releaseEventQuery: (() => void) | null = null;
+  let didStartEventQuery = false;
+
+  gateway.resetSession = (async () => ({})) as typeof gateway.resetSession;
+  experienceApi.listProcessEvents = (async () => {
+    didStartEventQuery = true;
+    await new Promise<void>((resolve) => {
+      releaseEventQuery = resolve;
+    });
+
+    return [
+      {
+        id: "event-2",
+        session_key: "agent:dev:group:group-1",
+        group_id: group.id,
+        target_agent_id: DEV_AGENT.id,
+        type: "feedback",
+        feedback_type: "negative_explicit",
+        sender_id: "user",
+        sender_name: "用户",
+        content: "错了，应该先保存",
+        normalized_content: "错 应该先",
+        task_type_json: '["修复"]',
+        confidence_delta: 0.8,
+        created_at: "1742000001000",
+      },
+      {
+        id: "event-1",
+        session_key: "agent:dev:group:group-1",
+        group_id: group.id,
+        target_agent_id: DEV_AGENT.id,
+        type: "feedback",
+        feedback_type: "negative_explicit",
+        sender_id: "user",
+        sender_name: "用户",
+        content: "错了，应该先保存",
+        normalized_content: "错 应该先",
+        task_type_json: '["修复"]',
+        confidence_delta: 0.8,
+        created_at: "1742000000000",
+      },
+      {
+        id: "event-3",
+        session_key: "agent:dev:group:group-1",
+        group_id: group.id,
+        target_agent_id: DEV_AGENT.id,
+        type: "feedback",
+        feedback_type: "positive_explicit",
+        sender_id: "user",
+        sender_name: "用户",
+        content: "这次就对了",
+        normalized_content: "对",
+        task_type_json: null,
+        confidence_delta: 0.7,
+        created_at: "1742000002000",
+      },
+    ];
+  }) as typeof experienceApi.listProcessEvents;
+  experienceApi.upsertExperienceCandidate = (async (input) => {
+    candidateCalls.push(input);
+    return createMockExperienceItem(input);
+  }) as typeof experienceApi.upsertExperienceCandidate;
+
+  try {
+    useGroupStore.setState({
+      groups: [group],
+      selectedGroupId: group.id,
+      selectedArchiveId: null,
+      messagesByGroupId: {
+        [group.id]: [createMessage()],
+      },
+      archives: [],
+      thinkingAgentsByGroupId: new Map(),
+      isSendingByGroupId: {},
+    });
+
+    const result = await useGroupStore.getState().archiveGroupMessages(group.id, "阶段复盘");
+
+    assert.equal(result.success, true);
+    assert.equal(didStartEventQuery, true);
+    assert.equal(candidateCalls.length, 0);
+
+    if (!releaseEventQuery) {
+      throw new Error("Hook3 事件查询没有进入等待态");
+    }
+
+    const releaseQuery: () => void = releaseEventQuery;
+    releaseQuery();
+    await flushAsyncWork();
+
+    assert.equal(candidateCalls.length, 1);
+    assert.equal(
+      candidateCalls[0]?.id,
+      "hook3:group-1:agent%3Adev%3Agroup%3Agroup-1:%E9%94%99%20%E5%BA%94%E8%AF%A5%E5%85%88",
+    );
+    assert.equal(candidateCalls[0]?.kind, "lesson");
+    assert.equal(candidateCalls[0]?.trigger, "错 应该先");
+    assert.equal(candidateCalls[0]?.rule, "遇到同类任务时先自检，避免再次出现：错了，应该先保存");
+    assert.equal(candidateCalls[0]?.antiPattern, "错了，应该先保存");
+    assert.equal(candidateCalls[0]?.taskTypeJson, '["修复"]');
+    assert.equal(candidateCalls[0]?.groupId, group.id);
+    assert.equal(candidateCalls[0]?.sessionKey, "agent:dev:group:group-1");
+    assert.equal(candidateCalls[0]?.repeatedHits, 2);
+    assert.equal(candidateCalls[0]?.confidence, 0.85);
+    assert.equal(candidateCalls[0]?.lastSeenAt, "1742000001000");
   } finally {
     gateway.resetSession = originalResetSession;
   }

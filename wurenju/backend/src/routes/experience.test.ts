@@ -132,6 +132,56 @@ void test("POST /experience/events 会写入事件并支持按 groupId 查询", 
   assert.equal(payload[0]?.created_at, createdAt);
 });
 
+void test("GET /experience/events/last 支持按 sessionKey 查询最近反馈", async () => {
+  let response = await fetch(`${baseUrl}/experience/events`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      id: "event-last-1",
+      sessionKey: "agent:agent-1:group:group-1",
+      groupId: "group-1",
+      targetAgentId: "agent-1",
+      feedbackType: "negative_explicit",
+      senderId: "user-1",
+      content: "先保存",
+      createdAt: "1000",
+    }),
+  });
+  assert.equal(response.status, 201);
+
+  response = await fetch(`${baseUrl}/experience/events`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      id: "event-last-2",
+      sessionKey: "agent:agent-1:group:group-2",
+      groupId: "group-1",
+      targetAgentId: "agent-1",
+      feedbackType: "negative_explicit",
+      senderId: "user-1",
+      content: "先别保存",
+      createdAt: "2000",
+    }),
+  });
+  assert.equal(response.status, 201);
+
+  response = await fetch(
+    `${baseUrl}/experience/events/last?groupId=group-1&targetAgentId=agent-1&sessionKey=agent%3Aagent-1%3Agroup%3Agroup-1`,
+  );
+  assert.equal(response.status, 200);
+
+  const payload = (await response.json()) as {
+    id: string;
+    session_key: string;
+  };
+  assert.equal(payload.id, "event-last-1");
+  assert.equal(payload.session_key, "agent:agent-1:group:group-1");
+});
+
 void test("POST /experience/items 写入候选后可查询并可通过 promote 进入 verified 注入列表", async () => {
   const createdAt = String(Date.now());
   let response = await fetch(`${baseUrl}/experience/items`, {
@@ -184,4 +234,38 @@ void test("POST /experience/items 写入候选后可查询并可通过 promote �
   assert.equal(injectPayload.verified[0]?.id, "exp-1");
   assert.equal(injectPayload.verified[0]?.status, "verified");
   assert.deepEqual(injectPayload.recent, []);
+});
+
+void test("POST /experience/items/:id/deprecate 会将 verified 经验降级为 deprecated", async () => {
+  const createdAt = String(Date.now());
+
+  let response = await fetch(`${baseUrl}/experience/items`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      id: "exp-deprecate",
+      status: "verified",
+      kind: "lesson",
+      rule: "先总结再执行",
+      groupId: "group-1",
+      createdAt,
+      updatedAt: createdAt,
+      validFrom: createdAt,
+    }),
+  });
+  assert.equal(response.status, 201);
+
+  response = await fetch(`${baseUrl}/experience/items/exp-deprecate/deprecate`, {
+    method: "POST",
+  });
+  assert.equal(response.status, 200);
+
+  const payload = (await response.json()) as {
+    id: string;
+    status: string;
+  };
+  assert.equal(payload.id, "exp-deprecate");
+  assert.equal(payload.status, "deprecated");
 });

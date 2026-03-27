@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { experienceApi, type BackendProcessEvent } from "@/services/experienceApi";
 import { gateway, type GatewayChatAttachmentInput } from "@/services/gateway";
 import { useAgentStore, type Agent } from "@/stores/agentStore";
 import { useDirectArchiveStore } from "@/stores/directArchiveStore";
@@ -7,6 +8,8 @@ import {
   resolveArchiveTitle,
   sanitizeArchiveTitle,
 } from "@/utils/archiveTitle";
+import { calculateConfidence } from "@/utils/confidenceCalculator";
+import { classifyFeedback } from "@/utils/feedbackClassifier";
 import {
   buildGroupAgentRequestMessage,
   normalizeGroupAnnouncement,
@@ -774,6 +777,208 @@ function buildGroupSessionKey(agentId: string, groupId: string) {
   return `agent:${agentId}:group:${normalizedGroupId}`;
 }
 
+type NegativeCluster = {
+  normalizedContent: string;
+  content: string;
+  taskTypeJson: string | null;
+  sessionKey: string | null;
+  count: number;
+  latestCreatedAt: string;
+};
+
+type NegativeClusterAccumulator = {
+  normalizedContent: string;
+  count: number;
+  latestCreatedAt: string;
+  contentCounts: Map<string, number>;
+  taskTypeCounts: Map<string, number>;
+  sessionKeys: Set<string>;
+};
+
+function increaseCounter(counter: Map<string, number>, key: string) {
+  counter.set(key, (counter.get(key) ?? 0) + 1);
+}
+
+function pickMostFrequentValue(counter: Map<string, number>) {
+  let selected: string | null = null;
+  let maxCount = -1;
+
+  counter.forEach((count, value) => {
+    if (count > maxCount) {
+      selected = value;
+      maxCount = count;
+    }
+  });
+
+  return selected;
+}
+
+function buildArchivedClusterRule(content: string) {
+  const normalizedContent = content.trim();
+  if (!normalizedContent) {
+    return "遇到同类任务时先自检，避免重复犯错。";
+  }
+
+  return `遇到同类任务时先自检，避免再次出现：${normalizedContent}`;
+}
+
+function buildArchivedClusterCandidateId(groupId: string, cluster: NegativeCluster) {
+  const scope = cluster.sessionKey?.trim() || "group";
+  return `hook3:${encodeURIComponent(groupId)}:${encodeURIComponent(scope)}:${encodeURIComponent(cluster.normalizedContent)}`;
+}
+
+function findNegativeClusters(events: BackendProcessEvent[]): NegativeCluster[] {
+  const clusters = new Map<string, NegativeClusterAccumulator>();
+
+  events.forEach((event) => {
+    if (event.type !== "feedback" || event.feedback_type !== "negative_explicit") {
+      return;
+    }
+
+    const normalizedContent = event.normalized_content?.trim() || event.content.trim();
+    if (!normalizedContent) {
+      return;
+    }
+
+    const currentCluster = clusters.get(normalizedContent) ?? {
+      normalizedContent,
+      count: 0,
+      latestCreatedAt: event.created_at,
+      contentCounts: new Map<string, number>(),
+      taskTypeCounts: new Map<string, number>(),
+      sessionKeys: new Set<string>(),
+    };
+
+    currentCluster.count += 1;
+    if (Number(event.created_at) > Number(currentCluster.latestCreatedAt)) {
+      currentCluster.latestCreatedAt = event.created_at;
+    }
+
+    increaseCounter(currentCluster.contentCounts, event.content.trim() || normalizedContent);
+    if (event.task_type_json?.trim()) {
+      increaseCounter(currentCluster.taskTypeCounts, event.task_type_json.trim());
+    }
+    if (event.session_key?.trim()) {
+      currentCluster.sessionKeys.add(event.session_key.trim());
+    }
+
+    clusters.set(normalizedContent, currentCluster);
+  });
+
+  return Array.from(clusters.values())
+    .map((cluster) => ({
+      normalizedContent: cluster.normalizedContent,
+      content: pickMostFrequentValue(cluster.contentCounts) ?? cluster.normalizedContent,
+      taskTypeJson: pickMostFrequentValue(cluster.taskTypeCounts),
+      sessionKey:
+        cluster.sessionKeys.size === 1 ? (Array.from(cluster.sessionKeys)[0] ?? null) : null,
+      count: cluster.count,
+      latestCreatedAt: cluster.latestCreatedAt,
+    }))
+    .toSorted((left, right) => right.count - left.count);
+}
+
+function recordGroupFeedbackEvents(params: {
+  groupId: string;
+  text: string;
+  source: GroupDispatchSource;
+  targets: AgentInfo[];
+  intent: RelayIntentInspection;
+}) {
+  const normalizedText = params.text.trim();
+  if (params.source.type !== "user" || !normalizedText) {
+    return;
+  }
+
+  const feedback = classifyFeedback(normalizedText);
+  if (feedback.type === "neutral") {
+    return;
+  }
+
+  const taskKeywords = params.intent.matchedTaskKeywords;
+  const normalizedContent =
+    feedback.keywords.filter((keyword) => !taskKeywords.includes(keyword)).join(" ") ||
+    normalizedText;
+  const createdAt = String(Date.now());
+
+  // 反馈采集必须保持 fire-and-forget，不能影响群聊主链路时延。
+  params.targets.forEach((targetMember) => {
+    experienceApi
+      .writeProcessEvent({
+        sessionKey: buildGroupSessionKey(targetMember.id, params.groupId),
+        groupId: params.groupId,
+        targetAgentId: targetMember.id,
+        type: "feedback",
+        feedbackType: feedback.type,
+        senderId: "user",
+        senderName: params.source.senderName || "用户",
+        content: normalizedText,
+        normalizedContent,
+        taskTypeJson: taskKeywords.length > 0 ? taskKeywords : null,
+        confidenceDelta: feedback.confidence,
+        createdAt,
+      })
+      .catch((error) => {
+        console.error(
+          `[Group] 反馈采集失败: group=${params.groupId}, agent=${targetMember.id}`,
+          error,
+        );
+      });
+  });
+}
+
+function recordExperienceCandidateFromReply(params: {
+  groupId: string;
+  targetMember: AgentInfo;
+  reply: ChatMessage;
+  sessionKey: string;
+}) {
+  const normalizedReply = params.reply.content.trim();
+  if (!normalizedReply) {
+    return;
+  }
+
+  experienceApi
+    .getLastFeedbackEvent({
+      groupId: params.groupId,
+      targetAgentId: params.targetMember.id,
+      sessionKey: params.sessionKey,
+    })
+    .then((lastFeedback) => {
+      if (!lastFeedback || lastFeedback.feedback_type !== "negative_explicit") {
+        return null;
+      }
+
+      const createdAt = String(Date.now());
+      return experienceApi.upsertExperienceCandidate({
+        id: crypto.randomUUID(),
+        kind: "lesson",
+        taskTypeJson: lastFeedback.task_type_json,
+        trigger: lastFeedback.normalized_content?.trim() || lastFeedback.content,
+        rule: normalizedReply,
+        antiPattern: lastFeedback.content,
+        groupId: params.groupId,
+        sessionKey: lastFeedback.session_key || params.sessionKey,
+        feedbackScore: lastFeedback.confidence_delta,
+        repeatedHits: 1,
+        confidence: calculateConfidence({
+          feedbackType: lastFeedback.feedback_type,
+          repeatedHits: 1,
+          isPoliteResponse: false,
+        }),
+        createdAt,
+        updatedAt: createdAt,
+        lastSeenAt: String(params.reply.timestamp ?? Date.now()),
+      });
+    })
+    .catch((error) => {
+      console.error(
+        `[Group] 经验候选采集失败: group=${params.groupId}, agent=${params.targetMember.id}`,
+        error,
+      );
+    });
+}
+
 function findMentionIndex(text: string, name: string) {
   const safeName = name.trim();
   if (!safeName) {
@@ -1522,6 +1727,8 @@ function pickLatestAssistantReply(messages: ChatMessage[], startedAt: number) {
 
 export const useGroupStore = create<GroupState>((set, get) => {
   const initialState = readStoredState();
+  let stateRevision = 0;
+  let latestFetchRequestId = 0;
 
   function updateState(updater: (state: GroupState) => Partial<GroupState>) {
     let committed = false;
@@ -1538,6 +1745,7 @@ export const useGroupStore = create<GroupState>((set, get) => {
       }
 
       committed = true;
+      stateRevision += 1;
       return patch;
     });
 
@@ -2791,6 +2999,13 @@ export const useGroupStore = create<GroupState>((set, get) => {
     console.log(
       `[Group] 接力识别结果: sequential=${intent.matchedSequentialKeywords.join("、") || "无"}，allMembers=${intent.matchedAllMemberKeywords.join("、") || "无"}，task=${intent.matchedTaskKeywords.join("、") || "无"}`,
     );
+    recordGroupFeedbackEvents({
+      groupId: params.groupId,
+      text: params.displayMessage.content,
+      source: params.source,
+      targets,
+      intent,
+    });
     if (params.source.type === "user" && intent.isRelayRequest) {
       const round: GroupRoundState = {
         epoch,
@@ -3277,6 +3492,12 @@ export const useGroupStore = create<GroupState>((set, get) => {
       }
 
       if (reply && showReplyInUi) {
+        recordExperienceCandidateFromReply({
+          groupId,
+          targetMember,
+          reply,
+          sessionKey,
+        });
         appendGroupAssistantMessage(groupId, {
           id: crypto.randomUUID(),
           role: "assistant",
@@ -3728,8 +3949,34 @@ export const useGroupStore = create<GroupState>((set, get) => {
     isSendingByGroupId: {},
 
     fetchGroups: async () => {
+      const fetchRequestId = ++latestFetchRequestId;
       set({ isHydrating: true });
+      const clearRuntime = () => {
+        Array.from(groupRoundStates.keys()).forEach((groupId) => {
+          clearGroupRoundState(groupId, "刷新项目组列表");
+        });
+        Array.from(groupUrgeTimerIds.keys()).forEach((groupId) => {
+          clearGroupUrgeTimer(groupId, "刷新项目组列表");
+        });
+      };
+      const applySnapshot = (nextState: GroupPersistence, isHydrating: boolean) => {
+        console.log(`[Group] 获取项目组列表: ${nextState.groups.length} 个`);
+        set({
+          ...nextState,
+          isHydrating,
+          thinkingAgentsByGroupId: new Map(),
+          announcementSyncStatus: new Map(),
+          isSendingByGroupId: {},
+        });
+        ensureGroupUrgeRuntimeInitialized();
+        restoreActiveGroupUrgings(nextState.groups, "刷新项目组列表");
+      };
+
       let nextState = readStoredState();
+      clearRuntime();
+      applySnapshot(nextState, true);
+      const fetchBaselineRevision = stateRevision;
+
       try {
         const remoteSnapshot = await hydrateGroupStorageSnapshot();
         if (remoteSnapshot) {
@@ -3738,22 +3985,18 @@ export const useGroupStore = create<GroupState>((set, get) => {
       } catch (error) {
         console.warn("[Group] 拉取后端群聊快照失败，继续使用本地缓存:", error);
       }
-      Array.from(groupRoundStates.keys()).forEach((groupId) => {
-        clearGroupRoundState(groupId, "刷新项目组列表");
-      });
-      Array.from(groupUrgeTimerIds.keys()).forEach((groupId) => {
-        clearGroupUrgeTimer(groupId, "刷新项目组列表");
-      });
-      console.log(`[Group] 获取项目组列表: ${nextState.groups.length} 个`);
-      set({
-        ...nextState,
-        isHydrating: false,
-        thinkingAgentsByGroupId: new Map(),
-        announcementSyncStatus: new Map(),
-        isSendingByGroupId: {},
-      });
-      ensureGroupUrgeRuntimeInitialized();
-      restoreActiveGroupUrgings(nextState.groups, "刷新项目组列表");
+
+      if (fetchRequestId !== latestFetchRequestId) {
+        return;
+      }
+
+      if (stateRevision !== fetchBaselineRevision) {
+        set({ isHydrating: false });
+        return;
+      }
+
+      clearRuntime();
+      applySnapshot(nextState, false);
     },
 
     createGroup: (data) => {
@@ -4412,9 +4655,55 @@ export const useGroupStore = create<GroupState>((set, get) => {
       }
 
       console.log(`[Archive] 准备归档项目组会话: ${group.name}`);
-      return cleanupGroupStateInternal(groupId, {
+      const archiveActionResult = await cleanupGroupStateInternal(groupId, {
         archive: createGroupArchive(group, messages, get().archives, sanitizeArchiveTitle(title)),
       });
+
+      if (archiveActionResult.success) {
+        void (async () => {
+          try {
+            const feedbackEvents = await experienceApi.listProcessEvents({
+              groupId,
+              limit: 200,
+            });
+            const negativeClusters = findNegativeClusters(feedbackEvents);
+            const updatedAt = String(Date.now());
+
+            for (const cluster of negativeClusters) {
+              if (cluster.count < 2) {
+                continue;
+              }
+
+              try {
+                await experienceApi.upsertExperienceCandidate({
+                  id: buildArchivedClusterCandidateId(groupId, cluster),
+                  kind: "lesson",
+                  trigger: cluster.normalizedContent,
+                  rule: buildArchivedClusterRule(cluster.content),
+                  antiPattern: cluster.content,
+                  taskTypeJson: cluster.taskTypeJson,
+                  groupId,
+                  sessionKey: cluster.sessionKey,
+                  repeatedHits: cluster.count,
+                  confidence: calculateConfidence({
+                    feedbackType: "negative_explicit",
+                    repeatedHits: cluster.count,
+                    isPoliteResponse: false,
+                  }),
+                  updatedAt,
+                  lastSeenAt: cluster.latestCreatedAt,
+                });
+              } catch (error) {
+                console.warn("[Hook3] 经验候选写入失败:", error);
+              }
+            }
+          } catch (error) {
+            console.warn("[Hook3] 批量复盘失败:", error);
+          }
+        })();
+      }
+
+      return archiveActionResult;
     },
 
     archiveGroupSession: async (groupId, title) => {
