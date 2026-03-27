@@ -212,6 +212,10 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/google-gemini-cli-auth/**"
+"extensions: hooks-experience":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/hooks-experience/**"
 "extensions: llm-task":
   - changed-files:
       - any-glob-to-any-file:

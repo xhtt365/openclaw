@@ -1,0 +1,27 @@
+{
+  "id": "hooks-experience",
+  "name": "Hooks Experience",
+  "description": "Inject experience guidance into prompts before agent reasoning.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "endpoint": {
+        "type": "string",
+        "default": "http://localhost:3001/api/experience/inject"
+      },
+      "timeoutMs": {
+        "type": "number",
+        "minimum": 1,
+        "maximum": 10000,
+        "default": 500
+      },
+      "limit": {
+        "type": "number",
+        "minimum": 1,
+        "maximum": 20,
+        "default": 6
+      }
+    }
+  }
+}
