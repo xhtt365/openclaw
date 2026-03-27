@@ -1,10 +1,4 @@
 import { toast } from "@/hooks/use-toast";
-import {
-  createEmptyHealthRecord,
-  deriveHealthSummary,
-  trimHealthRecord,
-  type AgentHealthRecord,
-} from "@/utils/health";
 
 type StorageTrimMode = "normal" | "soft" | "aggressive";
 type StorageReason = "startup" | "preflight" | "quota";
@@ -173,138 +167,6 @@ function notifyStorageToast(message: "cleaned" | "tight") {
   toast({
     title: "本地存储空间偏紧",
     description: "已尽量保留最近的数据，部分更旧的本地缓存可能暂未继续保存。",
-  });
-}
-
-function getMostRecentTimestamp(items: unknown[], keys: string[]) {
-  return items.reduce<number>((latest, item) => {
-    if (!isRecord(item)) {
-      return latest;
-    }
-
-    for (const key of keys) {
-      const timestamp = normalizeTimestamp(item[key]);
-      if (timestamp > latest) {
-        return timestamp;
-      }
-    }
-
-    return latest;
-  }, 0);
-}
-
-function normalizeHealthRecordLoose(record: unknown, referenceTime = now()): AgentHealthRecord {
-  const base = createEmptyHealthRecord();
-  if (!isRecord(record)) {
-    return base;
-  }
-
-  const nextRecord: AgentHealthRecord = {
-    ...base,
-    ...record,
-    interactions: Array.isArray(record.interactions) ? (record.interactions as never[]) : [],
-    usageSnapshots: Array.isArray(record.usageSnapshots) ? (record.usageSnapshots as never[]) : [],
-    fallbackEvents: Array.isArray(record.fallbackEvents) ? (record.fallbackEvents as never[]) : [],
-    alerts: Array.isArray(record.alerts) ? (record.alerts as never[]) : [],
-  };
-  const trimmed = trimHealthRecord(nextRecord, referenceTime);
-  return {
-    ...trimmed,
-    summary: deriveHealthSummary(trimmed),
-  };
-}
-
-function resolveHealthRecordTimestamp(record: AgentHealthRecord) {
-  return Math.max(
-    normalizeTimestamp(record.summary.lastUpdatedAt),
-    normalizeTimestamp(record.fallbackUpdatedAt),
-    getMostRecentTimestamp(record.interactions, ["completedAt", "startedAt"]),
-    getMostRecentTimestamp(record.usageSnapshots, ["capturedAt"]),
-    getMostRecentTimestamp(record.fallbackEvents, ["occurredAt"]),
-    getMostRecentTimestamp(record.alerts, ["timestamp"]),
-  );
-}
-
-function trimHealthStorageValue(value: string, mode: StorageTrimMode) {
-  const parsed = safeJsonParse(value);
-  if (!isRecord(parsed) || !isRecord(parsed.state)) {
-    return value;
-  }
-
-  const maxBytesByMode: Record<StorageTrimMode, number> = {
-    normal: 1_000_000,
-    soft: 700_000,
-    aggressive: 350_000,
-  };
-  const steps = [
-    { interactions: 60, usageSnapshots: 60, fallbackEvents: 20, alerts: 20, globalAlerts: 80 },
-    { interactions: 40, usageSnapshots: 40, fallbackEvents: 16, alerts: 16, globalAlerts: 48 },
-    { interactions: 24, usageSnapshots: 24, fallbackEvents: 10, alerts: 10, globalAlerts: 24 },
-    { interactions: 12, usageSnapshots: 12, fallbackEvents: 6, alerts: 6, globalAlerts: 12 },
-    { interactions: 6, usageSnapshots: 6, fallbackEvents: 3, alerts: 3, globalAlerts: 6 },
-  ];
-  const referenceTime = now();
-  const rawEntries = Object.entries(parsed.state.recordsByAgentId ?? {}).map(
-    ([agentId, record]): [string, AgentHealthRecord] => [
-      agentId,
-      normalizeHealthRecordLoose(record, referenceTime),
-    ],
-  );
-  rawEntries.sort(
-    (left, right) => resolveHealthRecordTimestamp(right[1]) - resolveHealthRecordTimestamp(left[1]),
-  );
-  const globalAlerts = Array.isArray(parsed.state.alerts)
-    ? parsed.state.alerts
-        .filter((alert) => isRecord(alert) && normalizeTimestamp(alert.timestamp) > 0)
-        .toSorted(
-          (left, right) => normalizeTimestamp(right.timestamp) - normalizeTimestamp(left.timestamp),
-        )
-    : [];
-
-  const payloadSteps = steps.map((step) => ({
-    ...parsed,
-    state: {
-      recordsByAgentId: Object.fromEntries(
-        rawEntries.map(([agentId, record]) => [
-          agentId,
-          {
-            ...record,
-            interactions: record.interactions.slice(-step.interactions),
-            usageSnapshots: record.usageSnapshots.slice(-step.usageSnapshots),
-            fallbackEvents: record.fallbackEvents.slice(-step.fallbackEvents),
-            alerts: record.alerts.slice(-step.alerts),
-          },
-        ]),
-      ),
-      alerts: globalAlerts.slice(0, step.globalAlerts),
-    },
-  }));
-
-  const maxBytes = maxBytesByMode[mode];
-  for (const payload of payloadSteps) {
-    const raw = JSON.stringify(payload);
-    if (resolveByteSize(raw) <= maxBytes) {
-      return raw;
-    }
-  }
-
-  const minimalRecords = [...rawEntries];
-  const minimalPayload = { ...payloadSteps[payloadSteps.length - 1] };
-  while (minimalRecords.length > 0) {
-    minimalPayload.state.recordsByAgentId = Object.fromEntries(minimalRecords);
-    const raw = JSON.stringify(minimalPayload);
-    if (resolveByteSize(raw) <= maxBytes) {
-      return raw;
-    }
-    minimalRecords.pop();
-  }
-
-  return JSON.stringify({
-    ...parsed,
-    state: {
-      recordsByAgentId: {},
-      alerts: [],
-    },
   });
 }
 
@@ -643,54 +505,47 @@ const STORAGE_POLICIES: StoragePolicy[] = [
       trimGroupStorageValue(value, mode),
   },
   {
-    id: "health-storage",
-    order: 4,
-    matches: (key: string) => key === "xiaban.health.v1",
-    trim: (_key: string, value: string, mode: StorageTrimMode) =>
-      trimHealthStorageValue(value, mode),
-  },
-  {
     id: "direct-archives",
-    order: 5,
+    order: 4,
     matches: (key: string) => key === "xiaban.sidebar.directArchives",
     trim: (_key: string, value: string, mode: StorageTrimMode) =>
       trimSidebarDirectArchivesValue(value, mode),
   },
   {
     id: "config-history",
-    order: 6,
+    order: 5,
     matches: (key: string) => key === "lobster-config-history",
     trim: (_key: string, value: string, mode: StorageTrimMode) =>
       trimConfigHistoryValue(value, mode),
   },
   {
     id: "agent-avatar-map",
-    order: 7,
+    order: 6,
     matches: (key: string) => key === "xiaban_agent_avatars",
     trim: (_key: string, value: string, mode: StorageTrimMode) =>
       trimAgentAvatarMapValue(value, mode),
   },
   {
     id: "user-avatar",
-    order: 8,
+    order: 7,
     matches: (key: string) => key === "xiaban_user_avatar" || key === "userAvatar",
     trim: (_key: string, value: string, mode: StorageTrimMode) => trimUserAvatarValue(value, mode),
   },
   {
     id: "model-provider-status",
-    order: 9,
+    order: 8,
     matches: (key: string) => key === "xiaban.modelProviderStatus",
     trim: (_key: string, value: string) => trimRuntimeStatusValue(value),
   },
   {
     id: "agent-model-access",
-    order: 10,
+    order: 9,
     matches: (key: string) => key === "xiaban.agentModelAccess",
     trim: (_key: string, value: string) => trimAgentModelAccessValue(value),
   },
   {
     id: "model-providers",
-    order: 11,
+    order: 10,
     matches: (key: string) => key === "xiaban.modelProviders",
     trim: (_key: string, value: string) => trimModelProvidersValue(value),
   },

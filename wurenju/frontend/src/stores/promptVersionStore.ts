@@ -3,7 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { gateway } from "@/services/gateway";
 import { useAgentStore } from "@/stores/agentStore";
 import type { AgentFile } from "@/types/agent";
-import type { MetricSnapshot, PromptRollbackRecord, PromptVersion } from "@/types/growth";
+import type { MetricSnapshot, PromptRollbackRecord, PromptVersion } from "@/types/promptVersion";
 import { parseAgentIdentityContent } from "@/utils/agentIdentity";
 import { createSafeStorageAdapter } from "@/utils/storage";
 

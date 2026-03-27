@@ -4,7 +4,6 @@ import { useAgentStore } from "@/stores/agentStore";
 import { useCronStore } from "@/stores/cronStore";
 import { useDirectArchiveStore } from "@/stores/directArchiveStore";
 import { useGroupStore } from "@/stores/groupStore";
-import { useHealthStore } from "@/stores/healthStore";
 import { resolveArchiveTitle } from "@/utils/archiveTitle";
 import { isCronSessionKey } from "@/utils/cronTask";
 import {
@@ -733,18 +732,6 @@ export const useChatStore = create<ChatState>((set, get) => {
         historyLoadedByAgentId: withBoolean(state.historyLoadedByAgentId, agentId, true),
         historyLoadingByAgentId: withBoolean(state.historyLoadingByAgentId, agentId, false),
       }));
-
-      useHealthStore.getState().recordHistorySnapshot({
-        agentId,
-        sessionKey,
-        currentContextUsed,
-        contextWindowSize,
-        model:
-          [...mappedMessages]
-            .toReversed()
-            .find((message) => message.role === "assistant" && message.model?.trim())?.model ??
-          null,
-      });
 
       console.log(
         `[Store] refreshTokenUsage: history ready for ${agentId}, messages=${mappedMessages.length}, contextWindowSize=${contextWindowSize}, currentContextUsed=${currentContextUsed}`,
