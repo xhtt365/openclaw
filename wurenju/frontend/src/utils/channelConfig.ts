@@ -1,4 +1,6 @@
+import { storageApi } from "@/services/api";
 import { readLocalStorageItem, writeLocalStorageItem } from "@/utils/storage";
+import { ensureStorageApiAvailable, scheduleStorageApiSync } from "@/utils/storageBackend";
 
 export type ChannelType = "dingtalk" | "feishu" | "telegram";
 
@@ -37,6 +39,9 @@ export type ChannelSectionDraft =
   | TelegramChannelConfig;
 
 export const CHANNEL_STORAGE_KEY_PREFIX = "xiaban.channels.";
+
+const cachedChannelConfigs = new Map<string, ChannelConfigDraft>();
+const channelConfigHydrationPromises = new Map<string, Promise<void>>();
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -126,7 +131,7 @@ export function getAgentChannelStorageKey(agentId: string) {
   return `${CHANNEL_STORAGE_KEY_PREFIX}${agentId.trim()}`;
 }
 
-export function readAgentChannelConfig(agentId: string): ChannelConfigDraft {
+function readLocalAgentChannelConfig(agentId: string): ChannelConfigDraft {
   const normalizedAgentId = agentId.trim();
   if (!normalizedAgentId) {
     return createEmptyChannelConfigDraft();
@@ -142,6 +147,83 @@ export function readAgentChannelConfig(agentId: string): ChannelConfigDraft {
   } catch {
     return createEmptyChannelConfigDraft();
   }
+}
+
+async function hydrateAgentChannelConfigFromApi(agentId: string) {
+  const normalizedAgentId = agentId.trim();
+  if (!normalizedAgentId) {
+    return;
+  }
+
+  const existingPromise = channelConfigHydrationPromises.get(normalizedAgentId);
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const hydrationPromise = (async () => {
+    const localConfig =
+      cachedChannelConfigs.get(normalizedAgentId) ?? readLocalAgentChannelConfig(normalizedAgentId);
+    const available = await ensureStorageApiAvailable();
+    if (!available) {
+      return;
+    }
+
+    const remote = await storageApi.get<{
+      agentId: string;
+      config: ChannelConfig | null;
+    }>("channel-configs", {
+      agentId: normalizedAgentId,
+    });
+    const remoteConfig = remote.config ? normalizeChannelConfig(remote.config) : null;
+
+    if (!remoteConfig) {
+      const hasLocalData = Object.keys(compactChannelConfig(localConfig)).length > 0;
+      if (hasLocalData) {
+        await storageApi.put("channel-configs", {
+          agentId: normalizedAgentId,
+          config: compactChannelConfig(localConfig),
+        });
+      }
+      return;
+    }
+
+    cachedChannelConfigs.set(normalizedAgentId, remoteConfig);
+    writeLocalStorageItem(
+      getAgentChannelStorageKey(normalizedAgentId),
+      JSON.stringify(compactChannelConfig(remoteConfig)),
+    );
+    emitChannelConfigUpdated(normalizedAgentId, remoteConfig);
+  })()
+    .catch((error) => {
+      console.warn(
+        `[ChannelConfig] 拉取 ${normalizedAgentId} 后端配置失败，继续使用本地缓存:`,
+        error,
+      );
+    })
+    .finally(() => {
+      channelConfigHydrationPromises.delete(normalizedAgentId);
+    });
+
+  channelConfigHydrationPromises.set(normalizedAgentId, hydrationPromise);
+  return hydrationPromise;
+}
+
+export function readAgentChannelConfig(agentId: string): ChannelConfigDraft {
+  const normalizedAgentId = agentId.trim();
+  if (!normalizedAgentId) {
+    return createEmptyChannelConfigDraft();
+  }
+
+  const localConfig = readLocalAgentChannelConfig(normalizedAgentId);
+  const cached =
+    cachedChannelConfigs.get(normalizedAgentId) &&
+    serializeChannelConfigDraft(cachedChannelConfigs.get(normalizedAgentId)!) ===
+      serializeChannelConfigDraft(localConfig)
+      ? cachedChannelConfigs.get(normalizedAgentId)!
+      : localConfig;
+  cachedChannelConfigs.set(normalizedAgentId, cached);
+  void hydrateAgentChannelConfigFromApi(normalizedAgentId);
+  return cached;
 }
 
 function emitChannelConfigUpdated(agentId: string, config: ChannelConfigDraft) {
@@ -166,6 +248,7 @@ export function saveAgentChannelConfig(agentId: string, value: ChannelConfigDraf
   }
 
   const normalized = normalizeChannelConfig(value);
+  cachedChannelConfigs.set(normalizedAgentId, normalized);
   const saved = writeLocalStorageItem(
     getAgentChannelStorageKey(normalizedAgentId),
     JSON.stringify(compactChannelConfig(normalized)),
@@ -173,6 +256,12 @@ export function saveAgentChannelConfig(agentId: string, value: ChannelConfigDraf
   if (!saved) {
     throw new Error("当前环境不支持本地保存");
   }
+  scheduleStorageApiSync(async () => {
+    await storageApi.put("channel-configs", {
+      agentId: normalizedAgentId,
+      config: compactChannelConfig(normalized),
+    });
+  }, `同步渠道配置到后端(${normalizedAgentId})`);
   emitChannelConfigUpdated(normalizedAgentId, normalized);
   return normalized;
 }

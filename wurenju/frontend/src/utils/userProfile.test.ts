@@ -16,8 +16,14 @@ function createMockStorage() {
   const store = new Map<string, string>();
 
   return {
+    get length() {
+      return store.size;
+    },
     getItem(key: string) {
       return store.has(key) ? store.get(key)! : null;
+    },
+    key(index: number) {
+      return Array.from(store.keys())[index] ?? null;
     },
     setItem(key: string, value: string) {
       store.set(key, value);

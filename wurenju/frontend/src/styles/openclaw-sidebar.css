@@ -19,7 +19,11 @@
   --sidebar-row-hover-bg: var(--workbench-panel-hover);
   --sidebar-row-hover-border: var(--workbench-panel-border-strong);
   --sidebar-row-active-bg: var(--workbench-panel-active);
-  --sidebar-row-active-border: color-mix(in srgb, var(--brand-primary) 16%, var(--workbench-panel-border-strong));
+  --sidebar-row-active-border: color-mix(
+    in srgb,
+    var(--brand-primary) 16%,
+    var(--workbench-panel-border-strong)
+  );
   --sidebar-row-hover-shadow: var(--workbench-card-shadow);
   --sidebar-row-active-shadow: none;
   --sidebar-button-bg: transparent;
@@ -65,7 +69,11 @@ body.dark .workspace-sidebar,
   --sidebar-row-hover-bg: var(--workbench-panel-hover);
   --sidebar-row-hover-border: var(--workbench-panel-border-strong);
   --sidebar-row-active-bg: var(--workbench-panel-active);
-  --sidebar-row-active-border: color-mix(in srgb, var(--brand-primary) 22%, var(--workbench-panel-border-strong));
+  --sidebar-row-active-border: color-mix(
+    in srgb,
+    var(--brand-primary) 22%,
+    var(--workbench-panel-border-strong)
+  );
   --sidebar-row-hover-shadow: var(--workbench-card-shadow);
   --sidebar-row-active-shadow: none;
   --sidebar-button-bg: transparent;
@@ -195,12 +203,11 @@ body.dark .workspace-sidebar,
   padding: 14px 16px;
   border: 1px solid var(--sidebar-card-border);
   border-radius: 20px;
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--accent) 8%, var(--sidebar-card-bg)),
-      color-mix(in srgb, var(--accent-2) 8%, var(--sidebar-card-bg))
-    );
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent) 8%, var(--sidebar-card-bg)),
+    color-mix(in srgb, var(--accent-2) 8%, var(--sidebar-card-bg))
+  );
   box-shadow:
     var(--sidebar-card-shadow),
     inset 0 1px 0 color-mix(in srgb, #ffffff 26%, transparent);
@@ -551,7 +558,8 @@ body.dark .workspace-sidebar,
 
 .workspace-sidebar__row:hover:not(.workspace-sidebar__row--selected),
 .workspace-sidebar__row-shell:hover .workspace-sidebar__row:not(.workspace-sidebar__row--selected),
-.workspace-sidebar__row-shell:focus-within .workspace-sidebar__row:not(.workspace-sidebar__row--selected) {
+.workspace-sidebar__row-shell:focus-within
+  .workspace-sidebar__row:not(.workspace-sidebar__row--selected) {
   border-color: var(--sidebar-row-hover-border);
   background: var(--sidebar-row-hover-bg);
   box-shadow: var(--sidebar-row-hover-shadow);
@@ -690,7 +698,8 @@ body.dark .workspace-sidebar,
   gap: 4px;
 }
 
-.workspace-sidebar__row-labels--with-role.workspace-sidebar__row-labels--with-unread .workspace-sidebar__row-name {
+.workspace-sidebar__row-labels--with-role.workspace-sidebar__row-labels--with-unread
+  .workspace-sidebar__row-name {
   max-width: 46%;
 }
 

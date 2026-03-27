@@ -590,12 +590,11 @@
 
 .callout.danger {
   border-color: color-mix(in srgb, var(--danger) 25%, transparent);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--danger) 8%, transparent) 0%,
-      color-mix(in srgb, var(--danger) 4%, transparent) 100%
-    );
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--danger) 8%, transparent) 0%,
+    color-mix(in srgb, var(--danger) 4%, transparent) 100%
+  );
   color: var(--danger);
 }
 
@@ -3191,7 +3190,11 @@ img.chat-avatar {
   height: 280px;
   transform: translate(-50%, -50%);
   border-radius: 999px;
-  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 16%, transparent), transparent 65%);
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent) 16%, transparent),
+    transparent 65%
+  );
   pointer-events: none;
 }
 

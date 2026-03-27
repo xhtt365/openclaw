@@ -14,9 +14,11 @@ import {
 } from "@/utils/messageAdapter";
 import type { SessionRuntimeState } from "@/utils/sessionRuntime";
 import {
+  deleteSidebarDirectArchiveFromBackend,
+  hydrateSidebarDirectArchivesFromApi,
+  persistSidebarDirectArchive,
   clearSidebarDirectUnreadCount,
   incrementSidebarDirectUnreadCount,
-  readSidebarDirectArchives,
   writeSidebarDirectArchives,
   type SidebarDirectArchive,
 } from "@/utils/sidebarPersistence";
@@ -350,6 +352,10 @@ function isUnauthorizedUpstreamError(message: string) {
     normalized.includes("invalid api key") ||
     normalized.includes("incorrect api key")
   );
+}
+
+function shouldResetArchivedSession(error: unknown) {
+  return /cannot delete the main session/i.test(getErrorMessage(error, ""));
 }
 
 function isRedactedConfigError(message: string) {
@@ -920,7 +926,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     archiveCurrentSession: async (title) => {
       const target = resolveCurrentSessionTarget();
       console.log(
-        `[Archive] 准备归档 1v1 会话: agent=${target?.agentId || "none"}, sessionKey=${target?.sessionKey || "none"}`,
+        `[ArchiveCS] archiveCurrentSession called: agent=${target?.agentId || "none"}, sessionKey=${target?.sessionKey || "none"}, title=${title}, timestamp=${new Date().toISOString()}`,
       );
 
       if (!target) {
@@ -941,19 +947,49 @@ export const useChatStore = create<ChatState>((set, get) => {
           };
         }
 
-        const previousArchives = readSidebarDirectArchives();
+        const previousArchives = await hydrateSidebarDirectArchivesFromApi();
+        console.log(
+          `[ArchiveCS] archiveCurrentSession: previousArchives count=${previousArchives.length}, ids=[${previousArchives.map((a) => a.id).join(", ")}]`,
+        );
         const archive = createSidebarDirectArchive(
           target.agentId,
           currentMessages,
           previousArchives,
           title,
         );
-        writeSidebarDirectArchives([archive, ...previousArchives]);
+        console.log(
+          `[ArchiveCS] archiveCurrentSession: created archive with id=${archive.id}, agentId=${archive.agentId}, agentName=${archive.agentName}`,
+        );
+        await persistSidebarDirectArchive(archive);
+        console.log(
+          `[ArchiveCS] archiveCurrentSession: persistSidebarDirectArchive DONE for id=${archive.id}`,
+        );
+        writeSidebarDirectArchives([archive, ...previousArchives], {
+          skipRemoteSync: true,
+        });
 
         try {
-          await gateway.deleteSession(target.sessionKey);
+          try {
+            await gateway.deleteSession(target.sessionKey);
+          } catch (error) {
+            if (!shouldResetArchivedSession(error)) {
+              throw error;
+            }
+
+            console.warn(
+              `[Archive] 主会话不支持 delete，改用 reset: sessionKey=${target.sessionKey}`,
+            );
+            await gateway.resetSession(target.sessionKey);
+          }
         } catch (error) {
-          writeSidebarDirectArchives(previousArchives);
+          writeSidebarDirectArchives(previousArchives, {
+            skipRemoteSync: true,
+          });
+          try {
+            await deleteSidebarDirectArchiveFromBackend(archive.id);
+          } catch (rollbackError) {
+            console.warn("[Archive] 回滚 1v1 后端归档失败:", rollbackError);
+          }
           throw error;
         }
 

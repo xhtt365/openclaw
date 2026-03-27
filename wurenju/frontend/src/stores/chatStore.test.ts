@@ -45,6 +45,7 @@ class MockWindow extends EventTarget {
 const memoryStorage = new MemoryStorage();
 const originalWindow = globalThis.window;
 const originalCustomEvent = globalThis.CustomEvent;
+const originalFetch = globalThis.fetch;
 
 type GatewayPrivate = {
   handleMessage: (frame: Record<string, unknown>) => void;
@@ -84,6 +85,7 @@ before(() => {
 
 afterEach(() => {
   memoryStorage.clear();
+  globalThis.fetch = originalFetch;
   Object.defineProperty(globalThis, "window", {
     value: new MockWindow(memoryStorage),
     configurable: true,
@@ -140,10 +142,55 @@ after(() => {
 void test("archiveCurrentSession 会把当前 1v1 消息写入归档并清空会话", async () => {
   const originalDeleteSession = gateway.deleteSession.bind(gateway);
   const deletedSessionKeys: string[] = [];
+  const createdArchives: Array<Record<string, unknown>> = [];
   gateway.deleteSession = (async (sessionKey: string) => {
     deletedSessionKeys.push(sessionKey);
     return {};
   }) as typeof gateway.deleteSession;
+  globalThis.fetch = (async (input, init) => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = (init?.method ?? "GET").toUpperCase();
+
+    if (url.endsWith("/storage/health")) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url.endsWith("/archives") && method === "POST") {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      createdArchives.push(payload);
+      return new Response(
+        JSON.stringify({
+          id: payload.id,
+          type: "direct",
+          source_id: payload.source_id,
+          source_name: payload.source_name,
+          title: payload.title,
+          messages: payload.messages,
+          message_count: payload.message_count,
+          archived_at: payload.archived_at,
+          created_at: payload.archived_at,
+          updated_at: payload.archived_at,
+        }),
+        {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    if (url.includes("/archives?type=direct") && method === "GET") {
+      return new Response(JSON.stringify(createdArchives), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }) as typeof fetch;
 
   try {
     useAgentStore.setState({
@@ -196,6 +243,7 @@ void test("archiveCurrentSession 会把当前 1v1 消息写入归档并清空会
 
     assert.equal(result.success, true);
     assert.deepEqual(deletedSessionKeys, ["agent:agent-archive:main"]);
+    assert.equal(createdArchives.length, 1);
     assert.deepEqual(useChatStore.getState().getMessagesForAgent(ARCHIVE_AGENT.id), []);
 
     const archives = readSidebarDirectArchives();
@@ -210,6 +258,147 @@ void test("archiveCurrentSession 会把当前 1v1 消息写入归档并清空会
     assert.equal(archives[0]?.messages[1]?.content, "我已经整理成待办清单了");
   } finally {
     gateway.deleteSession = originalDeleteSession;
+  }
+});
+
+void test("archiveCurrentSession 遇到主会话不可删除时会回退到 reset 并保留归档", async () => {
+  const originalDeleteSession = gateway.deleteSession.bind(gateway);
+  const originalResetSession = gateway.resetSession.bind(gateway);
+  const deletedSessionKeys: string[] = [];
+  const resetSessionKeys: string[] = [];
+  const createdArchives: Array<Record<string, unknown>> = [];
+  const removedArchiveIds: string[] = [];
+  gateway.deleteSession = (async (sessionKey: string) => {
+    deletedSessionKeys.push(sessionKey);
+    throw new Error(`Cannot delete the main session (${sessionKey}).`);
+  }) as typeof gateway.deleteSession;
+  gateway.resetSession = (async (sessionKey: string) => {
+    resetSessionKeys.push(sessionKey);
+    return {};
+  }) as typeof gateway.resetSession;
+  globalThis.fetch = (async (input, init) => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = (init?.method ?? "GET").toUpperCase();
+
+    if (url.endsWith("/storage/health")) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url.endsWith("/archives") && method === "POST") {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      createdArchives.push(payload);
+      return new Response(
+        JSON.stringify({
+          id: payload.id,
+          type: "direct",
+          source_id: payload.source_id,
+          source_name: payload.source_name,
+          title: payload.title,
+          messages: payload.messages,
+          message_count: payload.message_count,
+          archived_at: payload.archived_at,
+          created_at: payload.archived_at,
+          updated_at: payload.archived_at,
+        }),
+        {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    if (url.includes("/archives?type=direct") && method === "GET") {
+      return new Response(JSON.stringify(createdArchives), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url.includes("/archives/") && method === "DELETE") {
+      removedArchiveIds.push(url.split("/archives/")[1] ?? "");
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    useAgentStore.setState({
+      agents: [
+        {
+          ...ARCHIVE_AGENT,
+          id: "main",
+          name: "虾班助手",
+        },
+      ],
+      currentAgentId: "main",
+      mainKey: "main",
+      showDetailFor: null,
+    });
+    useGroupStore.setState({
+      selectedGroupId: null,
+      selectedArchiveId: null,
+    });
+    useDirectArchiveStore.setState({
+      selectedDirectArchiveId: null,
+    });
+    useChatStore.setState({
+      messagesByAgentId: new Map([
+        [
+          "main",
+          [
+            {
+              id: "message-user",
+              role: "user",
+              content: "把这轮对话存档",
+              timestamp: 1_742_203_700_000,
+              isNew: true,
+              isHistorical: false,
+            },
+            {
+              id: "message-assistant",
+              role: "assistant",
+              content: "已经整理好，随时可以回看。",
+              timestamp: 1_742_203_760_000,
+              isNew: true,
+              isHistorical: false,
+            },
+          ],
+        ],
+      ]),
+      usageByAgentId: new Map(),
+      contextWindowSizeByAgentId: new Map(),
+      currentContextUsedByAgentId: new Map(),
+      historyLoadedByAgentId: new Map(),
+      historyLoadingByAgentId: new Map(),
+      activeReplyAgentId: null,
+      status: "connected",
+    });
+
+    const result = await useChatStore.getState().archiveCurrentSession("主会话归档");
+
+    assert.equal(result.success, true);
+    assert.deepEqual(deletedSessionKeys, ["agent:main:main"]);
+    assert.deepEqual(resetSessionKeys, ["agent:main:main"]);
+    assert.equal(createdArchives.length, 1);
+    assert.deepEqual(removedArchiveIds, []);
+    assert.deepEqual(useChatStore.getState().getMessagesForAgent("main"), []);
+
+    const archives = readSidebarDirectArchives();
+    assert.equal(archives.length, 1);
+    assert.equal(archives[0]?.agentId, "main");
+    assert.equal(archives[0]?.title, "主会话归档");
+    assert.equal(archives[0]?.preview, "已经整理好，随时可以回看。");
+  } finally {
+    gateway.deleteSession = originalDeleteSession;
+    gateway.resetSession = originalResetSession;
   }
 });
 

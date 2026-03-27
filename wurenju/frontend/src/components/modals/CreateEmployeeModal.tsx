@@ -510,7 +510,16 @@ export function CreateEmployeeModal({
       setCreatingStep("writing-files");
 
       if (selectedAvatarSrc) {
-        saveAgentAvatarMapping(agentId, selectedAvatarSrc);
+        const avatarResult = await saveAgentAvatarMapping(agentId, selectedAvatarSrc);
+        if (avatarResult.persistedTo === "local") {
+          toast({
+            title: "员工已创建，头像待同步",
+            description:
+              avatarResult.reason === "backend-unavailable"
+                ? "当前后端不可用，头像先保存在本浏览器，可稍后在资料页重新上传"
+                : "头像后端同步失败，换浏览器后可能暂时看不到，可稍后在资料页重试",
+          });
+        }
       }
 
       const defaultAgentFiles = buildDefaultAgentFiles({

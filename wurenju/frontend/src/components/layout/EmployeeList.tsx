@@ -1186,7 +1186,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
   const [collapsedSections, setCollapsedSections] = useState<SidebarCollapsedSections>(() =>
     mergeCollapsedSectionDefaults(readSidebarCollapsedSections()),
   );
-  // 部门、置顶和 1v1 归档还没接后端，先从 localStorage 读取 mock 数据。
+  // 部门和置顶暂时还是本地缓存；1v1 归档会先读本地缓存，再异步从后端 hydrate。
   const [departments, setDepartments] = useState<SidebarDepartment[]>(() =>
     readSidebarDepartments(),
   );
@@ -1466,7 +1466,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
       useGroupStore.getState().removeAgentData(targetEmployee.id);
       removeAgentLocalState(targetEmployee.id);
       purgeSidebarAgentData(targetEmployee.id);
-      removeAgentAvatarMapping(targetEmployee.id);
+      const avatarRemoval = await removeAgentAvatarMapping(targetEmployee.id);
 
       if (shouldFallbackToNextEmployee && nextAgentId) {
         const nextAgent = useAgentStore.getState().agents.find((agent) => agent.id === nextAgentId);
@@ -1477,7 +1477,10 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
 
       toast({
         title: "员工已删除",
-        description: `${targetEmployee.name} 以及对应空间数据已清理`,
+        description:
+          avatarRemoval.persistedTo === "remote"
+            ? `${targetEmployee.name} 以及对应空间数据已清理`
+            : `${targetEmployee.name} 已删除，但头像映射仅在当前浏览器清理；后端同步稍后可再重试`,
       });
       setPendingDeleteEmployee(null);
     } catch (error) {
@@ -1570,7 +1573,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
     setEditingArchive(null);
   }
 
-  function saveArchiveRename() {
+  async function saveArchiveRename() {
     if (!editingArchive) {
       return;
     }
@@ -1594,8 +1597,8 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
       const renamed =
         target.kind === "group"
           ? renameGroupArchive(target.id, nextStoredTitle)
-          : (() => {
-              const result = renameSidebarDirectArchiveById(target.id, nextStoredTitle);
+          : await (async () => {
+              const result = await renameSidebarDirectArchiveById(target.id, nextStoredTitle);
               if (result.renamed) {
                 setDirectArchives(result.archives);
               }
@@ -1670,7 +1673,7 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
     return null;
   }
 
-  function handleConfirmDeleteArchive() {
+  async function handleConfirmDeleteArchive() {
     if (!pendingDeleteArchive) {
       return;
     }
@@ -1684,30 +1687,41 @@ function EmployeeListInner({ selectedEmployeeId, onSelectEmployee }: EmployeeLis
       (target.kind === "direct" && selectedDirectArchiveId === target.id);
     const nextSelection = isSelectedArchive ? resolveNextArchiveSelectionAfterDelete(target) : null;
 
-    if (target.kind === "group") {
-      deleteGroupArchive(target.id);
-    } else {
-      removeSidebarDirectArchiveById(target.id);
-    }
-
-    if (isSelectedArchive) {
-      clearSelectedArchive();
-      clearSelectedDirectArchive();
-
-      if (nextSelection?.kind === "group") {
-        handleSelectArchive(nextSelection.id);
-      } else if (nextSelection?.kind === "direct") {
-        handleSelectDirectArchive(nextSelection.id);
+    try {
+      if (target.kind === "group") {
+        deleteGroupArchive(target.id);
       } else {
-        showDeletedArchiveEmptyState(target.title);
+        const nextDirectArchives = await removeSidebarDirectArchiveById(target.id);
+        setDirectArchives(nextDirectArchives);
       }
-    }
 
-    toast({
-      title: "归档已删除",
-      description: `${target.title} 已从本地归档中移除`,
-    });
-    setPendingDeleteArchive(null);
+      if (isSelectedArchive) {
+        clearSelectedArchive();
+        clearSelectedDirectArchive();
+
+        if (nextSelection?.kind === "group") {
+          handleSelectArchive(nextSelection.id);
+        } else if (nextSelection?.kind === "direct") {
+          handleSelectDirectArchive(nextSelection.id);
+        } else {
+          showDeletedArchiveEmptyState(target.title);
+        }
+      }
+
+      toast({
+        title: "归档已删除",
+        description: `${target.title} 已从归档中移除`,
+      });
+      setPendingDeleteArchive(null);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim() ? error.message : "归档删除失败，请稍后重试";
+      toast({
+        title: "删除失败",
+        description: message,
+        variant: "destructive",
+      });
+    }
   }
 
   function toggleSection(key: string) {

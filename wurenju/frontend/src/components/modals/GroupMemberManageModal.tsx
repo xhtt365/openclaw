@@ -12,7 +12,7 @@ import {
   removeAgentFromGroup,
   resolveDisplayAgentMembers,
 } from "@/utils/groupMembers";
-import { readLocalStorageItem } from "@/utils/storage";
+import { getUserProfile } from "@/utils/userProfile";
 
 type GroupMemberManageModalProps = {
   open: boolean;
@@ -26,12 +26,7 @@ type Feedback = {
 };
 
 function readStoredAvatar() {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const value = readLocalStorageItem("userAvatar");
-  return value && value.trim() ? value : null;
+  return getUserProfile().avatar;
 }
 
 function resolveAvatarText(name: string, emoji?: string) {
