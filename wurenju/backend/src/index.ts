@@ -6,6 +6,7 @@ import archivesRouter from "./routes/archives";
 import cronTasksRouter from "./routes/cronTasks";
 import departmentsRouter from "./routes/departments";
 import employeesRouter from "./routes/employees";
+import experiencesRouter from "./routes/experience";
 import groupsRouter from "./routes/groups";
 import migrateRouter from "./routes/migrate";
 import settingsRouter from "./routes/settings";
@@ -49,6 +50,7 @@ app.use(
 app.use("/api/employees", employeesRouter);
 app.use("/api/departments", departmentsRouter);
 app.use("/api/groups", groupsRouter);
+app.use("/api/experience", experiencesRouter);
 app.use("/api/archives", archivesRouter);
 app.use("/api/cron-tasks", cronTasksRouter);
 app.use("/api/settings", settingsRouter);

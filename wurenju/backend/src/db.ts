@@ -82,6 +82,45 @@ export type SettingRow = TimestampedRow & {
   value: string | null;
 };
 
+export type ProcessEventRow = {
+  id: string;
+  session_key: string;
+  group_id: string;
+  target_agent_id: string;
+  type: string;
+  feedback_type: string;
+  sender_id: string;
+  sender_name: string | null;
+  content: string;
+  normalized_content: string | null;
+  task_type_json: string | null;
+  confidence_delta: number;
+  created_at: string;
+};
+
+export type ExperienceRow = {
+  id: string;
+  status: string;
+  kind: string;
+  task_type_json: string | null;
+  trigger: string | null;
+  rule: string;
+  anti_pattern: string | null;
+  group_id: string | null;
+  session_key: string | null;
+  feedback_score: number | null;
+  repeated_hits: number;
+  confidence: number;
+  conflict_with: string | null;
+  superseded_by: string | null;
+  created_at: string;
+  updated_at: string;
+  last_seen_at: string | null;
+  valid_from: string | null;
+  expires_at: string | null;
+  risk: string;
+};
+
 const databaseDir = path.join(os.homedir(), ".xiaban");
 export const databaseFile = path.join(databaseDir, "data.db");
 
@@ -187,6 +226,45 @@ db.exec(`
     updated_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS process_events (
+    id TEXT PRIMARY KEY,
+    session_key TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    feedback_type TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    sender_name TEXT,
+    content TEXT NOT NULL,
+    normalized_content TEXT,
+    task_type_json TEXT,
+    confidence_delta REAL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS experience_items (
+    id TEXT PRIMARY KEY,
+    status TEXT DEFAULT 'pending',
+    kind TEXT NOT NULL,
+    task_type_json TEXT,
+    trigger TEXT,
+    rule TEXT NOT NULL,
+    anti_pattern TEXT,
+    group_id TEXT,
+    session_key TEXT,
+    feedback_score REAL,
+    repeated_hits INTEGER DEFAULT 0,
+    confidence REAL DEFAULT 0.5,
+    conflict_with TEXT,
+    superseded_by TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_seen_at TEXT,
+    valid_from TEXT,
+    expires_at TEXT,
+    risk TEXT DEFAULT 'medium'
+  );
+
   CREATE INDEX IF NOT EXISTS idx_employees_pinned_sort_order
   ON employees(pinned DESC, sort_order DESC);
 
@@ -210,6 +288,24 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_cron_tasks_agent_id
   ON cron_tasks(agent_id);
+
+  CREATE INDEX IF NOT EXISTS idx_process_events_session_key
+  ON process_events(session_key);
+
+  CREATE INDEX IF NOT EXISTS idx_process_events_group_id
+  ON process_events(group_id);
+
+  CREATE INDEX IF NOT EXISTS idx_process_events_target_agent_id
+  ON process_events(target_agent_id);
+
+  CREATE INDEX IF NOT EXISTS idx_experience_items_status
+  ON experience_items(status);
+
+  CREATE INDEX IF NOT EXISTS idx_experience_items_kind
+  ON experience_items(kind);
+
+  CREATE INDEX IF NOT EXISTS idx_experience_items_confidence
+  ON experience_items(confidence);
 
   CREATE TRIGGER IF NOT EXISTS tombstone_direct_archives_after_delete
   AFTER DELETE ON archives
